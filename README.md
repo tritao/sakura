@@ -64,6 +64,27 @@ tracking** shows whether the current tab has the required environment. After
 using `/rename` while staying in the same tab, use **Codex → Refresh session
 name** to update the tree immediately.
 
+### Terminal history
+
+Each Sakura tab has a stable ID in the workspace session file and a private
+command-history file in the adjacent `sakura.conf.session.history` directory.
+The file is reused when Sakura relaunches, so shell history stays associated
+with the same terminal tab. Sakura exports its path as both `HISTFILE` and
+`SAKURA_HISTORY_FILE`. Closing a tab explicitly removes its history file;
+closing or restarting Sakura preserves it.
+
+Sakura does not modify shell startup files. Bash users who want commands
+written immediately, including commands from more than one process, can add
+the equivalent of this to their shell configuration:
+
+```bash
+if [[ -n "$SAKURA_HISTORY_FILE" ]]; then
+    HISTFILE="$SAKURA_HISTORY_FILE"
+    shopt -s histappend
+    PROMPT_COMMAND="history -a; history -n${PROMPT_COMMAND:+;$PROMPT_COMMAND}"
+fi
+```
+
 ## Keybindings
 
 **sakura** supports keyboard bindings in its config file (`~/.config/sakura/sakura.conf`), but there's no GUI to edit them, so please use your favourite editor to change the following values. Keybindings are a combination of an accelerator+key.

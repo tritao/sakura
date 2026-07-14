@@ -383,6 +383,7 @@ static struct {
 	char *configfile;
 	char *sessionfile;
 	char *codex_tracking_dir;
+	char *history_dir;
 	char *icon;
 	char *shell_path;
 	char *main_title;		/* Main window static title from user input */
@@ -460,6 +461,7 @@ struct sakura_tab {
 	gchar *cwd;
 	gchar *host;
 	gchar *raw_title;
+	gchar *terminal_id;
 	SakuraTabKind kind;
 	gchar *codex_session_id;
 	gchar *codex_session_name;
@@ -658,7 +660,7 @@ static void     sakura_add_tab ();
 static void     sakura_spawn_codex (struct sakura_tab *, const gchar *, gchar **);
 static void     sakura_add_tab_with_options (const gchar *, struct sakura_sidebar_node *,
                                              const gchar *, gboolean, SakuraTabKind,
-                                             const gchar *, const gchar *);
+                                             const gchar *, const gchar *, const gchar *);
 static void     sakura_del_tab (gint);
 static void     sakura_close_tab (gint); /* Save config, del tab and destroy sakura */
 static void     sakura_destroy ();
@@ -1653,6 +1655,73 @@ sakura_session_save_timeout_cb (gpointer data)
 
 
 static gboolean
+sakura_terminal_id_is_valid (const gchar *terminal_id)
+{
+	const gchar *cursor;
+
+	if (terminal_id == NULL || terminal_id[0] == '\0' || strlen(terminal_id) > 128)
+		return FALSE;
+	for (cursor = terminal_id; *cursor != '\0'; cursor++) {
+		if (!g_ascii_isalnum(*cursor) && *cursor != '-' && *cursor != '_' && *cursor != '.')
+			return FALSE;
+	}
+	return TRUE;
+}
+
+
+static gchar *
+sakura_generate_terminal_id (void)
+{
+	return g_strdup_printf("terminal-%d-%u", (int)getpid(), g_random_int());
+}
+
+
+static gchar *
+sakura_history_file_for_tab (const struct sakura_tab *sk_tab)
+{
+	if (sakura.history_dir == NULL || sk_tab == NULL || sk_tab->terminal_id == NULL)
+		return NULL;
+	return g_build_filename(sakura.history_dir, sk_tab->terminal_id, NULL);
+}
+
+
+static void
+sakura_prepare_history_file (struct sakura_tab *sk_tab)
+{
+	gchar *history_file;
+	int fd;
+
+	history_file = sakura_history_file_for_tab(sk_tab);
+	if (history_file == NULL)
+		return;
+
+	fd = g_open(history_file, O_WRONLY | O_CREAT | O_APPEND, 0600);
+	if (fd == -1) {
+		SAY("Could not create terminal history file %s: %s", history_file, g_strerror(errno));
+	} else {
+		close(fd);
+		if (chmod(history_file, 0600) != 0)
+			SAY("Could not secure terminal history file %s: %s", history_file, g_strerror(errno));
+	}
+	g_free(history_file);
+}
+
+
+static void
+sakura_remove_history_file (struct sakura_tab *sk_tab)
+{
+	gchar *history_file;
+
+	if (sakura.session_shutting_down)
+		return;
+	history_file = sakura_history_file_for_tab(sk_tab);
+	if (history_file != NULL && g_remove(history_file) != 0 && errno != ENOENT)
+		SAY("Could not remove terminal history file %s: %s", history_file, g_strerror(errno));
+	g_free(history_file);
+}
+
+
+static gboolean
 sakura_session_version_supported (void)
 {
 	gint version;
@@ -1662,7 +1731,7 @@ sakura_session_version_supported (void)
 		return FALSE;
 
 	version = g_key_file_get_integer(sakura.session_cfg, "Session", "version", NULL);
-	return version == 1 || version == 2;
+	return version == 1 || version == 2 || version == 3;
 }
 
 
@@ -1718,7 +1787,7 @@ sakura_session_save (void)
 		}
 	}
 
-	g_key_file_set_integer(session, "Session", "version", 2);
+	g_key_file_set_integer(session, "Session", "version", 3);
 	g_key_file_set_integer(session, "Session", "group_count", group_ids->len);
 	g_key_file_set_integer(session, "Session", "terminal_count", terminals->len);
 	g_key_file_set_integer(session, "Session", "selected_terminal", selected_terminal);
@@ -1745,6 +1814,8 @@ sakura_session_save (void)
 		g_key_file_set_string(session, section, "parent",
 		                      node->parent != NULL ? node->parent->id : "root");
 		g_key_file_set_string(session, section, "cwd", tab->cwd != NULL ? tab->cwd : "");
+		g_key_file_set_string(session, section, "terminal_id",
+		                      tab->terminal_id != NULL ? tab->terminal_id : "");
 		g_key_file_set_string(session, section, "kind",
 		                      tab->kind == SAKURA_TAB_CODEX ? "codex" : "shell");
 		if (tab->kind == SAKURA_TAB_CODEX && tab->codex_session_id != NULL &&
@@ -1833,6 +1904,7 @@ sakura_session_restore (void)
 		gchar *parent_id = g_key_file_get_string(sakura.session_cfg, section, "parent", NULL);
 		gchar *cwd = g_key_file_get_string(sakura.session_cfg, section, "cwd", NULL);
 		gchar *title = g_key_file_get_string(sakura.session_cfg, section, "title", NULL);
+		gchar *terminal_id = g_key_file_get_string(sakura.session_cfg, section, "terminal_id", NULL);
 		gchar *kind = g_key_file_get_string(sakura.session_cfg, section, "kind", NULL);
 		gchar *codex_session_id = g_key_file_get_string(sakura.session_cfg, section,
 		                                                  "codex_session_id", NULL);
@@ -1852,7 +1924,8 @@ sakura_session_restore (void)
 		}
 		sakura_add_tab_with_options(cwd, parent, title_set ? title : NULL, title_set,
 		                            tab_kind, tab_kind == SAKURA_TAB_CODEX ? codex_session_id : NULL,
-		                            tab_kind == SAKURA_TAB_CODEX ? codex_session_name : NULL);
+		                            tab_kind == SAKURA_TAB_CODEX ? codex_session_name : NULL,
+		                            sakura_terminal_id_is_valid(terminal_id) ? terminal_id : NULL);
 		if (selected_terminal == (gint)i)
 			selected_terminal = restored;
 		restored++;
@@ -1861,6 +1934,7 @@ sakura_session_restore (void)
 		g_free(parent_id);
 		g_free(cwd);
 		g_free(title);
+		g_free(terminal_id);
 		g_free(kind);
 		g_free(codex_session_id);
 		g_free(codex_session_name);
@@ -3101,7 +3175,7 @@ sakura_new_tab_cb (GtkWidget *widget, void *data)
 static void
 sakura_new_codex_cb (GtkWidget *widget, void *data)
 {
-	sakura_add_tab_with_options(NULL, NULL, NULL, FALSE, SAKURA_TAB_CODEX, NULL, NULL);
+	sakura_add_tab_with_options(NULL, NULL, NULL, FALSE, SAKURA_TAB_CODEX, NULL, NULL, NULL);
 }
 
 
@@ -3129,7 +3203,7 @@ sakura_resume_codex_cb (GtkWidget *widget, void *data)
 		session = gtk_entry_get_text(GTK_ENTRY(entry));
 		if (session[0] != '\0')
 			sakura_add_tab_with_options(NULL, NULL, NULL, FALSE,
-			                            SAKURA_TAB_CODEX, session, NULL);
+			                            SAKURA_TAB_CODEX, session, NULL, NULL);
 	}
 	gtk_widget_destroy(dialog);
 }
@@ -4042,8 +4116,13 @@ sakura_init()
 	if (!sakura.dont_save) {
 		sakura.sessionfile = g_strdup_printf("%s.session", sakura.configfile);
 		sakura.codex_tracking_dir = g_strdup_printf("%s.codex", sakura.sessionfile);
+		sakura.history_dir = g_strdup_printf("%s.history", sakura.sessionfile);
 		if (g_mkdir_with_parents(sakura.codex_tracking_dir, 0700) != 0)
 			SAY("Could not create Codex tracking directory: %s", g_strerror(errno));
+		if (g_mkdir_with_parents(sakura.history_dir, 0700) != 0)
+			SAY("Could not create terminal history directory: %s", g_strerror(errno));
+		else if (chmod(sakura.history_dir, 0700) != 0)
+			SAY("Could not secure terminal history directory: %s", g_strerror(errno));
 		sakura_session_load();
 		sakura.codex_tracking_source_id = g_timeout_add(500,
 		                                                 sakura_codex_tracking_poll_cb,
@@ -4480,6 +4559,7 @@ sakura_destroy()
 	free(sakura.configfile);
 	g_free(sakura.sessionfile);
 	g_free(sakura.codex_tracking_dir);
+	g_free(sakura.history_dir);
 
 	gtk_main_quit();
 }
@@ -4858,7 +4938,7 @@ sakura_spawn_callback (VteTerminal *vte, GPid pid, GError *error, gpointer user_
 static void
 sakura_add_tab (void)
 {
-	sakura_add_tab_with_options(NULL, NULL, NULL, FALSE, SAKURA_TAB_SHELL, NULL, NULL);
+	sakura_add_tab_with_options(NULL, NULL, NULL, FALSE, SAKURA_TAB_SHELL, NULL, NULL, NULL);
 }
 
 
@@ -5037,7 +5117,8 @@ sakura_add_tab_with_options (const gchar *restore_cwd,
                               gboolean restore_title_set,
                               SakuraTabKind restore_kind,
                               const gchar *restore_codex_session_id,
-                              const gchar *restore_codex_session_name)
+                              const gchar *restore_codex_session_name,
+                              const gchar *restore_terminal_id)
 {
 	struct sakura_tab *sk_tab;
 	GtkWidget *tab_title_hbox; GtkWidget *close_button; /* We could put them inside struct sakura_tab, but it is not necessary */
@@ -5047,6 +5128,9 @@ sakura_add_tab_with_options (const gchar *restore_cwd,
 	struct sakura_sidebar_node *sidebar_parent;
 
 	sk_tab = g_new0(struct sakura_tab, 1);
+	sk_tab->terminal_id = sakura_terminal_id_is_valid(restore_terminal_id)
+	                    ? g_strdup(restore_terminal_id)
+	                    : sakura_generate_terminal_id();
 	sk_tab->kind = restore_kind;
 	sk_tab->codex_session_id = g_strdup(restore_codex_session_id);
 	sk_tab->codex_session_name = g_strdup(restore_codex_session_name);
@@ -5157,14 +5241,21 @@ sakura_add_tab_with_options (const gchar *restore_cwd,
 	if (sakura.show_closebutton) {
 		g_signal_connect(G_OBJECT(close_button), "clicked", G_CALLBACK(sakura_closebutton_clicked_cb), sk_tab->hbox);
 	}
+	sakura_prepare_history_file(sk_tab);
 
 	/* Allow the user to use a different TERM value */
-	char *command_env[4];
+	char *command_env[6];
 	guint command_env_length = 0;
 	if (sakura.term != NULL) {
 		command_env[command_env_length++] = g_strdup_printf ("TERM=%s", sakura.term);
 	} else {
 		command_env[command_env_length++] = g_strdup_printf ("TERM=xterm-256color");
+	}
+	if (sakura.history_dir != NULL) {
+		gchar *history_file = sakura_history_file_for_tab(sk_tab);
+		command_env[command_env_length++] = g_strdup_printf("HISTFILE=%s", history_file);
+		command_env[command_env_length++] = g_strdup_printf("SAKURA_HISTORY_FILE=%s", history_file);
+		g_free(history_file);
 	}
 	if (sakura.codex_tracking_dir != NULL) {
 		command_env[command_env_length++] = g_strdup_printf("SAKURA_CODEX_TRACKING_DIR=%s",
@@ -5428,11 +5519,13 @@ sakura_del_tab(gint page)
 	}
 
 	sakura_sidebar_remove_tab(sk_tab);
+	sakura_remove_history_file(sk_tab);
 	gtk_widget_hide(sk_tab->hbox);
 	g_signal_handler_disconnect (sk_tab->vte, sk_tab->exit_handler_id);
 	g_free(sk_tab->cwd);
 	g_free(sk_tab->host);
 	g_free(sk_tab->raw_title);
+	g_free(sk_tab->terminal_id);
 	g_free(sk_tab->codex_session_id);
 	g_free(sk_tab->codex_session_name);
 	g_free(sk_tab->codex_tracking_token);
@@ -5943,7 +6036,7 @@ main(int argc, char **argv)
 	sakura.session_restoring = TRUE;
 	if (option_codex_session != NULL) {
 		sakura_add_tab_with_options(NULL, NULL, NULL, FALSE,
-		                            SAKURA_TAB_CODEX, option_codex_session, NULL);
+		                            SAKURA_TAB_CODEX, option_codex_session, NULL, NULL);
 	} else if (option_new_session || option_new_window || option_ntabs > 1 || !sakura_session_restore()) {
 		for (i=0; i<option_ntabs; i++)
 			sakura_add_tab();

@@ -29,6 +29,24 @@ Use the terminal popup's Codex menu to create, resume, or attach a session.
 Use C<Check session tracking> when diagnosing a tab that has not been
 associated. Shell tabs created before tracking was enabled must be reopened.
 
+=head1 TERMINAL HISTORY
+
+Each terminal tab has a stable ID in the workspace session file and a private
+command-history file in the adjacent C<sakura.conf.session.history> directory.
+The file is reused when Sakura relaunches, keeping shell history associated
+with that terminal tab. Sakura exports its path as both C<HISTFILE> and
+C<SAKURA_HISTORY_FILE>. Explicitly closing a tab removes its history file;
+closing or restarting Sakura preserves it.
+
+Sakura does not edit shell startup files. Bash users who want history written
+immediately can add equivalent logic to their shell configuration:
+
+    if [[ -n "$SAKURA_HISTORY_FILE" ]]; then
+        HISTFILE="$SAKURA_HISTORY_FILE"
+        shopt -s histappend
+        PROMPT_COMMAND="history -a; history -n${PROMPT_COMMAND:+;$PROMPT_COMMAND}"
+    fi
+
 =head1 HELP OPTIONS
 
 =over 8
