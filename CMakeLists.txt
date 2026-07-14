@@ -41,6 +41,7 @@ MESSAGE ("pod2man executable is" ${POD2MAN})
 
 ADD_DEFINITIONS (-DVERSION="${VERSION}")
 ADD_DEFINITIONS (-DDATADIR="${CMAKE_INSTALL_PREFIX}/share")
+ADD_DEFINITIONS (-DSAKURA_SOURCE_ICON_DIR="${CMAKE_SOURCE_DIR}/icons")
 ADD_DEFINITIONS (-DBUILDTYPE="${CMAKE_BUILD_TYPE}")
 
 IF (${CMAKE_BUILD_TYPE} MATCHES "Debug")
@@ -59,10 +60,12 @@ ADD_SUBDIRECTORY (po)
 INSTALL (TARGETS sakura RUNTIME DESTINATION bin)
 INSTALL (FILES sakura.desktop DESTINATION share/applications)
 INSTALL (FILES terminal-tango.svg DESTINATION share/pixmaps)
+INSTALL (FILES icons/hicolor/scalable/apps/sakura-codex.svg DESTINATION share/icons/hicolor/scalable/apps)
 IF (POD2MAN)
 	INSTALL (FILES ${sakura_BINARY_DIR}/sakura.1 DESTINATION share/man/man1)
 ENDIF (POD2MAN)
 INSTALL (FILES README.md DESTINATION share/doc/sakura)
+INSTALL (PROGRAMS scripts/sakura-codex-session-hook DESTINATION bin)
 
 FILE (GLOB MO_FILES po/*.mo)
 

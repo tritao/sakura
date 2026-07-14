@@ -12,6 +12,19 @@ sakura [options...]
 
 sakura is a terminal emulator based on GTK+ and VTE. It's a terminal emulator with few dependencies, so you don't need a full GNOME desktop installed to have a decent terminal emulator.
 
+=head1 CODEX SESSIONS
+
+Sakura can persist Codex sessions in its workspace session file. Install the
+optional tracker with C<scripts/sakura-codex-session-hook --install>, then
+review the hook with C</hooks> in Codex if requested. Codex sessions launched
+from Sakura shell tabs are associated using Sakura's per-tab environment and
+the Codex session hook. The hook records the session at startup and when a
+prompt is submitted, covering interactive resume flows.
+
+Use the terminal popup's Codex menu to create, resume, or attach a session.
+Use C<Check session tracking> when diagnosing a tab that has not been
+associated. Shell tabs created before tracking was enabled must be reopened.
+
 =head1 HELP OPTIONS
 
 =over 8
@@ -90,6 +103,14 @@ X display to use
 
 Use alternate configuration file. Path is relative to the sakura config dir.
 (Example: ~/.config/sakura/FILENAME).
+
+=item B<--new-session>
+
+Start a new workspace instead of restoring the previous one.
+
+=item B<--codex-session=SESSION>
+
+Open a Codex session by ID or name.
 
 =back
 

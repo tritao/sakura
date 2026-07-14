@@ -34,6 +34,29 @@ Make sure your distribution sources the vte script for OSC 7 support in no login
 
 **sakura** has several command line options. Run `sakura --help` for a full list.
 
+### Codex sessions
+
+Sakura can restore Codex conversations by their saved session ID. Install the
+optional Codex hook once:
+
+```bash
+scripts/sakura-codex-session-hook --install
+```
+
+If Codex asks you to review the new or changed hook, approve it with `/hooks`.
+
+Start or resume Codex tabs from the terminal popup's **Codex** menu. Sakura
+stores the Codex session ID with the workspace and reopens it with
+`codex resume` after the next launch. Codex commands typed manually inside
+ordinary Sakura shell tabs are tracked as well. The tracker records the ID at
+session start and again when a prompt is submitted, covering interactive
+session-picker flows. Existing shell tabs created before tracking was enabled
+must be closed and reopened so they receive Sakura's tracking environment.
+
+If a manually launched session is missed, use **Codex → Attach current tab...**
+to associate its session ID with the current tab. **Codex → Check session
+tracking** shows whether the current tab has the required environment.
+
 ## Keybindings
 
 **sakura** supports keyboard bindings in its config file (`~/.config/sakura/sakura.conf`), but there's no GUI to edit them, so please use your favourite editor to change the following values. Keybindings are a combination of an accelerator+key.

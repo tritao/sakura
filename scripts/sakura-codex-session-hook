@@ -1,0 +1,139 @@
+#!/usr/bin/env python3
+"""Install and run Sakura's optional Codex session tracker."""
+
+import json
+import os
+from pathlib import Path
+import re
+import shlex
+import sys
+import tempfile
+
+
+HOOK_MARKER = "sakura-codex-session-hook"
+TOKEN_RE = re.compile(r"^[A-Za-z0-9_.-]+$")
+
+
+def codex_home() -> Path:
+    return Path(os.environ.get("CODEX_HOME", Path.home() / ".codex"))
+
+
+def install() -> int:
+    home = codex_home()
+    home.mkdir(mode=0o700, parents=True, exist_ok=True)
+    hooks_path = home / "hooks.json"
+
+    if hooks_path.exists():
+        try:
+            config = json.loads(hooks_path.read_text())
+        except (OSError, json.JSONDecodeError) as exc:
+            print(f"cannot read {hooks_path}: {exc}", file=sys.stderr)
+            return 1
+    else:
+        config = {}
+
+    if not isinstance(config, dict):
+        print(f"{hooks_path} must contain a JSON object", file=sys.stderr)
+        return 1
+
+    hooks = config.setdefault("hooks", {})
+    if not isinstance(hooks, dict):
+        print(f"the hooks field in {hooks_path} must be an object", file=sys.stderr)
+        return 1
+
+    command = shlex.quote(str(Path(__file__).resolve()))
+    hook_specs = {
+        "SessionStart": "startup|resume|clear|compact",
+        # UserPromptSubmit has no matcher; it is a fallback for interactive
+        # session-picker flows that do not reliably emit SessionStart.
+        "UserPromptSubmit": None,
+    }
+    changed = False
+    for event_name, matcher in hook_specs.items():
+        event_hooks = hooks.setdefault(event_name, [])
+        if not isinstance(event_hooks, list):
+            print(f"the {event_name} field in {hooks_path} must be an array", file=sys.stderr)
+            return 1
+
+        already_installed = False
+        for matcher_group in event_hooks:
+            handlers = matcher_group.get("hooks", []) if isinstance(matcher_group, dict) else []
+            for handler in handlers if isinstance(handlers, list) else []:
+                if isinstance(handler, dict) and HOOK_MARKER in str(handler.get("command", "")):
+                    already_installed = True
+                    break
+            if already_installed:
+                break
+
+        if already_installed:
+            continue
+
+        matcher_group = {
+            "hooks": [{
+                "type": "command",
+                "command": command,
+                "statusMessage": "Recording Sakura Codex session",
+            }],
+        }
+        if matcher is not None:
+            matcher_group["matcher"] = matcher
+        event_hooks.append(matcher_group)
+        changed = True
+
+    if not changed:
+        print(f"Codex session tracking is already enabled in {hooks_path}")
+        return 0
+
+    fd, temporary = tempfile.mkstemp(prefix=".hooks.json.", dir=home)
+    try:
+        with os.fdopen(fd, "w") as output:
+            json.dump(config, output, indent=2)
+            output.write("\n")
+        os.chmod(temporary, 0o600)
+        os.replace(temporary, hooks_path)
+    finally:
+        try:
+            os.unlink(temporary)
+        except FileNotFoundError:
+            pass
+
+    print(f"Enabled Sakura Codex session tracking in {hooks_path}")
+    return 0
+
+
+def record_session() -> int:
+    directory = os.environ.get("SAKURA_CODEX_TRACKING_DIR")
+    token = os.environ.get("SAKURA_CODEX_TAB_TOKEN")
+    if not directory or not token or not TOKEN_RE.fullmatch(token):
+        return 0
+
+    try:
+        event = json.load(sys.stdin)
+    except (json.JSONDecodeError, OSError):
+        return 0
+
+    session_id = event.get("session_id") if isinstance(event, dict) else None
+    if not isinstance(session_id, str) or not session_id:
+        return 0
+
+    tracking_dir = Path(directory)
+    tracking_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
+    target = tracking_dir / token
+    fd, temporary = tempfile.mkstemp(prefix=f".{token}.", dir=tracking_dir)
+    try:
+        with os.fdopen(fd, "w") as output:
+            output.write(session_id + "\n")
+        os.chmod(temporary, 0o600)
+        os.replace(temporary, target)
+    finally:
+        try:
+            os.unlink(temporary)
+        except FileNotFoundError:
+            pass
+    return 0
+
+
+if __name__ == "__main__":
+    if len(sys.argv) == 2 and sys.argv[1] == "--install":
+        raise SystemExit(install())
+    raise SystemExit(record_session())
