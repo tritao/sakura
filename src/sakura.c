@@ -387,6 +387,7 @@ static struct {
 	char *sessionfile;
 	char *codex_tracking_dir;
 	char *history_dir;
+	char *bash_history_rc;
 	char *icon;
 	char *shell_path;
 	char *main_title;		/* Main window static title from user input */
@@ -679,6 +680,7 @@ static void     sakura_init ();
 static void     sakura_init_popup ();
 static void     sakura_add_tab ();
 static void     sakura_spawn_codex (struct sakura_tab *, const gchar *, gchar **);
+static void     sakura_spawn_shell (struct sakura_tab *, const gchar *, gchar **);
 static void     sakura_add_tab_with_options (const gchar *, struct sakura_sidebar_node *,
                                              const gchar *, gboolean, SakuraTabKind,
                                              const gchar *, const gchar *, const gchar *);
@@ -1961,6 +1963,76 @@ sakura_prepare_history_file (struct sakura_tab *sk_tab)
 			SAY("Could not secure terminal history file %s: %s", history_file, g_strerror(errno));
 	}
 	g_free(history_file);
+}
+
+
+static void
+sakura_prepare_bash_integration (void)
+{
+	static const gchar bash_rc[] =
+		"if [[ -z \"${SAKURA_HISTORY_PROMPT_ACTIVE:-}\" ]]; then\n"
+		"    SAKURA_HISTORY_PROMPT_ACTIVE=1\n"
+		"    if [[ -n \"${SAKURA_BASH_LOGIN:-}\" ]]; then\n"
+		"        [[ -r /etc/profile ]] && . /etc/profile\n"
+		"        if [[ -n \"${HOME:-}\" && -r \"$HOME/.bash_profile\" ]]; then\n"
+		"            . \"$HOME/.bash_profile\"\n"
+		"        elif [[ -n \"${HOME:-}\" && -r \"$HOME/.bash_login\" ]]; then\n"
+		"            . \"$HOME/.bash_login\"\n"
+		"        elif [[ -n \"${HOME:-}\" && -r \"$HOME/.profile\" ]]; then\n"
+		"            . \"$HOME/.profile\"\n"
+		"        fi\n"
+		"    elif [[ -n \"${HOME:-}\" && -r \"$HOME/.bashrc\" ]]; then\n"
+		"        . \"$HOME/.bashrc\"\n"
+		"    fi\n"
+		"    if [[ -n \"${SAKURA_HISTORY_FILE:-}\" && "
+		"-z \"${SAKURA_DISABLE_HISTORY_INTEGRATION:-}\" ]]; then\n"
+		"        HISTFILE=\"$SAKURA_HISTORY_FILE\"\n"
+		"        shopt -s histappend\n"
+		"        if [[ $(declare -p PROMPT_COMMAND 2>/dev/null) == "
+		"\"declare -a\"* ]]; then\n"
+		"            PROMPT_COMMAND=(history -a history -n \"${PROMPT_COMMAND[@]}\")\n"
+		"        else\n"
+		"            PROMPT_COMMAND=\"history -a; history -n${PROMPT_COMMAND:+;$PROMPT_COMMAND}\"\n"
+		"        fi\n"
+		"    fi\n"
+		"fi\n";
+	GError *error = NULL;
+
+	if (sakura.history_dir == NULL)
+		return;
+
+	sakura.bash_history_rc = g_build_filename(sakura.history_dir, "sakura-bashrc", NULL);
+	if (!g_file_set_contents(sakura.bash_history_rc, bash_rc, -1, &error) ||
+	    chmod(sakura.bash_history_rc, 0600) != 0) {
+		SAY("Could not prepare Bash history integration: %s",
+		    error != NULL ? error->message : g_strerror(errno));
+		if (error != NULL)
+			g_error_free(error);
+		g_clear_pointer(&sakura.bash_history_rc, g_free);
+	}
+}
+
+
+static gboolean
+sakura_shell_is_bash (void)
+{
+	gchar *basename;
+	gboolean is_bash;
+
+	if (sakura.argv[0] == NULL)
+		return FALSE;
+	basename = g_path_get_basename(sakura.argv[0]);
+	is_bash = g_strcmp0(basename, "bash") == 0;
+	g_free(basename);
+	return is_bash;
+}
+
+
+static gboolean
+sakura_bash_integration_enabled (void)
+{
+	return sakura.bash_history_rc != NULL && sakura_shell_is_bash() &&
+	       g_getenv("SAKURA_DISABLE_HISTORY_INTEGRATION") == NULL;
 }
 
 
@@ -4482,6 +4554,7 @@ sakura_init()
 			SAY("Could not create terminal history directory: %s", g_strerror(errno));
 		else if (chmod(sakura.history_dir, 0700) != 0)
 			SAY("Could not secure terminal history directory: %s", g_strerror(errno));
+		sakura_prepare_bash_integration();
 		sakura_session_load();
 		sakura.codex_tracking_source_id = g_timeout_add(500,
 		                                                 sakura_codex_tracking_poll_cb,
@@ -4924,6 +4997,7 @@ sakura_destroy()
 	g_free(sakura.sessionfile);
 	g_free(sakura.codex_tracking_dir);
 	g_free(sakura.history_dir);
+	g_free(sakura.bash_history_rc);
 
 	gtk_main_quit();
 }
@@ -5301,6 +5375,40 @@ sakura_spawn_callback (VteTerminal *vte, GPid pid, GError *error, gpointer user_
 
 
 static void
+sakura_spawn_shell (struct sakura_tab *sk_tab, const gchar *cwd, gchar **env)
+{
+	gchar *bash_argv[6];
+	char **argv = sakura.argv;
+
+	if (sakura_bash_integration_enabled()) {
+		bash_argv[0] = sakura.argv[0];
+		if (option_login) {
+			/* Reproduce login-shell startup inside the generated rc file. This
+			 * lets Bash accept --rcfile while retaining /etc/profile and the
+			 * user's normal login profile order. */
+			bash_argv[1] = sakura.argv[0];
+			bash_argv[2] = (gchar *)"--noprofile";
+			bash_argv[3] = (gchar *)"--rcfile";
+			bash_argv[4] = sakura.bash_history_rc;
+			bash_argv[5] = NULL;
+		} else {
+			bash_argv[1] = sakura.argv[1];
+			bash_argv[2] = (gchar *)"--rcfile";
+			bash_argv[3] = sakura.bash_history_rc;
+			bash_argv[4] = NULL;
+		}
+		argv = bash_argv;
+	}
+
+	vte_terminal_spawn_async(VTE_TERMINAL(sk_tab->vte), VTE_PTY_NO_HELPER, cwd,
+	                         argv, env,
+	                         G_SPAWN_SEARCH_PATH | G_SPAWN_FILE_AND_ARGV_ZERO,
+	                         NULL, NULL, NULL, -1, NULL,
+	                         sakura_spawn_callback, sk_tab);
+}
+
+
+static void
 sakura_add_tab (void)
 {
 	sakura_add_tab_with_options(NULL, NULL, NULL, FALSE, SAKURA_TAB_SHELL, NULL, NULL, NULL);
@@ -5609,7 +5717,7 @@ sakura_add_tab_with_options (const gchar *restore_cwd,
 	sakura_prepare_history_file(sk_tab);
 
 	/* Allow the user to use a different TERM value */
-	char *command_env[6];
+	char *command_env[8];
 	guint command_env_length = 0;
 	if (sakura.term != NULL) {
 		command_env[command_env_length++] = g_strdup_printf ("TERM=%s", sakura.term);
@@ -5622,6 +5730,8 @@ sakura_add_tab_with_options (const gchar *restore_cwd,
 		command_env[command_env_length++] = g_strdup_printf("SAKURA_HISTORY_FILE=%s", history_file);
 		g_free(history_file);
 	}
+	if (sakura_bash_integration_enabled() && option_login)
+		command_env[command_env_length++] = g_strdup("SAKURA_BASH_LOGIN=1");
 	if (sakura.codex_tracking_dir != NULL) {
 		command_env[command_env_length++] = g_strdup_printf("SAKURA_CODEX_TRACKING_DIR=%s",
 		                                                     sakura.codex_tracking_dir);
@@ -5722,8 +5832,7 @@ sakura_add_tab_with_options (const gchar *restore_cwd,
 				sakura_error("Hold option given without any command");
 				option_hold = FALSE;
 			}
-			vte_terminal_spawn_async(VTE_TERMINAL(sk_tab->vte), VTE_PTY_NO_HELPER, cwd, sakura.argv, command_env,
-					        G_SPAWN_SEARCH_PATH|G_SPAWN_FILE_AND_ARGV_ZERO, NULL, NULL, NULL, -1, NULL, sakura_spawn_callback, sk_tab);
+			sakura_spawn_shell(sk_tab, cwd, command_env);
 		}
 
 	/********** Not the first tab ************/
@@ -5778,8 +5887,7 @@ sakura_add_tab_with_options (const gchar *restore_cwd,
 				sakura_error("Hold option given without any command");
 				option_hold = FALSE;
 			}
-			vte_terminal_spawn_async(VTE_TERMINAL(sk_tab->vte), VTE_PTY_NO_HELPER, cwd, sakura.argv, command_env,
-					        G_SPAWN_SEARCH_PATH|G_SPAWN_FILE_AND_ARGV_ZERO, NULL, NULL, NULL, -1, NULL, sakura_spawn_callback, sk_tab);
+			sakura_spawn_shell(sk_tab, cwd, command_env);
 		}
 	}
 
