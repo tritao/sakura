@@ -53,9 +53,16 @@ session start and again when a prompt is submitted, covering interactive
 session-picker flows. Existing shell tabs created before tracking was enabled
 must be closed and reopened so they receive Sakura's tracking environment.
 
+Sakura also reads the Codex session name through Codex's app-server interface.
+Names set with Codex's `/rename` command are shown in the Sakura tree unless
+the tree node has been manually renamed. If a session has no Codex name yet,
+Sakura displays `Codex`.
+
 If a manually launched session is missed, use **Codex → Attach current tab...**
 to associate its session ID with the current tab. **Codex → Check session
-tracking** shows whether the current tab has the required environment.
+tracking** shows whether the current tab has the required environment. After
+using `/rename` while staying in the same tab, use **Codex → Refresh session
+name** to update the tree immediately.
 
 ## Keybindings
 
@@ -91,7 +98,7 @@ To change default keys, set the key value you want to modify to your desired key
 	Alt  + [1-9]                     -> Switch to tab N (1-9)
 
 	Ctrl + Shift + S                 -> Toggle/Untoggle scrollbar
-	Ctrl + Shift + Mouse left button -> Open link
+	Ctrl + Mouse left button         -> Open link
 	F11                              -> Fullscreen
 	Shift + PageUp                   -> Move up through scrollback by page
 	Shift + PageDown                 -> Move down through scrollback by page

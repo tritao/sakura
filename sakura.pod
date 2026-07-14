@@ -21,6 +21,10 @@ from Sakura shell tabs are associated using Sakura's per-tab environment and
 the Codex session hook. The hook records the session at startup and when a
 prompt is submitted, covering interactive resume flows.
 
+Sakura reads saved session names through Codex's app-server interface. Names
+set with Codex's C</rename> command are used for tree nodes unless the node
+has been manually renamed in Sakura.
+
 Use the terminal popup's Codex menu to create, resume, or attach a session.
 Use C<Check session tracking> when diagnosing a tab that has not been
 associated. Shell tabs created before tracking was enabled must be reopened.
@@ -197,7 +201,7 @@ Before sakura used keycodes instead of strings. They're still valid.
     Alt + Shift + Right cursor       -> Move tab to the right
     Alt + [1-9]                     -> Switch to tab N (1-9)
     Ctrl + Shift + S                 -> Toggle scrollbar
-    Ctrl + Shift + Mouse left button -> Open link
+    Ctrl + Mouse left button         -> Open link
     F11                              -> Fullscreen
     Shift + PageUp                   -> Move up through scrollback by page
     Shift + PageDown                 -> Move down through scrollback by page
