@@ -12,6 +12,13 @@ import tempfile
 
 HOOK_MARKER = "sakura-codex-session-hook"
 TOKEN_RE = re.compile(r"^[A-Za-z0-9_.-]+$")
+STATE_BY_EVENT = {
+    "SessionStart": "idle",
+    "UserPromptSubmit": "running",
+    "PreToolUse": "running",
+    "PermissionRequest": "needs-approval",
+    "Stop": "ready",
+}
 
 
 def codex_home() -> Path:
@@ -47,6 +54,9 @@ def install() -> int:
         # UserPromptSubmit has no matcher; it is a fallback for interactive
         # session-picker flows that do not reliably emit SessionStart.
         "UserPromptSubmit": None,
+        "PreToolUse": None,
+        "PermissionRequest": None,
+        "Stop": None,
     }
     changed = False
     for event_name, matcher in hook_specs.items():
@@ -113,16 +123,34 @@ def record_session() -> int:
         return 0
 
     session_id = event.get("session_id") if isinstance(event, dict) else None
-    if not isinstance(session_id, str) or not session_id:
+    if not isinstance(session_id, str) or not session_id or "\n" in session_id:
         return 0
 
     tracking_dir = Path(directory)
     tracking_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
+    state = STATE_BY_EVENT.get(event.get("hook_event_name"), "")
+    if not state:
+        return 0
+
+    event_name = event.get("hook_event_name")
+    turn_id = event.get("turn_id")
+    if not isinstance(turn_id, str) or "\n" in turn_id:
+        turn_id = ""
+
     target = tracking_dir / token
+    payload = [
+        "[tracking]",
+        f"session_id={session_id}",
+        f"event={event_name}",
+        f"state={state}",
+    ]
+    if turn_id:
+        payload.append(f"turn_id={turn_id}")
+    payload = "\n".join(payload) + "\n"
     fd, temporary = tempfile.mkstemp(prefix=f".{token}.", dir=tracking_dir)
     try:
         with os.fdopen(fd, "w") as output:
-            output.write(session_id + "\n")
+            output.write(payload)
         os.chmod(temporary, 0o600)
         os.replace(temporary, target)
     finally:
@@ -130,6 +158,11 @@ def record_session() -> int:
             os.unlink(temporary)
         except FileNotFoundError:
             pass
+
+    # Stop hooks must produce JSON when they succeed. An empty object carries
+    # no decision and lets Codex finish the turn normally.
+    if event_name == "Stop":
+        print("{}")
     return 0
 
 
