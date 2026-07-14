@@ -241,8 +241,20 @@ struct scheme predefined_schemes[NUM_SCHEMES] = {
 	{"Solarized light", {0.992157, 0.964706, 0.890196, 1}, {0.396078, 0.482353, 0.513725, 1}}
 };
 
-/* CSS definitions. Global CSS is empty, just drop here you CSS to personalize widgets */
-#define SAKURA_CSS ""
+/* Keep the client-side title bar compact, like GNOME Terminal's title bar. */
+#define SAKURA_CSS "\
+#sakura headerbar {\
+	min-height: 24px;\
+	padding: 0 2px;\
+}\
+#sakura headerbar button {\
+	min-width: 22px;\
+	min-height: 22px;\
+	padding: 0;\
+}\
+#sakura headerbar label {\
+	padding: 0;\
+}"
 
 #define FADE_WINDOW_CSS "\
 window#fade_window {\
@@ -268,6 +280,7 @@ typedef enum {
 /* Global sakura data */
 static struct {
 	GtkWidget *main_window;
+	GtkWidget *header_bar;
 	GtkWidget *notebook;
 	GtkWidget *menu;
 	GtkWidget *fade_window;  /* Window used for fading effect */
@@ -877,7 +890,7 @@ sakura_switch_page_cb (GtkWidget *widget, GtkWidget *widget_page, guint page_num
 	//if (!sakura.tab_default_title && !sakura.main_title)
 	if (!sakura.main_title) {
 		if (g_strcmp0(gtk_label_get_text(GTK_LABEL(sk_tab->label)),"")!=0) {
-			gtk_window_set_title(GTK_WINDOW(sakura.main_window), gtk_label_get_text(GTK_LABEL(sk_tab->label)));
+			sakura_set_window_title(gtk_label_get_text(GTK_LABEL(sk_tab->label)));
 		}
 	}
 
@@ -910,6 +923,16 @@ sakura_notebook_focus_cb (GtkWindow *window, GdkEvent *event, void *data)
 	gtk_widget_grab_focus(sk_tab->vte);
 
 	return FALSE;
+}
+
+
+static void
+sakura_set_window_title (const gchar *title)
+{
+	gtk_window_set_title(GTK_WINDOW(sakura.main_window), title);
+	if (sakura.header_bar != NULL) {
+		gtk_header_bar_set_title(GTK_HEADER_BAR(sakura.header_bar), title);
+	}
 }
 
 
@@ -1162,7 +1185,7 @@ sakura_title_changed_cb (GtkWidget *widget, void *data)
 	/* User set values overrides any other one */
 	if (!sk_tab->label_set_byuser) {
 		sakura_set_tab_label_text(tabtitle, modified_page);
-		if (!sakura.main_title) gtk_window_set_title(GTK_WINDOW(sakura.main_window), tabtitle);
+		if (!sakura.main_title) sakura_set_window_title(tabtitle);
 	}
 
 }
@@ -1301,7 +1324,7 @@ sakura_set_name_dialog_cb (GtkWidget *widget, void *data)
 
 	if (response == GTK_RESPONSE_ACCEPT) {
 		sakura_set_tab_label_text(gtk_entry_get_text(GTK_ENTRY(entry)), page);
-		gtk_window_set_title(GTK_WINDOW(sakura.main_window), gtk_entry_get_text(GTK_ENTRY(entry)));
+		sakura_set_window_title(gtk_entry_get_text(GTK_ENTRY(entry)));
 		sk_tab->label_set_byuser=true; 
 		sakura.main_title=NULL; /* Ignore the user-set window title if the user names the tab */
 	}
@@ -1606,7 +1629,7 @@ sakura_set_title_dialog (GtkWidget *widget, void *data)
 	response=gtk_dialog_run(GTK_DIALOG(title_dialog));
 	if (response==GTK_RESPONSE_ACCEPT) {
 		/* Bug #257391 shadow reaches here too... */
-		gtk_window_set_title(GTK_WINDOW(sakura.main_window), gtk_entry_get_text(GTK_ENTRY(entry)));
+		sakura_set_window_title(gtk_entry_get_text(GTK_ENTRY(entry)));
 	}
 	gtk_widget_destroy(title_dialog);
 }
@@ -2581,13 +2604,22 @@ sakura_init()
 
 	/*** Sakura window initialization ***/
 
-	/* Use always GTK header bar*/
-	g_object_set(gtk_settings_get_default(), "gtk-dialogs-use-header", TRUE, NULL);
+	/* Use the same dark/light preference as GNOME Terminal and GTK header
+	 * bars for the main window and dialogs. */
+	g_object_set(gtk_settings_get_default(),
+	             "gtk-dialogs-use-header", TRUE,
+	             "gtk-application-prefer-dark-theme", sakura_prefers_dark_theme(),
+	             NULL);
 
 	/* Create our windows */
 	sakura.main_window = gtk_window_new(GTK_WINDOW_TOPLEVEL);
 	gtk_window_set_title(GTK_WINDOW(sakura.main_window), "sakura");
 	gtk_widget_set_name(sakura.main_window, "sakura");
+	sakura.header_bar = gtk_header_bar_new();
+	gtk_header_bar_set_show_close_button(GTK_HEADER_BAR(sakura.header_bar), TRUE);
+	gtk_header_bar_set_title(GTK_HEADER_BAR(sakura.header_bar), "sakura");
+	gtk_window_set_titlebar(GTK_WINDOW(sakura.main_window), sakura.header_bar);
+	gtk_widget_show(sakura.header_bar);
 
 	sakura.fade_window = gtk_window_new(GTK_WINDOW_POPUP);
 	gtk_widget_set_name(sakura.fade_window, "fade_window");
@@ -2654,7 +2686,7 @@ sakura_init()
 	/* More options */
 	if (option_title) {
 		sakura.main_title = g_strdup_printf("%s", option_title);
-		gtk_window_set_title(GTK_WINDOW(sakura.main_window), sakura.main_title);
+		sakura_set_window_title(sakura.main_title);
 	} else {
 		sakura.main_title = NULL;
 	}
@@ -4077,6 +4109,8 @@ main(int argc, char **argv)
 	GError *error=NULL;
 	GOptionContext *context; GOptionGroup *option_group;
 
+	/* GTK reads GTK_THEME while its option group is initialized. */
+	sakura_set_dark_theme_environment();
 	context = g_option_context_new (_("- vte-based terminal emulator"));
 	option_group = gtk_get_option_group(TRUE);
 	g_option_context_add_main_entries (context, entries, GETTEXT_PACKAGE);
@@ -4122,4 +4156,3 @@ main(int argc, char **argv)
 
 	return 0;
 }
-
