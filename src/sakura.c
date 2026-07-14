@@ -1257,41 +1257,47 @@ sakura_sidebar_button_press_cb (GtkWidget *widget, GdkEventButton *event, void *
 	if (event->button != GDK_BUTTON_SECONDARY)
 		return FALSE;
 
-	if (gtk_tree_view_get_path_at_pos(GTK_TREE_VIEW(widget), event->x, event->y,
+	if (GTK_IS_TREE_VIEW(widget) &&
+	    gtk_tree_view_get_path_at_pos(GTK_TREE_VIEW(widget), event->x, event->y,
 	                                  &path, &column, NULL, NULL)) {
 		gtk_tree_selection_select_path(sakura.sidebar_selection, path);
 		node = sakura_sidebar_selected_node();
-		menu = gtk_menu_new();
-
-		item = gtk_menu_item_new_with_label(_("New terminal"));
-		g_signal_connect(item, "activate", G_CALLBACK(sakura_new_tab_cb), NULL);
-		gtk_menu_shell_append(GTK_MENU_SHELL(menu), item);
-		item = gtk_menu_item_new_with_label(_("New terminal group"));
-		g_signal_connect(item, "activate", G_CALLBACK(sakura_sidebar_new_group_cb), NULL);
-		gtk_menu_shell_append(GTK_MENU_SHELL(menu), item);
-
-		if (node != NULL && node->type == SAKURA_SIDEBAR_TERMINAL) {
-			gtk_menu_shell_append(GTK_MENU_SHELL(menu), gtk_separator_menu_item_new());
-			item = gtk_menu_item_new_with_label(_("Set terminal name..."));
-			g_signal_connect(item, "activate", G_CALLBACK(sakura_set_name_dialog_cb), NULL);
-			gtk_menu_shell_append(GTK_MENU_SHELL(menu), item);
-			item = gtk_menu_item_new_with_label(_("Close terminal"));
-			g_signal_connect(item, "activate", G_CALLBACK(sakura_close_tab_cb), NULL);
-			gtk_menu_shell_append(GTK_MENU_SHELL(menu), item);
-		} else if (node != NULL && node != sakura.sidebar_root) {
-			gtk_menu_shell_append(GTK_MENU_SHELL(menu), gtk_separator_menu_item_new());
-			item = gtk_menu_item_new_with_label(_("Rename group..."));
-			g_signal_connect(item, "activate", G_CALLBACK(sakura_sidebar_rename_group_cb), node);
-			gtk_menu_shell_append(GTK_MENU_SHELL(menu), item);
-			item = gtk_menu_item_new_with_label(_("Delete empty group"));
-			g_signal_connect(item, "activate", G_CALLBACK(sakura_sidebar_delete_group_cb), node);
-			gtk_menu_shell_append(GTK_MENU_SHELL(menu), item);
-		}
-
-		gtk_widget_show_all(menu);
-		gtk_menu_popup_at_pointer(GTK_MENU(menu), (GdkEvent *)event);
-		gtk_tree_path_free(path);
+	} else {
+		gtk_tree_selection_unselect_all(sakura.sidebar_selection);
+		node = NULL;
 	}
+
+	menu = gtk_menu_new();
+
+	item = gtk_menu_item_new_with_label(_("New terminal"));
+	g_signal_connect(item, "activate", G_CALLBACK(sakura_new_tab_cb), NULL);
+	gtk_menu_shell_append(GTK_MENU_SHELL(menu), item);
+	item = gtk_menu_item_new_with_label(_("New terminal group"));
+	g_signal_connect(item, "activate", G_CALLBACK(sakura_sidebar_new_group_cb), NULL);
+	gtk_menu_shell_append(GTK_MENU_SHELL(menu), item);
+
+	if (node != NULL && node->type == SAKURA_SIDEBAR_TERMINAL) {
+		gtk_menu_shell_append(GTK_MENU_SHELL(menu), gtk_separator_menu_item_new());
+		item = gtk_menu_item_new_with_label(_("Set terminal name..."));
+		g_signal_connect(item, "activate", G_CALLBACK(sakura_set_name_dialog_cb), NULL);
+		gtk_menu_shell_append(GTK_MENU_SHELL(menu), item);
+		item = gtk_menu_item_new_with_label(_("Close terminal"));
+		g_signal_connect(item, "activate", G_CALLBACK(sakura_close_tab_cb), NULL);
+		gtk_menu_shell_append(GTK_MENU_SHELL(menu), item);
+	} else if (node != NULL && node != sakura.sidebar_root) {
+		gtk_menu_shell_append(GTK_MENU_SHELL(menu), gtk_separator_menu_item_new());
+		item = gtk_menu_item_new_with_label(_("Rename group..."));
+		g_signal_connect(item, "activate", G_CALLBACK(sakura_sidebar_rename_group_cb), node);
+		gtk_menu_shell_append(GTK_MENU_SHELL(menu), item);
+		item = gtk_menu_item_new_with_label(_("Delete empty group"));
+		g_signal_connect(item, "activate", G_CALLBACK(sakura_sidebar_delete_group_cb), node);
+		gtk_menu_shell_append(GTK_MENU_SHELL(menu), item);
+	}
+
+	gtk_widget_show_all(menu);
+	gtk_menu_popup_at_pointer(GTK_MENU(menu), (GdkEvent *)event);
+	if (path != NULL)
+		gtk_tree_path_free(path);
 
 	return TRUE;
 }
@@ -1615,6 +1621,9 @@ sakura_sidebar_init (void)
 	g_signal_connect(sakura.sidebar_model, "rows-reordered",
 	                 G_CALLBACK(sakura_sidebar_model_reordered_cb), NULL);
 	g_signal_connect(sakura.sidebar_tree, "button-press-event",
+	                 G_CALLBACK(sakura_sidebar_button_press_cb), NULL);
+	gtk_widget_add_events(sakura.sidebar, GDK_BUTTON_PRESS_MASK);
+	g_signal_connect(sakura.sidebar, "button-press-event",
 	                 G_CALLBACK(sakura_sidebar_button_press_cb), NULL);
 
 	sakura.sidebar_paned = gtk_paned_new(GTK_ORIENTATION_HORIZONTAL);
