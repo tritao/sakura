@@ -108,6 +108,15 @@ workspace. Install the optional dependency with:
 
     gh extension install dlvhdr/gh-dash
 
+**Open pull request...** accepts an HTTPS GitHub pull request URL and opens a
+dedicated tab with `gh pr view <url>`. The URL is saved with the workspace and
+the tab remains open after the details are displayed. When Sakura is built with
+WebKitGTK 4.1 or 4.0 development files, the tab embeds the GitHub page with
+back, forward, reload, and external-browser controls. Without WebKitGTK, Sakura
+uses the terminal-based `gh pr view` fallback.
+Install `libwebkit2gtk-4.1-dev` (or the 4.0 development package) before
+building to enable the embedded view.
+
 The **Open Here** button and menu open the current directory in the desktop
 file manager or a detected graphical editor. Sakura checks `code`, `codium`,
 `zed`, `subl`, `gnome-text-editor`, `gedit`, `xed`, `pluma`, `mousepad`, and

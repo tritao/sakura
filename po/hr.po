@@ -8,7 +8,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: Sakura 2.3.4\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2024-08-10 19:15+0200\n"
+"POT-Creation-Date: 2026-07-14 22:46+0100\n"
 "PO-Revision-Date: 2020-05-06 05:00+0000\n"
 "Last-Translator: Milo Ivir <Unknown>\n"
 "Language-Team: \n"
@@ -64,8 +64,151 @@ msgstr "Cjeloekranski prikaz"
 msgid "Use alternate configuration file"
 msgstr "Koristi alternativnu konfiguracijsku datoteku"
 
+msgid "Start a new workspace instead of restoring the previous one"
+msgstr ""
+
+msgid "Open a Codex session by ID or name"
+msgstr ""
+
 msgid "Select initial colorset"
 msgstr "Odaberi skup boja"
+
+msgid "Workspace"
+msgstr ""
+
+#, c-format
+msgid "Workspace (%u need attention)"
+msgstr ""
+
+msgid "Idle"
+msgstr ""
+
+msgid "Working"
+msgstr ""
+
+msgid "Needs approval"
+msgstr ""
+
+msgid "Ready to review"
+msgstr ""
+
+msgid "Stopped"
+msgstr ""
+
+#, fuzzy
+msgid "GitUI"
+msgstr "Otvori e-poštu"
+
+msgid "GitHub Dashboard"
+msgstr ""
+
+#, fuzzy
+msgid "Pull request"
+msgstr "Cjeloekranski prikaz"
+
+msgid "Git Cola"
+msgstr ""
+
+msgid "Tool"
+msgstr ""
+
+#, fuzzy
+msgid "Terminal"
+msgstr "Terminal %d"
+
+msgid "All terminals"
+msgstr ""
+
+#, c-format
+msgid "%s (%u)"
+msgstr ""
+
+#, fuzzy
+msgid "Rename terminal..."
+msgstr "Postavi ime kartice …"
+
+#, fuzzy
+msgid "Close terminal"
+msgstr "Zatvori karticu"
+
+msgid "Codex"
+msgstr ""
+
+#, c-format
+msgid "Terminal %d"
+msgstr "Terminal %d"
+
+#, fuzzy
+msgid "New terminal"
+msgstr "Nova kartica"
+
+msgid "Tools"
+msgstr ""
+
+msgid "Open pull request..."
+msgstr ""
+
+msgid "Open Here"
+msgstr ""
+
+msgid "New Codex session"
+msgstr ""
+
+msgid "Resume session..."
+msgstr ""
+
+msgid "New group"
+msgstr ""
+
+msgid "Rename Codex session..."
+msgstr ""
+
+msgid "Rename group..."
+msgstr ""
+
+msgid "Delete group"
+msgstr ""
+
+msgid "_Cancel"
+msgstr "_Odustani"
+
+msgid "_Create"
+msgstr ""
+
+msgid "Group name"
+msgstr ""
+
+msgid "Rename group"
+msgstr ""
+
+msgid "_Apply"
+msgstr "_Primijeni"
+
+msgid "Only empty terminal groups can be deleted."
+msgstr ""
+
+msgid "This Sakura session is already open."
+msgstr ""
+
+msgid "Sakura session already open"
+msgstr ""
+
+msgid ""
+"Choose Exit to keep using the existing session, or launch a new persistent "
+"instance with its own saved workspace."
+msgstr ""
+
+msgid "_Exit"
+msgstr ""
+
+msgid "_Launch new instance"
+msgstr ""
+
+msgid "unknown error"
+msgstr ""
+
+msgid "No terminals in this group"
+msgstr ""
 
 msgid ""
 "There are running processes.\n"
@@ -81,12 +224,6 @@ msgstr "Odaberi font"
 
 msgid "Set tab name"
 msgstr "Postavi ime kartice"
-
-msgid "_Cancel"
-msgstr "_Odustani"
-
-msgid "_Apply"
-msgstr "_Primijeni"
 
 msgid "New text"
 msgstr "Novi tekst"
@@ -124,6 +261,179 @@ msgstr ""
 msgid "New window title"
 msgstr "Naslov novog prozora"
 
+#, c-format
+msgid "Could not parse BROWSER: %s"
+msgstr ""
+
+#, c-format
+msgid "Could not open link with %s: %s"
+msgstr ""
+
+#, c-format
+msgid "Could not open link: %s"
+msgstr ""
+
+msgid "Could not determine the current directory."
+msgstr ""
+
+msgid "Could not find a file manager opener (gio or xdg-open)."
+msgstr ""
+
+#, c-format
+msgid "Could not parse the configured editor command: %s"
+msgstr ""
+
+#, fuzzy
+msgid "empty command"
+msgstr "Izvrši naredbu"
+
+msgid ""
+"No graphical editor was found. Set editor_command in Sakura's config or "
+"SAKURA_EDITOR."
+msgstr ""
+
+#, c-format
+msgid "Could not open %s: %s"
+msgstr ""
+
+msgid "the file manager"
+msgstr ""
+
+msgid "the editor"
+msgstr ""
+
+msgid "File Manager"
+msgstr ""
+
+msgid "Editor"
+msgstr ""
+
+msgid ""
+"GitHub Dashboard is not installed. Run: gh extension install dlvhdr/gh-dash"
+msgstr ""
+
+msgid "Git Cola is not installed. Install the git-cola package and try again."
+msgstr ""
+
+msgid "GitUI is not installed. Install it and try again."
+msgstr ""
+
+msgid "The current directory is not inside a Git repository."
+msgstr ""
+
+msgid "Could not determine the Git repository root."
+msgstr ""
+
+msgid "Open pull request"
+msgstr ""
+
+msgid "_Open"
+msgstr ""
+
+msgid "https://github.com/owner/repo/pull/123"
+msgstr ""
+
+msgid "Enter a valid HTTPS GitHub pull request URL."
+msgstr ""
+
+msgid "GitHub CLI is not installed. Install gh and try again."
+msgstr ""
+
+msgid "Resume session"
+msgstr ""
+
+msgid "_Resume"
+msgstr ""
+
+msgid "Session ID or name"
+msgstr ""
+
+msgid "Attach Codex session"
+msgstr ""
+
+msgid "_Attach"
+msgstr ""
+
+msgid "The current tab is not attached to a Codex session."
+msgstr ""
+
+msgid "Rename Codex session"
+msgstr ""
+
+msgid "_Rename"
+msgstr ""
+
+msgid "Session name"
+msgstr ""
+
+msgid "Codex rejected the rename request"
+msgstr ""
+
+#, c-format
+msgid "Could not rename Codex session: %s"
+msgstr ""
+
+msgid "The Codex session helper is not installed."
+msgstr ""
+
+#, c-format
+msgid "Could not start the Codex session helper: %s"
+msgstr ""
+
+#, c-format
+msgid ""
+"Codex tracking status:\n"
+"\n"
+"Hook entry: %s\n"
+"Tracking directory: %s\n"
+"Current tab environment: %s\n"
+"Current tab kind: %s\n"
+"Current Codex session: %s\n"
+"Current Codex name: %s"
+msgstr ""
+
+msgid "present"
+msgstr ""
+
+msgid "missing"
+msgstr ""
+
+msgid "disabled"
+msgstr ""
+
+msgid "missing (reopen this tab)"
+msgstr ""
+
+#, fuzzy
+msgid "shell"
+msgstr "Ljuska prijave"
+
+msgid "not received"
+msgstr ""
+
+msgid "not available"
+msgstr ""
+
+msgid ""
+"The Codex hook is not installed. Run scripts/sakura-codex-session-hook --"
+"install from the Sakura source tree first."
+msgstr ""
+
+#, c-format
+msgid "Could not install the Codex session hook: %s"
+msgstr ""
+
+msgid "Codex session tracking is enabled."
+msgstr ""
+
+#, c-format
+msgid "Could not create a separate persistent session.\n"
+msgstr ""
+
+#, c-format
+msgid "Could not lock the Sakura session.\n"
+msgstr ""
+
 msgid "Open mail"
 msgstr "Otvori e-poštu"
 
@@ -135,6 +445,21 @@ msgstr "Kopiraj poveznicu"
 
 msgid "New tab"
 msgstr "Nova kartica"
+
+msgid "Attach current tab..."
+msgstr ""
+
+msgid "Rename session..."
+msgstr ""
+
+msgid "Refresh session name"
+msgstr ""
+
+msgid "Check session tracking"
+msgstr ""
+
+msgid "Enable Codex session tracking"
+msgstr ""
 
 msgid "Set tab name..."
 msgstr "Postavi ime kartice …"
@@ -160,13 +485,18 @@ msgstr "Odaberi font …"
 msgid "Select colors..."
 msgstr "Odaberi boje …"
 
-msgid "Show tab bar"
+#, fuzzy
+msgid "Show terminal sidebar"
+msgstr "Prikaži traku s karticama"
+
+#, fuzzy
+msgid "Tab bar"
 msgstr "Prikaži traku s karticama"
 
 msgid "Always"
 msgstr "Uvijek"
 
-msgid "When there's more than one tab"
+msgid "When there are multiple visible terminals"
 msgstr ""
 
 msgid "Never"
@@ -214,9 +544,17 @@ msgstr "Okomita crta"
 msgid "Search"
 msgstr "Traži"
 
-#, c-format
-msgid "Terminal %d"
-msgstr "Terminal %d"
+msgid "Back"
+msgstr ""
+
+msgid "Forward"
+msgstr ""
+
+msgid "Reload"
+msgstr ""
+
+msgid "Open in external browser"
+msgstr ""
 
 msgid ""
 "There is a running process in this terminal.\n"
@@ -243,6 +581,14 @@ msgstr "- emulator terminala temeljen na vte-u"
 #, c-format
 msgid "sakura version is %s\n"
 msgstr "sakura verzija je %s\n"
+
+#, fuzzy, c-format
+#~ msgid "%s (%u terminals)"
+#~ msgstr "Zatvori karticu"
+
+#, fuzzy
+#~ msgid "Terminals"
+#~ msgstr "Terminal %d"
 
 #~ msgid "Show close button on tabs"
 #~ msgstr "Prikaži gumb zatvaranja na karticama"
