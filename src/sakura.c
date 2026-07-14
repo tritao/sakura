@@ -266,7 +266,7 @@ enum {
 	SAKURA_SIDEBAR_N_COLUMNS
 };
 
-#define DEFAULT_SIDEBAR_WIDTH 220
+#define DEFAULT_SIDEBAR_WIDTH 260
 
 #define FADE_WINDOW_CSS "\
 window#fade_window {\
@@ -1560,7 +1560,7 @@ sakura_sidebar_init (void)
 	gtk_widget_set_margin_start(title, 6);
 	gtk_widget_set_margin_end(title, 6);
 	gtk_box_pack_start(GTK_BOX(toolbar), title, TRUE, TRUE, 0);
-	new_terminal = gtk_button_new_from_icon_name("tab-new", GTK_ICON_SIZE_MENU);
+	new_terminal = gtk_button_new_from_icon_name("utilities-terminal", GTK_ICON_SIZE_MENU);
 	gtk_button_set_relief(GTK_BUTTON(new_terminal), GTK_RELIEF_NONE);
 	gtk_widget_set_tooltip_text(new_terminal, _("New terminal"));
 	gtk_box_pack_start(GTK_BOX(toolbar), new_terminal, FALSE, FALSE, 0);
@@ -3408,7 +3408,10 @@ sakura_init()
 	}
 	gtk_window_set_icon_from_file(GTK_WINDOW(sakura.main_window), icon_path, &gerror);
 	g_free(icon_path); icon_path=NULL;
-	if (gerror) g_error_free(gerror);
+	if (gerror) {
+		g_error_free(gerror);
+		gtk_window_set_icon_name(GTK_WINDOW(sakura.main_window), "utilities-terminal");
+	}
 
 	/* More options */
 	if (option_title) {
@@ -3911,6 +3914,9 @@ sakura_set_size (void)
 	if (sakura.show_scrollbar) {
 		sakura.width += min_width;
 	}
+
+	if (sakura.sidebar_visible)
+		sakura.width += sakura.sidebar_width;
 
 	/* Maximize window at init time when command line option is used */
 	if (option_maximize && sakura.first_run) {
