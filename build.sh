@@ -7,13 +7,8 @@ BUILD_TYPE="${BUILD_TYPE:-Debug}"
 INSTALL_PREFIX="${INSTALL_PREFIX:-/usr/local}"
 BUILD_TARGET="${BUILD_TARGET:-sakura}"
 
-# Set VTE_PREFIX explicitly when VTE was installed outside the system paths.
-# The /tmp prefix is the unprivileged fallback used on this development machine.
-if [[ -z "${VTE_PREFIX:-}" ]]; then
-	if [[ -f /tmp/sakura-vte/root/usr/include/vte-2.91/vte/vte.h ]]; then
-		VTE_PREFIX="/tmp/sakura-vte/root"
-	fi
-fi
+# Set VTE_PREFIX explicitly only when VTE was installed outside the system
+# paths. With no prefix, CMake/pkg-config uses the system VTE package.
 
 EXTRA_CFLAGS="${CFLAGS:-}"
 EXTRA_LDFLAGS="${LDFLAGS:-}"
@@ -39,6 +34,11 @@ cmake_args=(
 	-DCMAKE_INSTALL_PREFIX="$INSTALL_PREFIX"
 	-DCMAKE_C_FLAGS="$EXTRA_CFLAGS"
 	-DCMAKE_EXE_LINKER_FLAGS="$EXTRA_LDFLAGS"
+	# VTE is discovered through pkg-config; don't retain paths from a removed
+	# custom installation in an existing CMake build directory.
+	-U "VTE_*"
+	-U "pkgcfg_lib_VTE_*"
+	-U "__pkg_config_checked_VTE"
 )
 
 if [[ -n "$PKG_CONFIG_PATH_VALUE" ]]; then

@@ -70,7 +70,11 @@ ADD_SUBDIRECTORY (po)
 INSTALL (TARGETS sakura RUNTIME DESTINATION bin)
 INSTALL (FILES sakura.desktop DESTINATION share/applications)
 INSTALL (FILES terminal-tango.svg DESTINATION share/pixmaps)
-INSTALL (FILES icons/hicolor/scalable/apps/sakura-codex.svg DESTINATION share/icons/hicolor/scalable/apps)
+INSTALL (FILES
+	icons/hicolor/scalable/apps/sakura-codex.svg
+	icons/hicolor/scalable/apps/git.svg
+	icons/hicolor/scalable/apps/github.svg
+	DESTINATION share/icons/hicolor/scalable/apps)
 IF (POD2MAN)
 	INSTALL (FILES ${sakura_BINARY_DIR}/sakura.1 DESTINATION share/man/man1)
 ENDIF (POD2MAN)

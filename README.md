@@ -10,18 +10,24 @@ The included installer builds Sakura and installs the executable, desktop
 launcher, icon, documentation, and helper scripts:
 
 ```bash
-$ ./install.sh
+./install.sh
 ```
 
 The default prefix is `/usr/local`, so the installer may ask for your sudo
 password. After installation, search for **Sakura** in the Linux Mint
 application menu. The desktop database is refreshed automatically when the
-system tool is available.
+system tool is available. The installer also installs the FiraCode Nerd Font
+so gh-dash icons render correctly; select **FiraCode Nerd Font** in Sakura's
+**Options → Select font...** menu. Set `SKIP_NERD_FONT=1` to skip that step.
+
+If Sakura is launched while the saved workspace is already open, it asks
+whether to exit or launch a separate persistent instance. The second instance
+uses its own saved session file.
 
 For a per-user install without sudo, use:
 
 ```bash
-$ PREFIX="$HOME/.local" ./install.sh
+PREFIX="$HOME/.local" ./install.sh
 ```
 
 Set `BUILD_TYPE=Debug` if you need debug symbols. The lower-level CMake
@@ -62,11 +68,47 @@ Names set with Codex's `/rename` command are shown in the Sakura tree unless
 the tree node has been manually renamed. If a session has no Codex name yet,
 Sakura displays `Codex`.
 
+### Terminal groups and scoped tabs
+
+The sidebar is a workspace navigator. Select a group to scope the tab strip to
+that group and its nested groups; select **All terminals** to return to the
+whole workspace. Switching groups keeps each live terminal running and moves
+the view to the last terminal available in that scope. New terminals follow the
+current tab's group when **All terminals** is selected, or the active group when
+a specific group is selected. An empty group offers a direct **New terminal**
+action.
+
 If a manually launched session is missed, use **Codex → Attach current tab...**
 to associate its session ID with the current tab. **Codex → Check session
 tracking** shows whether the current tab has the required environment. After
 using `/rename` while staying in the same tab, use **Codex → Refresh session
-name** to update the tree immediately.
+name** to update the tree immediately. Use **Codex → Rename session...** to
+rename the current Codex session from Sakura; the name is saved with the
+workspace and remains the Codex session's persistent name.
+
+### Tool tabs
+
+Sakura gives interactive terminal tools their own reusable tabs. Open the
+**Tools** button in the sidebar or the **Tools** submenu from a terminal or
+sidebar context menu.
+
+**GitUI** is opened at the current Git repository root. Sakura reuses the
+existing GitUI tab for that repository, labels it with the repository name, and
+restores it with the workspace. GitUI remains an optional dependency; Sakura
+checks `PATH`, `$CARGO_HOME/bin`, and the default `~/.cargo/bin` install path.
+
+**Git Cola** is opened at the current Git repository root and reused per
+repository. It requires the system `git-cola` package.
+
+**GitHub Dashboard** runs `gh dash` in the current working directory, so
+gh-dash can use its normal `GH_DASH_CONFIG` or repository-local `.gh-dash.yml`
+configuration. Sakura reuses one dashboard tab and restores it with the
+workspace. Install the optional dependency with:
+
+    gh extension install dlvhdr/gh-dash
+
+Both tools are optional. If a tool is unavailable during session restoration,
+Sakura restores that entry as a regular shell tab instead.
 
 ### Terminal history
 
@@ -99,11 +141,10 @@ backups, and verifies that a failed restore does not overwrite the original
 session file.
 
 Tracked Codex tabs show their current state in the terminal sidebar: working,
-needs approval, or ready to review. Working tabs also show an animated spinner
-in the notebook tab label. When a background Codex turn finishes or needs
-approval, Sakura marks that terminal as needing attention and updates the
-sidebar count. Ordinary terminals use bell and process-exit signals as a
-fallback.
+needs approval, or ready to review. Working tabs show an animated spinner in
+the sidebar. When a background Codex turn finishes or needs approval, Sakura
+marks that terminal as needing attention and updates the sidebar count.
+Ordinary terminals use bell and process-exit signals as a fallback.
 
 ## Keybindings
 
