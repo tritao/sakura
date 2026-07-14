@@ -57,7 +57,8 @@ If Codex asks you to review the new or changed hook, approve it with `/hooks`.
 
 Start or resume Codex tabs from the terminal popup's **Codex** menu. Sakura
 stores the Codex session ID with the workspace and reopens it with
-`codex resume` after the next launch. Codex commands typed manually inside
+`codex resume` after the next launch. New and resumed sessions are launched
+with Codex's `--dangerously-bypass-approvals-and-sandbox` mode. Codex commands typed manually inside
 ordinary Sakura shell tabs are tracked as well. The tracker records the ID at
 session start and again when a prompt is submitted, covering interactive
 session-picker flows. Existing shell tabs created before tracking was enabled
@@ -107,7 +108,15 @@ workspace. Install the optional dependency with:
 
     gh extension install dlvhdr/gh-dash
 
-Both tools are optional. If a tool is unavailable during session restoration,
+The **Open Here** button and menu open the current directory in the desktop
+file manager or a detected graphical editor. Sakura checks `code`, `codium`,
+`zed`, `subl`, `gnome-text-editor`, `gedit`, `xed`, `pluma`, `mousepad`, and
+`kate` in that order. Set `SAKURA_EDITOR` or `editor_command` in
+`~/.config/sakura/sakura.conf` to choose another command; `{directory}` can be
+used as an explicit directory placeholder, otherwise Sakura appends the
+directory to the command.
+
+All integrated tool tabs are optional. If a tool is unavailable during session restoration,
 Sakura restores that entry as a regular shell tab instead.
 
 ### Terminal history

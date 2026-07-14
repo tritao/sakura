@@ -434,6 +434,7 @@ static struct {
 	char *bash_history_rc;
 	char *icon;
 	char *shell_path;
+	char *editor_command;
 	char *main_title;		/* Main window static title from user input */
 	char *term;
 	gchar *tab_default_title;
@@ -487,6 +488,11 @@ typedef enum {
 	SAKURA_TOOL_GH_DASH,
 	SAKURA_TOOL_GIT_COLA
 } SakuraToolKind;
+
+typedef enum {
+	SAKURA_OPEN_HERE_FILE_MANAGER,
+	SAKURA_OPEN_HERE_EDITOR
+} SakuraOpenHereKind;
 
 typedef enum {
 	SAKURA_TAB_STATUS_NONE,
@@ -697,6 +703,7 @@ static void     sakura_copy_url_cb (GtkWidget *, void *);
 static void     sakura_copy_cb (GtkWidget *, void *);
 static void     sakura_paste_cb (GtkWidget *, void *);
 static void     sakura_new_tool_cb (GtkWidget *, void *);
+static void     sakura_open_here_cb (GtkWidget *, void *);
 static void     sakura_show_tab_bar_cb (GtkWidget *, void *);
 static void     sakura_tabs_on_bottom_cb (GtkWidget *, void *);
 static void     sakura_less_questions_cb (GtkWidget *, void *);
@@ -773,6 +780,7 @@ static void     sakura_init_popup ();
 static void     sakura_add_tab ();
 static void     sakura_spawn_codex (struct sakura_tab *, const gchar *, gchar **);
 static void     sakura_spawn_tool (struct sakura_tab *, const gchar *, gchar **);
+static GtkWidget *sakura_open_here_menu_new (void);
 static void     sakura_spawn_shell (struct sakura_tab *, const gchar *, gchar **);
 static void     sakura_add_tab_with_options (const gchar *, struct sakura_sidebar_node *,
                                              const gchar *, gboolean, SakuraTabKind,
@@ -2444,6 +2452,9 @@ sakura_sidebar_button_press_cb (GtkWidget *widget, GdkEventButton *event, void *
 	gtk_menu_shell_append(GTK_MENU_SHELL(tools_menu), tool_item);
 	gtk_menu_item_set_submenu(GTK_MENU_ITEM(item), tools_menu);
 	gtk_menu_shell_append(GTK_MENU_SHELL(menu), item);
+	item = gtk_menu_item_new_with_label(_("Open Here"));
+	gtk_menu_item_set_submenu(GTK_MENU_ITEM(item), sakura_open_here_menu_new());
+	gtk_menu_shell_append(GTK_MENU_SHELL(menu), item);
 	item = gtk_menu_item_new_with_label(_("New Codex session"));
 	g_signal_connect(item, "activate", G_CALLBACK(sakura_new_codex_cb), NULL);
 	gtk_menu_shell_append(GTK_MENU_SHELL(menu), item);
@@ -3491,7 +3502,8 @@ sakura_sidebar_paned_position_cb (GObject *object, GParamSpec *pspec, void *data
 static void
 sakura_sidebar_init (void)
 {
-	GtkWidget *sidebar_box, *toolbar, *title, *tools_button, *new_terminal, *new_group;
+	GtkWidget *sidebar_box, *toolbar, *title, *tools_button, *open_here_button,
+	          *new_terminal, *new_group;
 	GtkWidget *tools_menu, *tool_item;
 	GtkWidget *tab_shell, *scope_label, *tab_scrolled, *tab_bar, *tab_new;
 	GtkWidget *empty_state, *empty_label, *empty_new;
@@ -3578,6 +3590,13 @@ sakura_sidebar_init (void)
 	gtk_menu_shell_append(GTK_MENU_SHELL(tools_menu), tool_item);
 	gtk_menu_button_set_popup(GTK_MENU_BUTTON(tools_button), tools_menu);
 	gtk_box_pack_start(GTK_BOX(toolbar), tools_button, FALSE, FALSE, 0);
+	open_here_button = gtk_menu_button_new();
+	gtk_button_set_image(GTK_BUTTON(open_here_button),
+	                     gtk_image_new_from_icon_name("folder-open", GTK_ICON_SIZE_MENU));
+	gtk_button_set_relief(GTK_BUTTON(open_here_button), GTK_RELIEF_NONE);
+	gtk_widget_set_tooltip_text(open_here_button, _("Open Here"));
+	gtk_menu_button_set_popup(GTK_MENU_BUTTON(open_here_button), sakura_open_here_menu_new());
+	gtk_box_pack_start(GTK_BOX(toolbar), open_here_button, FALSE, FALSE, 0);
 	new_terminal = gtk_button_new_from_icon_name("utilities-terminal", GTK_ICON_SIZE_MENU);
 	gtk_button_set_relief(GTK_BUTTON(new_terminal), GTK_RELIEF_NONE);
 	gtk_widget_set_tooltip_text(new_terminal, _("New terminal"));
@@ -4748,6 +4767,126 @@ sakura_current_tab_cwd (void)
 			cwd = sakura_get_term_cwd(sk_tab);
 	}
 	return cwd != NULL ? cwd : g_get_current_dir();
+}
+
+
+static void
+sakura_open_here_cb (GtkWidget *widget, void *data)
+{
+	SakuraOpenHereKind kind = GPOINTER_TO_INT(data);
+	const gchar *configured_editor;
+	const gchar *editor_candidates[] = {
+		"code", "codium", "zed", "subl", "gnome-text-editor",
+		"gedit", "xed", "pluma", "mousepad", "kate", NULL
+	};
+	gchar *cwd = NULL;
+	gchar **argv = NULL;
+	gchar *program = NULL;
+	GError *error = NULL;
+	gint argc = 0;
+	gboolean directory_argument = FALSE;
+	guint i;
+
+	cwd = sakura_current_tab_cwd();
+	if (cwd == NULL || !g_file_test(cwd, G_FILE_TEST_IS_DIR)) {
+		sakura_error(_("Could not determine the current directory."));
+		g_free(cwd);
+		return;
+	}
+
+	if (kind == SAKURA_OPEN_HERE_FILE_MANAGER) {
+		program = g_find_program_in_path("gio");
+		if (program != NULL) {
+			argv = g_new0(gchar *, 4);
+			argv[0] = program;
+			argv[1] = g_strdup("open");
+			argv[2] = g_strdup(cwd);
+		} else {
+			program = g_find_program_in_path("xdg-open");
+			if (program != NULL) {
+				argv = g_new0(gchar *, 3);
+				argv[0] = program;
+				argv[1] = g_strdup(cwd);
+			}
+		}
+		if (argv == NULL) {
+			sakura_error(_("Could not find a file manager opener (gio or xdg-open)."));
+			g_free(cwd);
+			return;
+		}
+	} else {
+		configured_editor = sakura.editor_command;
+		if (configured_editor == NULL || configured_editor[0] == '\0')
+			configured_editor = g_getenv("SAKURA_EDITOR");
+
+		if (configured_editor != NULL && configured_editor[0] != '\0') {
+			if (!g_shell_parse_argv(configured_editor, &argc, &argv, &error) ||
+			    argc == 0) {
+				sakura_error(_("Could not parse the configured editor command: %s"),
+				             error != NULL ? error->message : _("empty command"));
+				g_clear_error(&error);
+				g_strfreev(argv);
+				g_free(cwd);
+				return;
+			}
+			for (i = 0; i < (guint)argc; i++) {
+				if (g_strcmp0(argv[i], "{directory}") == 0) {
+					g_free(argv[i]);
+					argv[i] = g_strdup(cwd);
+					directory_argument = TRUE;
+				}
+			}
+			if (!directory_argument) {
+				argv = g_realloc(argv, sizeof(gchar *) * ((gsize)argc + 2));
+				argv[argc] = g_strdup(cwd);
+				argv[argc + 1] = NULL;
+			}
+		} else {
+			for (i = 0; editor_candidates[i] != NULL; i++) {
+				program = g_find_program_in_path(editor_candidates[i]);
+				if (program != NULL)
+					break;
+			}
+			if (program == NULL) {
+				sakura_error(_("No graphical editor was found. Set editor_command in Sakura's config or SAKURA_EDITOR."));
+				g_free(cwd);
+				return;
+			}
+			argv = g_new0(gchar *, 3);
+			argv[0] = program;
+			argv[1] = g_strdup(cwd);
+		}
+	}
+
+	if (!g_spawn_async(cwd, argv, NULL, G_SPAWN_SEARCH_PATH,
+	                   NULL, NULL, NULL, &error)) {
+		sakura_error(_("Could not open %s: %s"),
+		             kind == SAKURA_OPEN_HERE_FILE_MANAGER
+		             ? _("the file manager") : _("the editor"),
+		             error != NULL ? error->message : _("unknown error"));
+		g_clear_error(&error);
+	}
+
+	g_strfreev(argv);
+	g_free(cwd);
+}
+
+
+static GtkWidget *
+sakura_open_here_menu_new (void)
+{
+	GtkWidget *menu, *item;
+
+	menu = gtk_menu_new();
+	item = gtk_menu_item_new_with_label(_("File Manager"));
+	g_signal_connect(item, "activate", G_CALLBACK(sakura_open_here_cb),
+	                 GINT_TO_POINTER(SAKURA_OPEN_HERE_FILE_MANAGER));
+	gtk_menu_shell_append(GTK_MENU_SHELL(menu), item);
+	item = gtk_menu_item_new_with_label(_("Editor"));
+	g_signal_connect(item, "activate", G_CALLBACK(sakura_open_here_cb),
+	                 GINT_TO_POINTER(SAKURA_OPEN_HERE_EDITOR));
+	gtk_menu_shell_append(GTK_MENU_SHELL(menu), item);
+	return menu;
 }
 
 
@@ -5934,6 +6073,7 @@ sakura_init()
 
 	/* Optional only, no need to set it if not found */
 	sakura.shell_path = g_key_file_get_string(sakura.cfg, cfg_group, "shell_path", NULL);
+	sakura.editor_command = g_key_file_get_string(sakura.cfg, cfg_group, "editor_command", NULL);
 	
 	/* Default terminal. Only in config file */
 	sakura.term = g_key_file_get_value(sakura.cfg, cfg_group, "term", NULL);
@@ -6129,7 +6269,8 @@ sakura_init()
 static void
 sakura_init_popup()
 {
-	GtkWidget *item_new_tab, *item_tools, *item_gitui, *item_git_cola, *item_gh_dash,
+	GtkWidget *item_new_tab, *item_tools, *item_open_here,
+	          *item_gitui, *item_git_cola, *item_gh_dash,
 	          *item_set_name, *item_close_tab, *item_copy,
 	          *item_paste, *item_fullscreen, *item_select_font, *item_select_colors,
 	          *item_show_tab_bar, *item_sidebar,
@@ -6149,6 +6290,7 @@ sakura_init_popup()
 	sakura.item_copy_link = gtk_menu_item_new_with_label(_("Copy link"));
 	item_new_tab = gtk_menu_item_new_with_label(_("New tab"));
 	item_tools = gtk_menu_item_new_with_label(_("Tools"));
+	item_open_here = gtk_menu_item_new_with_label(_("Open Here"));
 	item_gitui = gtk_menu_item_new_with_label(_("GitUI"));
 	item_git_cola = gtk_menu_item_new_with_label(_("Git Cola"));
 	item_gh_dash = gtk_menu_item_new_with_label(_("GitHub Dashboard"));
@@ -6279,6 +6421,7 @@ sakura_init_popup()
 	gtk_menu_shell_append(GTK_MENU_SHELL(sakura.menu), sakura.open_link_separator);
 	gtk_menu_shell_append(GTK_MENU_SHELL(sakura.menu), item_new_tab);
 	gtk_menu_shell_append(GTK_MENU_SHELL(sakura.menu), item_tools);
+	gtk_menu_shell_append(GTK_MENU_SHELL(sakura.menu), item_open_here);
 	gtk_menu_shell_append(GTK_MENU_SHELL(sakura.menu), item_codex);
 	gtk_menu_shell_append(GTK_MENU_SHELL(sakura.menu), item_set_name);
 	gtk_menu_shell_append(GTK_MENU_SHELL(sakura.menu), item_close_tab);
@@ -6299,6 +6442,7 @@ sakura_init_popup()
 	gtk_menu_shell_append(GTK_MENU_SHELL(tools_menu), item_git_cola);
 	gtk_menu_shell_append(GTK_MENU_SHELL(tools_menu), item_gh_dash);
 	gtk_menu_item_set_submenu(GTK_MENU_ITEM(item_tools), tools_menu);
+	gtk_menu_item_set_submenu(GTK_MENU_ITEM(item_open_here), sakura_open_here_menu_new());
 	gtk_menu_shell_append(GTK_MENU_SHELL(codex_menu), item_new_codex);
 	gtk_menu_shell_append(GTK_MENU_SHELL(codex_menu), item_resume_codex);
 	gtk_menu_shell_append(GTK_MENU_SHELL(codex_menu), item_attach_codex);
@@ -6445,6 +6589,7 @@ sakura_destroy()
 	g_free(sakura.codex_tracking_dir);
 	g_free(sakura.history_dir);
 	g_free(sakura.bash_history_rc);
+	g_free(sakura.editor_command);
 
 	gtk_main_quit();
 }
@@ -6877,12 +7022,14 @@ sakura_add_tab (void)
 static void
 sakura_spawn_codex (struct sakura_tab *sk_tab, const gchar *cwd, gchar **env)
 {
-	gchar *argv[6] = { (gchar *)"codex", (gchar *)"--enable", (gchar *)"hooks",
-	                   NULL, NULL, NULL };
+	gchar *argv[8] = { (gchar *)"codex",
+	                   (gchar *)"--dangerously-bypass-approvals-and-sandbox",
+	                   (gchar *)"--enable", (gchar *)"hooks",
+	                   NULL, NULL, NULL, NULL };
 
 	if (sk_tab->codex_session_id != NULL && sk_tab->codex_session_id[0] != '\0') {
-		argv[3] = (gchar *)"resume";
-		argv[4] = sk_tab->codex_session_id;
+		argv[4] = (gchar *)"resume";
+		argv[5] = sk_tab->codex_session_id;
 	}
 	vte_terminal_spawn_async(VTE_TERMINAL(sk_tab->vte), VTE_PTY_NO_HELPER, cwd,
 	                         argv, env, G_SPAWN_SEARCH_PATH, NULL, NULL, NULL,
