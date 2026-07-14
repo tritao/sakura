@@ -81,7 +81,7 @@ const GdkRGBA gruvbox_palette[PALETTE_SIZE] = {
 };
 
 const GdkRGBA tango_palette[PALETTE_SIZE] = {
-	{0,        0,        0,        1},
+	{0.133333, 0.133333, 0.149020, 1},
 	{0.8,      0,        0,        1},
 	{0.305882, 0.603922, 0.023529, 1},
 	{0.768627, 0.627451, 0,        1},
@@ -214,9 +214,15 @@ const GdkRGBA hybrid_palette[PALETTE_SIZE] = {
 	{0.7725490196078432  , 0.7843137254901961  , 0.7764705882352941  , 1}
 };
 
-const char *palettes_names[]= {"Solarized", "Tango", "Gruvbox", "Nord", "Xterm", "Linux", "Rxvt", "Hybrid", NULL};
+const char *palettes_names[]= {"Solarized", "Tango", "Gruvbox", "Nord", "Xterm", "Linux", "Rxvt", "Hybrid", "GNOME Terminal", NULL};
 const GdkRGBA *palettes[] = {solarized_palette, tango_palette, gruvbox_palette, nord_palette, xterm_palette, linux_palette, rxvt_palette, hybrid_palette, NULL};
 #define DEFAULT_PALETTE 1 /* Tango palette */
+#define SYSTEM_PALETTE_INDEX 8
+
+/* Defaults matching the active GNOME Terminal profile on Ubuntu. */
+#define DEFAULT_FOREGROUND_COLOR "rgb(211,215,207)" /* #D3D7CF */
+#define DEFAULT_BACKGROUND_COLOR "rgb(34,34,38)"    /* #222226 */
+#define DEFAULT_CURSOR_COLOR "rgb(211,215,207)"     /* #D3D7CF */
 
 /* Color schemes (fg&bg) for sakura. Each colorset can use a different scheme */
 struct scheme {
@@ -273,6 +279,12 @@ static struct {
 	guint schemes[NUM_COLORSETS];  /* Selected color scheme for each colorset */
 	const GdkRGBA *palette;
 	guint palette_idx;
+	GdkRGBA system_foreground;
+	GdkRGBA system_background;
+	GdkRGBA system_cursor;
+	GdkRGBA system_palette[PALETTE_SIZE];
+	bool have_system_colors;
+	bool system_bold_is_bright;
 	gint last_colorset;
 	char *current_match;
 	guint width;
@@ -371,7 +383,7 @@ struct sakura_tab {
 #define DEFAULT_ROWS 24
 #define DEFAULT_MIN_WIDTH_CHARS 20
 #define DEFAULT_MIN_HEIGHT_CHARS 1
-#define DEFAULT_FONT "Ubuntu Mono,monospace 13"
+#define DEFAULT_FONT "Monospace 10"
 #define DEFAULT_LINE_HEIGHT 1.0
 #define FONT_MINIMAL_SIZE (PANGO_SCALE*6)
 #define DEFAULT_WORD_CHARS "-,./?%&#_~:"
@@ -524,6 +536,11 @@ static void     sakura_move_tab (gint);
 static gint     sakura_find_tab (VteTerminal *);
 static void     sakura_set_font ();
 static void     sakura_set_tab_label_text (const gchar *, gint);
+static void     sakura_set_window_title (const gchar *);
+static gboolean sakura_prefers_dark_theme (void);
+static void     sakura_set_dark_theme_environment (void);
+static gchar *  sakura_get_default_font (void);
+static gboolean sakura_load_gnome_terminal_colors (void);
 static void     sakura_set_size (void);
 static void     sakura_config_done ();
 static void     sakura_set_colorset (int);
@@ -1424,7 +1441,10 @@ sakura_color_dialog_cb (GtkWidget *widget, void *data)
 	palette_hbox = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 12);
 	palette_label = gtk_label_new(_("Palette"));
 	palette_combo = gtk_combo_box_text_new();
-	for (i=0; i < (sizeof(palettes_names)) / (sizeof(palettes_names[0])); i++) {
+	for (i=0; palettes_names[i] != NULL; i++) {
+		if (i == SYSTEM_PALETTE_INDEX && !sakura.have_system_colors) {
+			continue;
+		}
 		gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(palette_combo), NULL, palettes_names[i]);
 	}
 	gtk_combo_box_set_active(GTK_COMBO_BOX(palette_combo), sakura.palette_idx);
@@ -1524,7 +1544,14 @@ sakura_color_dialog_cb (GtkWidget *widget, void *data)
 
 		/* Set the selected palette */
 		guint palette_idx = gtk_combo_box_get_active(GTK_COMBO_BOX(palette_combo));
-		sakura.palette = palettes[palette_idx];
+		if (palette_idx == SYSTEM_PALETTE_INDEX && sakura.have_system_colors) {
+			sakura.palette = sakura.system_palette;
+		} else if (palette_idx < SYSTEM_PALETTE_INDEX) {
+			sakura.palette = palettes[palette_idx];
+		} else {
+			palette_idx = DEFAULT_PALETTE;
+			sakura.palette = palettes[DEFAULT_PALETTE];
+		}
 		sakura.palette_idx = palette_idx;
 		sakura_set_config_integer("palette", sakura.palette_idx);
 
@@ -1904,6 +1931,228 @@ sakura_use_fading_cb (GtkWidget *widget, void *data)
 /******* Functions ********/
 /**************************/
 
+static gboolean
+sakura_prefers_dark_theme (void)
+{
+	GSettingsSchemaSource *source;
+	GSettingsSchema *schema;
+	GSettings *settings;
+	gchar *theme_variant;
+	gboolean prefers_dark = FALSE;
+
+	source = g_settings_schema_source_get_default();
+	if (source == NULL) {
+		return FALSE;
+	}
+
+	/* GNOME Terminal has its own theme variant setting. Use it when the
+	 * schema is available so sakura follows the terminal's appearance. */
+	schema = g_settings_schema_source_lookup(source,
+	                                         "org.gnome.Terminal.Legacy.Settings",
+	                                         TRUE);
+	if (schema != NULL) {
+		settings = g_settings_new_full(schema, NULL, NULL);
+		theme_variant = g_settings_get_string(settings, "theme-variant");
+		prefers_dark = g_strcmp0(theme_variant, "dark") == 0;
+		g_free(theme_variant);
+		g_object_unref(settings);
+		g_settings_schema_unref(schema);
+		return prefers_dark;
+	}
+
+	/* Fall back to the desktop-wide preference on systems without GNOME
+	 * Terminal's settings schema. */
+	schema = g_settings_schema_source_lookup(source,
+	                                         "org.gnome.desktop.interface",
+	                                         TRUE);
+	if (schema != NULL) {
+		settings = g_settings_new_full(schema, NULL, NULL);
+		theme_variant = g_settings_get_string(settings, "color-scheme");
+		prefers_dark = g_strcmp0(theme_variant, "prefer-dark") == 0;
+		g_free(theme_variant);
+		g_object_unref(settings);
+		g_settings_schema_unref(schema);
+	}
+
+	return prefers_dark;
+}
+
+static void
+sakura_set_dark_theme_environment (void)
+{
+	GSettingsSchemaSource *source;
+	GSettingsSchema *schema;
+	GSettings *settings;
+	gchar *theme_name;
+	gchar *gtk_theme;
+
+	if (!sakura_prefers_dark_theme() || g_getenv("GTK_THEME") != NULL) {
+		return;
+	}
+
+	source = g_settings_schema_source_get_default();
+	if (source == NULL) {
+		return;
+	}
+
+	schema = g_settings_schema_source_lookup(source,
+	                                         "org.gnome.desktop.interface",
+	                                         TRUE);
+	if (schema == NULL) {
+		return;
+	}
+
+	settings = g_settings_new_full(schema, NULL, NULL);
+	theme_name = g_settings_get_string(settings, "gtk-theme");
+	if (theme_name != NULL && theme_name[0] != '\0') {
+		gtk_theme = g_strdup_printf("%s:dark", theme_name);
+		g_setenv("GTK_THEME", gtk_theme, FALSE);
+		g_free(gtk_theme);
+	}
+	g_free(theme_name);
+	g_object_unref(settings);
+	g_settings_schema_unref(schema);
+}
+
+static gchar *
+sakura_get_default_font (void)
+{
+	GSettingsSchemaSource *source;
+	GSettingsSchema *schema;
+	GSettings *settings;
+	gchar *font_name;
+
+	source = g_settings_schema_source_get_default();
+	if (source == NULL) {
+		return g_strdup(DEFAULT_FONT);
+	}
+
+	schema = g_settings_schema_source_lookup(source,
+	                                         "org.gnome.desktop.interface",
+	                                         TRUE);
+	if (schema == NULL) {
+		return g_strdup(DEFAULT_FONT);
+	}
+
+	settings = g_settings_new_full(schema, NULL, NULL);
+	font_name = g_settings_get_string(settings, "monospace-font-name");
+	g_object_unref(settings);
+	g_settings_schema_unref(schema);
+
+	if (font_name == NULL || font_name[0] == '\0') {
+		g_free(font_name);
+		return g_strdup(DEFAULT_FONT);
+	}
+
+	return font_name;
+}
+
+static gboolean
+sakura_load_gnome_terminal_colors (void)
+{
+	GSettingsSchemaSource *source;
+	GSettingsSchema *profiles_schema;
+	GSettingsSchema *profile_schema;
+	GSettings *profiles;
+	GSettings *profile;
+	GtkStyleContext *style_context;
+	GdkRGBA theme_background;
+	gchar *uuid;
+	gchar *profile_path;
+	gchar *value;
+	gchar **palette;
+	gboolean use_theme_colors;
+	gboolean cursor_colors_set;
+	gboolean valid = TRUE;
+	guint i;
+
+	source = g_settings_schema_source_get_default();
+	if (source == NULL) {
+		return FALSE;
+	}
+
+	profiles_schema = g_settings_schema_source_lookup(source,
+	                                                   "org.gnome.Terminal.ProfilesList",
+	                                                   TRUE);
+	profile_schema = g_settings_schema_source_lookup(source,
+	                                                  "org.gnome.Terminal.Legacy.Profile",
+	                                                  TRUE);
+	if (profiles_schema == NULL || profile_schema == NULL) {
+		if (profiles_schema != NULL) {
+			g_settings_schema_unref(profiles_schema);
+		}
+		if (profile_schema != NULL) {
+			g_settings_schema_unref(profile_schema);
+		}
+		return FALSE;
+	}
+
+	profiles = g_settings_new_full(profiles_schema, NULL, NULL);
+	uuid = g_settings_get_string(profiles, "default");
+	if (uuid == NULL || uuid[0] == '\0') {
+		g_free(uuid);
+		g_object_unref(profiles);
+		g_settings_schema_unref(profiles_schema);
+		g_settings_schema_unref(profile_schema);
+		return FALSE;
+	}
+
+	profile_path = g_strdup_printf("/org/gnome/terminal/legacy/profiles:/:%s/", uuid);
+	profile = g_settings_new_full(profile_schema, NULL, profile_path);
+
+	value = g_settings_get_string(profile, "foreground-color");
+	valid = value != NULL && gdk_rgba_parse(&sakura.system_foreground, value);
+	g_free(value);
+
+	use_theme_colors = g_settings_get_boolean(profile, "use-theme-colors");
+	value = g_settings_get_string(profile, "background-color");
+	if (use_theme_colors) {
+		style_context = gtk_style_context_new();
+		gtk_style_context_set_screen(style_context, gdk_screen_get_default());
+		if (gtk_style_context_lookup_color(style_context, "wm_bg", &theme_background)) {
+			sakura.system_background = theme_background;
+		} else {
+			valid = value != NULL && gdk_rgba_parse(&sakura.system_background, value) && valid;
+		}
+		g_object_unref(style_context);
+	} else {
+		valid = value != NULL && gdk_rgba_parse(&sakura.system_background, value) && valid;
+	}
+	g_free(value);
+
+	palette = g_settings_get_strv(profile, "palette");
+	if (palette == NULL || g_strv_length(palette) < PALETTE_SIZE) {
+		valid = FALSE;
+	} else {
+		for (i = 0; i < PALETTE_SIZE; i++) {
+			if (!gdk_rgba_parse(&sakura.system_palette[i], palette[i])) {
+				valid = FALSE;
+				break;
+			}
+		}
+	}
+	g_strfreev(palette);
+
+	cursor_colors_set = g_settings_get_boolean(profile, "cursor-colors-set");
+	if (cursor_colors_set) {
+		value = g_settings_get_string(profile, "cursor-background-color");
+		valid = value != NULL && gdk_rgba_parse(&sakura.system_cursor, value) && valid;
+		g_free(value);
+	} else {
+		sakura.system_cursor = sakura.system_foreground;
+	}
+	sakura.system_bold_is_bright = g_settings_get_boolean(profile, "bold-is-bright");
+
+	g_free(profile_path);
+	g_free(uuid);
+	g_object_unref(profile);
+	g_object_unref(profiles);
+	g_settings_schema_unref(profile_schema);
+	g_settings_schema_unref(profiles_schema);
+
+	return valid;
+}
+
 static void
 sakura_init()
 {
@@ -1954,32 +2203,46 @@ sakura_init()
 	 * doesn't exist, but we have just read it!
 	 */
 
+	sakura.have_system_colors = sakura_load_gnome_terminal_colors();
+
 	for (i=0; i<NUM_COLORSETS; i++) {
 		char temp_name[20];
 
 		sprintf(temp_name, "colorset%d_fore", i+1);
-		if (!g_key_file_has_key(sakura.cfg, cfg_group, temp_name, NULL)) {
-			sakura_set_config_string(temp_name, "rgb(192,192,192)");
+		if (g_key_file_has_key(sakura.cfg, cfg_group, temp_name, NULL)) {
+			cfgtmp = g_key_file_get_value(sakura.cfg, cfg_group, temp_name, NULL);
+			gdk_rgba_parse(&sakura.forecolors[i], cfgtmp);
+			g_free(cfgtmp);
+		} else if (sakura.have_system_colors) {
+			sakura.forecolors[i] = sakura.system_foreground;
+		} else {
+			sakura_set_config_string(temp_name, DEFAULT_FOREGROUND_COLOR);
+			gdk_rgba_parse(&sakura.forecolors[i], DEFAULT_FOREGROUND_COLOR);
 		}
-		cfgtmp = g_key_file_get_value(sakura.cfg, cfg_group, temp_name, NULL);
-		gdk_rgba_parse(&sakura.forecolors[i], cfgtmp);
-		g_free(cfgtmp);
 
 		sprintf(temp_name, "colorset%d_back", i+1);
-		if (!g_key_file_has_key(sakura.cfg, cfg_group, temp_name, NULL)) {
-			sakura_set_config_string(temp_name, "rgba(0,0,0,1)");
+		if (g_key_file_has_key(sakura.cfg, cfg_group, temp_name, NULL)) {
+			cfgtmp = g_key_file_get_value(sakura.cfg, cfg_group, temp_name, NULL);
+			gdk_rgba_parse(&sakura.backcolors[i], cfgtmp);
+			g_free(cfgtmp);
+		} else if (sakura.have_system_colors) {
+			sakura.backcolors[i] = sakura.system_background;
+		} else {
+			sakura_set_config_string(temp_name, DEFAULT_BACKGROUND_COLOR);
+			gdk_rgba_parse(&sakura.backcolors[i], DEFAULT_BACKGROUND_COLOR);
 		}
-		cfgtmp = g_key_file_get_value(sakura.cfg, cfg_group, temp_name, NULL);
-		gdk_rgba_parse(&sakura.backcolors[i], cfgtmp);
-		g_free(cfgtmp);
 
 		sprintf(temp_name, "colorset%d_curs", i+1);
-		if (!g_key_file_has_key(sakura.cfg, cfg_group, temp_name, NULL)) {
-			sakura_set_config_string(temp_name, "rgb(255,255,255)");
+		if (g_key_file_has_key(sakura.cfg, cfg_group, temp_name, NULL)) {
+			cfgtmp = g_key_file_get_value(sakura.cfg, cfg_group, temp_name, NULL);
+			gdk_rgba_parse(&sakura.curscolors[i], cfgtmp);
+			g_free(cfgtmp);
+		} else if (sakura.have_system_colors) {
+			sakura.curscolors[i] = sakura.system_cursor;
+		} else {
+			sakura_set_config_string(temp_name, DEFAULT_CURSOR_COLOR);
+			gdk_rgba_parse(&sakura.curscolors[i], DEFAULT_CURSOR_COLOR);
 		}
-		cfgtmp = g_key_file_get_value(sakura.cfg, cfg_group, temp_name, NULL);
-		gdk_rgba_parse(&sakura.curscolors[i], cfgtmp);
-		g_free(cfgtmp);
 
 		sprintf(temp_name, "colorset%d_scheme", i+1);
 		if (!g_key_file_has_key(sakura.cfg, cfg_group, temp_name, NULL)) {
@@ -2000,9 +2263,15 @@ sakura_init()
 	sakura.last_colorset = g_key_file_get_integer(sakura.cfg, cfg_group, "last_colorset", NULL);
 
 	if (!g_key_file_has_key(sakura.cfg, cfg_group, "bold_is_bright", NULL)) {
-		sakura_set_config_boolean("bold_is_bright", FALSE);
+		if (sakura.have_system_colors) {
+			sakura.bold_is_bright = sakura.system_bold_is_bright;
+		} else {
+			sakura_set_config_boolean("bold_is_bright", TRUE);
+			sakura.bold_is_bright = TRUE;
+		}
+	} else {
+		sakura.bold_is_bright = g_key_file_get_boolean(sakura.cfg, cfg_group, "bold_is_bright", NULL);
 	}
-	sakura.bold_is_bright = g_key_file_get_boolean(sakura.cfg, cfg_group, "bold_is_bright", NULL);
 
 	if (!g_key_file_has_key(sakura.cfg, cfg_group, "scroll_lines", NULL)) {
 		g_key_file_set_integer(sakura.cfg, cfg_group, "scroll_lines", DEFAULT_SCROLL_LINES);
@@ -2015,7 +2284,9 @@ sakura_init()
 	sakura.line_height = g_key_file_get_double(sakura.cfg, cfg_group, "line_height", NULL);
 
 	if (!g_key_file_has_key(sakura.cfg, cfg_group, "font", NULL)) {
-		sakura_set_config_string("font", DEFAULT_FONT);
+		gchar *default_font = sakura_get_default_font();
+		sakura_set_config_string("font", default_font);
+		g_free(default_font);
 	}
 	cfgtmp = g_key_file_get_value(sakura.cfg, cfg_group, "font", NULL);
 	sakura.font = pango_font_description_from_string(cfgtmp);
@@ -2121,18 +2392,29 @@ sakura_init()
 	}
 	sakura.word_chars = g_key_file_get_value(sakura.cfg, cfg_group, "word_chars", NULL);
 
-	if (!g_key_file_has_key(sakura.cfg, cfg_group, "palette", NULL)) {
-		sakura_set_config_integer("palette", DEFAULT_PALETTE);
-	}
-	gerror=NULL;
-	sakura.palette_idx = g_key_file_get_integer(sakura.cfg, cfg_group, "palette", &gerror);
-	/* Backwards compatibility after changing (v.3.7.1) "palette" type from string to int. Remove after some versions */
-	if (gerror && gerror->code == G_KEY_FILE_ERROR_INVALID_VALUE) {
+	if (g_key_file_has_key(sakura.cfg, cfg_group, "palette", NULL)) {
+		gerror=NULL;
+		sakura.palette_idx = g_key_file_get_integer(sakura.cfg, cfg_group, "palette", &gerror);
+		/* Backwards compatibility after changing (v.3.7.1) "palette" type from string to int. */
+		if (gerror && gerror->code == G_KEY_FILE_ERROR_INVALID_VALUE) {
+			sakura.palette_idx = DEFAULT_PALETTE;
+			g_error_free(gerror);
+		}
+	} else if (sakura.have_system_colors) {
+		sakura.palette_idx = SYSTEM_PALETTE_INDEX;
+	} else {
 		sakura.palette_idx = DEFAULT_PALETTE;
 		sakura_set_config_integer("palette", DEFAULT_PALETTE);
-		g_error_free(gerror);
 	}
-	sakura.palette = palettes[sakura.palette_idx];
+
+	if (sakura.palette_idx == SYSTEM_PALETTE_INDEX && sakura.have_system_colors) {
+		sakura.palette = sakura.system_palette;
+	} else if (sakura.palette_idx < SYSTEM_PALETTE_INDEX) {
+		sakura.palette = palettes[sakura.palette_idx];
+	} else {
+		sakura.palette_idx = DEFAULT_PALETTE;
+		sakura.palette = palettes[DEFAULT_PALETTE];
+	}
 
 	/* Keybindings are only in the config file */
 	if (!g_key_file_has_key(sakura.cfg, cfg_group, "add_tab_accelerator", NULL)) {
