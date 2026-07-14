@@ -6,6 +6,7 @@ SET (VERSION "3.8.9")
 
 
 INCLUDE (FindPkgConfig)
+FIND_PACKAGE (Python3 COMPONENTS Interpreter)
 
 IF (NOT PKG_CONFIG_FOUND)
 	MESSAGE (FATAL_ERROR "pkg-config not found...")
@@ -55,6 +56,14 @@ INCLUDE_DIRECTORIES (. ${GTK_INCLUDE_DIRS} ${VTE_INCLUDE_DIRS})
 LINK_DIRECTORIES (${GTK_LIBRARY_DIRS} ${VTE_LIBRARY_DIRS} ${X11_LIBRARY_DIRS})
 LINK_LIBRARIES (${GTK_LIBRARIES} ${VTE_LIBRARIES} ${X11_LIBRARIES} m)
 ADD_EXECUTABLE (sakura src/sakura.c)
+
+IF (Python3_Interpreter_FOUND)
+	ADD_CUSTOM_TARGET (session-stress
+		COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tests/session-stress.py
+		        --binary $<TARGET_FILE:sakura>
+		DEPENDS sakura
+		USES_TERMINAL)
+ENDIF (Python3_Interpreter_FOUND)
 
 ADD_SUBDIRECTORY (po)
 

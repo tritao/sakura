@@ -1,0 +1,571 @@
+#!/usr/bin/env python3
+"""Stress Sakura's sidebar/session persistence through real GTK launches.
+
+The test intentionally uses a private config directory.  It seeds a nested
+workspace, moves terminals between groups with xdotool, closes Sakura through
+the window manager, and restores the result repeatedly.
+"""
+
+import argparse
+import configparser
+import os
+from pathlib import Path
+import random
+import signal
+import subprocess
+import sys
+import tempfile
+import time
+
+
+GROUPS = [
+    ("group-a", "root", "Alpha"),
+    ("group-b", "group-a", "Beta"),
+    ("group-c", "root", "Gamma"),
+    ("group-d", "group-c", "Delta"),
+    ("group-e", "root", "Epsilon"),
+]
+
+TERMINAL_PARENTS = [
+    "group-a", "group-b", "group-b", "group-c", "group-d", "group-d",
+    "group-e", "group-e", "root", "root", "group-a", "group-c",
+]
+TERMINAL_CWDS = [
+    "/tmp", "/var", "/usr", "/etc", "/usr/bin", "/home",
+    os.path.expanduser("~"), "/", "/tmp", "/var", "/usr", "/etc",
+]
+TERMINAL_TITLES = [f"Stress terminal {index:02d}"
+                   for index in range(len(TERMINAL_PARENTS))]
+CODEX_TERMINAL_INDEX = 3
+CODEX_SESSION_ID = "stress-codex-session"
+SELECTED_TERMINAL_INDEX = 3
+
+
+def run(command, env, timeout=5, check=True):
+    return subprocess.run(command, env=env, text=True, capture_output=True,
+                          timeout=timeout, check=check)
+
+
+def write_fixture(config_file, session_file):
+    config_file.write_text(
+        "[sakura]\n"
+        "less_questions=true\n"
+        "dont_save=false\n"
+        "sidebar_visible=true\n"
+        "sidebar_width=300\n"
+        "window_columns=80\n"
+        "window_rows=40\n",
+        encoding="utf-8",
+    )
+
+    lines = [
+        "[Session]",
+        "version=3",
+        f"group_count={len(GROUPS)}",
+        f"terminal_count={len(TERMINAL_PARENTS)}",
+        f"selected_terminal={SELECTED_TERMINAL_INDEX}",
+        "sidebar_visible=true",
+        "sidebar_width=300",
+        "",
+    ]
+    for index, (group_id, parent, title) in enumerate(GROUPS):
+        lines.extend([
+            f"[Group{index}]",
+            f"id={group_id}",
+            f"parent={parent}",
+            f"title={title}",
+            "",
+        ])
+    for index, parent in enumerate(TERMINAL_PARENTS):
+        lines.extend([
+            f"[Terminal{index}]",
+            f"parent={parent}",
+            f"cwd={TERMINAL_CWDS[index]}",
+            f"terminal_id=stress-terminal-{index:02d}",
+            f"kind={'codex' if index == CODEX_TERMINAL_INDEX else 'shell'}",
+            "title_set_by_user=true",
+            f"title={TERMINAL_TITLES[index]}",
+        ])
+        if index == CODEX_TERMINAL_INDEX:
+            lines.append(f"codex_session_id={CODEX_SESSION_ID}")
+        lines.append("")
+    session_file.write_text("\n".join(lines), encoding="utf-8")
+
+
+def read_session(session_file):
+    parser = configparser.ConfigParser(interpolation=None)
+    parser.read(session_file, encoding="utf-8")
+    if not parser.has_section("Session"):
+        raise AssertionError("session has no [Session] section")
+    if parser.getint("Session", "version") != 3:
+        raise AssertionError("unexpected session version")
+
+    group_count = parser.getint("Session", "group_count")
+    terminal_count = parser.getint("Session", "terminal_count")
+    groups = {}
+    for index in range(group_count):
+        section = f"Group{index}"
+        if not parser.has_section(section):
+            raise AssertionError(f"missing {section}")
+        group_id = parser.get(section, "id")
+        if group_id in groups:
+            raise AssertionError(f"duplicate group id {group_id}")
+        groups[group_id] = parser.get(section, "parent")
+
+    terminals = []
+    terminal_id_list = []
+    terminal_ids = set()
+    for index in range(terminal_count):
+        section = f"Terminal{index}"
+        if not parser.has_section(section):
+            raise AssertionError(f"missing {section}")
+        parent = parser.get(section, "parent")
+        terminals.append(parent)
+        if parser.has_option(section, "terminal_id"):
+            terminal_id = parser.get(section, "terminal_id")
+            if terminal_id in terminal_ids:
+                raise AssertionError(f"duplicate terminal id {terminal_id}")
+            terminal_ids.add(terminal_id)
+            terminal_id_list.append(terminal_id)
+        else:
+            terminal_id_list.append(None)
+
+    valid_parents = {"root", *groups}
+    for group_id, parent in groups.items():
+        if parent not in valid_parents:
+            raise AssertionError(f"group {group_id} points to missing {parent}")
+    for index, parent in enumerate(terminals):
+        if parent not in valid_parents:
+            raise AssertionError(f"terminal {index} points to missing {parent}")
+
+    # Verify that group nesting is acyclic.  A cycle would make the next
+    # sidebar restore insert rows under groups that are not yet reachable.
+    for group_id in groups:
+        seen = set()
+        current = group_id
+        while current != "root":
+            if current in seen:
+                raise AssertionError(f"cycle in group parents at {group_id}")
+            seen.add(current)
+            current = groups[current]
+
+    return groups, terminals, terminal_id_list
+
+
+def read_metadata(session_file):
+    parser = configparser.ConfigParser(interpolation=None)
+    parser.read(session_file, encoding="utf-8")
+    count = parser.getint("Session", "terminal_count")
+    records = {}
+    ordered_ids = []
+    for index in range(count):
+        section = f"Terminal{index}"
+        terminal_id = parser.get(section, "terminal_id")
+        ordered_ids.append(terminal_id)
+        records[terminal_id] = {
+            "cwd": parser.get(section, "cwd", fallback=""),
+            "title": parser.get(section, "title", fallback=""),
+            "title_set_by_user": parser.getboolean(section, "title_set_by_user",
+                                                     fallback=False),
+            "kind": parser.get(section, "kind", fallback="shell"),
+            "codex_session_id": parser.get(section, "codex_session_id", fallback=""),
+        }
+    selected_index = parser.getint("Session", "selected_terminal", fallback=-1)
+    selected_id = (ordered_ids[selected_index]
+                   if 0 <= selected_index < len(ordered_ids) else None)
+    return records, selected_id
+
+
+def expected_metadata():
+    records = {}
+    for index, terminal_id in enumerate(
+            f"stress-terminal-{index:02d}" for index in range(len(TERMINAL_PARENTS))):
+        records[terminal_id] = {
+            "cwd": os.path.realpath(TERMINAL_CWDS[index]),
+            "title": TERMINAL_TITLES[index],
+            "title_set_by_user": True,
+            "kind": "codex" if index == CODEX_TERMINAL_INDEX else "shell",
+            "codex_session_id": CODEX_SESSION_ID if index == CODEX_TERMINAL_INDEX else "",
+        }
+    return records
+
+
+def assert_metadata(session_file, expected, selected_id=None):
+    actual, actual_selected_id = read_metadata(session_file)
+    if actual != expected:
+        raise AssertionError(f"terminal metadata changed: expected {expected}, got {actual}")
+    if selected_id is not None and actual_selected_id != selected_id:
+        raise AssertionError(
+            f"selected terminal changed: expected {selected_id}, got {actual_selected_id}"
+        )
+
+
+def visible_rows(groups, terminals):
+    children = {"root": []}
+    for group_id, parent in groups.items():
+        children.setdefault(parent, []).append(group_id)
+        children.setdefault(group_id, [])
+
+    rows = [("group", "root")]
+
+    def visit(group_id):
+        for child in children.get(group_id, []):
+            rows.append(("group", child))
+            visit(child)
+        for index, parent in enumerate(terminals):
+            if parent == group_id:
+                rows.append(("terminal", index))
+
+    visit("root")
+    return rows
+
+
+def start_xvfb():
+    read_fd, write_fd = os.pipe()
+    process = subprocess.Popen(
+        ["Xvfb", "-displayfd", str(write_fd), "-screen", "0", "1600x1000x24",
+         "-nolisten", "tcp"],
+        pass_fds=(write_fd,), stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
+        text=True,
+    )
+    os.close(write_fd)
+    try:
+        display = os.read(read_fd, 32).decode("ascii").strip()
+    finally:
+        os.close(read_fd)
+    if not display:
+        error = process.stderr.read() if process.stderr else ""
+        process.terminate()
+        raise RuntimeError(f"Xvfb did not provide a display: {error}")
+    return process, f":{display}"
+
+
+def find_window(env, timeout=10):
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        result = run(["xdotool", "search", "--onlyvisible", "--class", "sakura"],
+                     env, timeout=2, check=False)
+        windows = [line for line in result.stdout.splitlines() if line.strip()]
+        if windows:
+            # Sakura also creates a small fade window with the same class.
+            # Select the largest visible class window, which is the terminal.
+            candidates = []
+            for window in windows:
+                geometry = run(["xdotool", "getwindowgeometry", "--shell", window],
+                               env, timeout=2, check=False).stdout
+                values = {}
+                for line in geometry.splitlines():
+                    if "=" in line:
+                        key, value = line.split("=", 1)
+                        try:
+                            values[key] = int(value)
+                        except ValueError:
+                            pass
+                candidates.append((values.get("WIDTH", 0) * values.get("HEIGHT", 0),
+                                   window))
+            return max(candidates)[1]
+        time.sleep(0.1)
+    window_ids = run(["xdotool", "search", "--onlyvisible", "--name", ".*"],
+                     env, timeout=2, check=False).stdout.splitlines()
+    names = []
+    for window_id in window_ids:
+        name = run(["xdotool", "getwindowname", window_id], env,
+                   timeout=2, check=False).stdout.strip()
+        names.append(f"{window_id}={name}")
+    raise RuntimeError("Sakura window did not appear; visible windows: "
+                       f"{', '.join(names) or '(none)'}")
+
+
+def window_geometry(window, env):
+    result = run(["xdotool", "getwindowgeometry", "--shell", window], env)
+    values = {}
+    for line in result.stdout.splitlines():
+        key, value = line.split("=", 1)
+        values[key] = int(value)
+    return values["X"], values["Y"], values["WIDTH"], values["HEIGHT"]
+
+
+def wait_for_session(session_file, predicate=None, timeout=10):
+    deadline = time.monotonic() + timeout
+    last_error = None
+    last_value = None
+    while time.monotonic() < deadline:
+        try:
+            value = read_session(session_file)
+            last_value = value
+            if predicate is None or predicate(value):
+                return value
+        except (AssertionError, configparser.Error, OSError) as error:
+            last_error = error
+        time.sleep(0.1)
+    if last_error:
+        raise AssertionError(f"session did not become valid: {last_error}")
+    raise AssertionError(f"session did not reach the expected state; last value: {last_value}")
+
+
+def session_has_terminal_ids(session_file):
+    parser = configparser.ConfigParser(interpolation=None)
+    parser.read(session_file, encoding="utf-8")
+    count = parser.getint("Session", "terminal_count", fallback=0)
+    return all(parser.has_option(f"Terminal{index}", "terminal_id")
+               and parser.get(f"Terminal{index}", "terminal_id")
+               for index in range(count))
+
+
+def drag_terminal_into_group(window, rows, source_row, target_row, env, row_top,
+                             group_row_height, terminal_row_height, sidebar_width):
+    window_x, window_y, _, _ = window_geometry(window, env)
+    # Selection changes can scroll the tree to the active terminal.  Return to
+    # the top so our model-to-pixel mapping is deterministic.
+    run(["xdotool", "mousemove", "--sync", str(window_x + 80),
+         str(window_y + row_top + 10)], env)
+    run(["xdotool", "click", "--repeat", "30", "--delay", "10", "4"], env)
+    if os.environ.get("SAKURA_STRESS_SCREENSHOT"):
+        run(["import", "-display", env["DISPLAY"], "-window", window,
+             os.environ["SAKURA_STRESS_SCREENSHOT"]], env, timeout=5)
+    source_x = window_x + min(sidebar_width - 30, 100)
+    target_x = window_x + min(sidebar_width - 30, 120)
+
+    def row_y(row):
+        y = row_top
+        for preceding in rows[:row[1]]:
+            y += group_row_height if preceding[0] == "group" else terminal_row_height
+        height = group_row_height if row[0] == "group" else terminal_row_height
+        return window_y + y + height // 2
+
+    source_y = row_y(source_row)
+    target_y = row_y(target_row)
+    if os.environ.get("SAKURA_STRESS_VERBOSE"):
+        print(f"drag rows {source_row[1]} -> {target_row[1]} at "
+              f"({source_x},{source_y}) -> ({target_x},{target_y})")
+
+    run(["xdotool", "mousemove", "--sync", str(source_x), str(source_y)], env)
+    run(["xdotool", "mousedown", "1"], env)
+    time.sleep(0.25)
+    for fraction in (0.2, 0.4, 0.6, 0.8, 1.0):
+        x = round(source_x + (target_x - source_x) * fraction)
+        y = round(source_y + (target_y - source_y) * fraction)
+        run(["xdotool", "mousemove", "--sync", str(x), str(y)], env)
+        time.sleep(0.08)
+    time.sleep(0.25)
+    run(["xdotool", "mouseup", "1"], env)
+
+
+def close_window(process, window, env):
+    if process.poll() is None:
+        run(["xdotool", "windowclose", window], env, timeout=5, check=False)
+        try:
+            process.wait(timeout=12)
+        except subprocess.TimeoutExpired:
+            process.send_signal(signal.SIGTERM)
+            try:
+                process.wait(timeout=3)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                process.wait(timeout=3)
+    if process.returncode not in (0, None):
+        raise RuntimeError(f"Sakura exited with status {process.returncode}")
+
+
+def launch_sakura(binary, config_file, env, log_file):
+    log_handle = log_file.open("a", encoding="utf-8")
+    process = subprocess.Popen(
+        [str(binary), "--config-file", str(config_file)],
+        env=env, stdout=log_handle, stderr=subprocess.STDOUT,
+    )
+    log_handle.close()
+    return process, find_window(env)
+
+
+def run_failed_restore_case(binary, config_file, session_file, env, log_file):
+    invalid_session = (
+        "[Session]\n"
+        "version=3\n"
+        "group_count=1\n"
+        "terminal_count=0\n"
+        "selected_terminal=0\n"
+        "\n"
+        "[Group0]\n"
+        "id=group-preserved\n"
+        "parent=root\n"
+        "title=Preserved\n"
+    )
+    session_file.write_text(invalid_session, encoding="utf-8")
+    process, window = launch_sakura(binary, config_file, env, log_file)
+    time.sleep(0.5)
+    close_window(process, window, env)
+    if session_file.read_text(encoding="utf-8") != invalid_session:
+        raise AssertionError("failed restore overwrote the original session file")
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--binary", default="build/src/sakura")
+    parser.add_argument("--iterations", type=int, default=20)
+    parser.add_argument("--seed", type=int, default=20260714)
+    parser.add_argument("--row-top", type=int, default=73,
+                        help="top of the first sidebar row in window coordinates")
+    parser.add_argument("--group-row-height", type=int, default=25,
+                        help="group row height used for xdotool drags")
+    parser.add_argument("--terminal-row-height", type=int, default=41,
+                        help="terminal row height used for xdotool drags")
+    parser.add_argument("--max-drag-row", type=int, default=5,
+                        help="largest visible row index used for automated drags")
+    parser.add_argument("--no-drag", action="store_true",
+                        help="only stress restore/save cycles")
+    parser.add_argument("--screenshot", metavar="PATH",
+                        help="capture the sidebar window before dragging")
+    args = parser.parse_args()
+
+    if args.iterations < 1:
+        parser.error("--iterations must be positive")
+    binary = Path(args.binary).resolve()
+    if not binary.is_file():
+        raise SystemExit(f"binary not found: {binary}")
+    for command in ("Xvfb", "xdotool"):
+        if subprocess.call(["which", command], stdout=subprocess.DEVNULL,
+                           stderr=subprocess.DEVNULL) != 0:
+            raise SystemExit(f"required command not found: {command}")
+
+    randomizer = random.Random(args.seed)
+    xvfb = None
+    app = None
+    window = None
+    with tempfile.TemporaryDirectory(prefix="sakura-session-stress-") as directory:
+        root = Path(directory)
+        config_file = root / "sakura.conf"
+        session_file = root / "sakura.conf.session"
+        log_file = root / "sakura.log"
+        write_fixture(config_file, session_file)
+
+        xvfb, display = start_xvfb()
+        env = os.environ.copy()
+        env["DISPLAY"] = display
+        env["GDK_BACKEND"] = "x11"
+        env["SHELL"] = "/bin/sh"
+        fake_bin = root / "bin"
+        fake_bin.mkdir()
+        fake_codex = fake_bin / "codex"
+        fake_codex.write_text(
+            "#!/bin/sh\n"
+            "if [ \"$1\" = app-server ]; then exit 0; fi\n"
+            "trap 'exit 0' HUP INT TERM\n"
+            "while :; do sleep 1; done\n",
+            encoding="utf-8",
+        )
+        fake_codex.chmod(0o755)
+        env["PATH"] = f"{fake_bin}:{env.get('PATH', '')}"
+
+        fixture_groups, fixture_terminals, fixture_terminal_ids = read_session(session_file)
+        metadata_expected = expected_metadata()
+        expected_selected_id = f"stress-terminal-{SELECTED_TERMINAL_INDEX:02d}"
+        expected_groups = fixture_groups
+        expected_terminals = fixture_terminals
+        expected_terminal_ids = fixture_terminal_ids
+        try:
+            for iteration in range(args.iterations):
+                log_handle = log_file.open("a", encoding="utf-8")
+                app = subprocess.Popen(
+                    [str(binary), "--config-file", str(config_file)],
+                    env=env, stdout=log_handle, stderr=subprocess.STDOUT,
+                )
+                log_handle.close()
+                window = find_window(env)
+                if args.screenshot:
+                    run(["import", "-display", display, "-window", window,
+                         args.screenshot], env, timeout=5)
+                current = wait_for_session(
+                    session_file,
+                    lambda value: session_has_terminal_ids(session_file),
+                )
+                assert_metadata(session_file, metadata_expected, expected_selected_id)
+                if (current[0] != fixture_groups or
+                        len(current[1]) != len(fixture_terminals) or
+                        set(current[2]) != set(fixture_terminal_ids)):
+                    raise AssertionError(
+                        "restore changed the workspace before drag at iteration "
+                        f"{iteration}: expected group/terminal identities from fixture, got {current}"
+                    )
+                expected_groups, expected_terminals, expected_terminal_ids = current
+
+                if not args.no_drag:
+                    rows = visible_rows(current[0], current[1])
+                    terminal_choices = [(row, row_index)
+                                        for row_index, row in enumerate(rows)
+                                        if row[0] == "terminal" and
+                                        row_index <= args.max_drag_row]
+                    group_choices = [(row, row_index)
+                                     for row_index, row in enumerate(rows)
+                                     if row[0] == "group" and row[1] != "root" and
+                                     row_index <= args.max_drag_row]
+                    source, source_row_index = terminal_choices[
+                        iteration % len(terminal_choices)]
+                    source_index = source[1]
+                    source_id = current[2][source_index]
+                    targets = [(row, row_index) for row, row_index in group_choices
+                               if current[1][source_index] != row[1]]
+                    target, target_row_index = targets[randomizer.randrange(len(targets))]
+                    target_index = target[1]
+
+                    source_row = (source[0], source_row_index)
+                    target_row = (target[0], target_row_index)
+                    drag_terminal_into_group(
+                        window, rows, source_row, target_row, env, args.row_top,
+                        args.group_row_height, args.terminal_row_height, 300,
+                    )
+
+                    def moved(value):
+                        for index, terminal_id in enumerate(value[2]):
+                            if terminal_id == source_id:
+                                return value[1][index] == target_index
+                        return False
+
+                    current = wait_for_session(session_file, moved)
+                    assert_metadata(session_file, metadata_expected)
+                    _, expected_selected_id = read_metadata(session_file)
+                    expected_groups, expected_terminals, expected_terminal_ids = current
+
+                close_window(app, window, env)
+                app = None
+                window = None
+                restored = read_session(session_file)
+                if restored != (expected_groups, expected_terminals, expected_terminal_ids):
+                    raise AssertionError(
+                        f"clean shutdown changed the workspace at iteration {iteration}"
+                    )
+                assert_metadata(session_file, metadata_expected, expected_selected_id)
+                backup_file = Path(f"{session_file}.bak")
+                if not backup_file.is_file():
+                    raise AssertionError("session backup was not created")
+                read_session(backup_file)
+                print(f"iteration {iteration + 1}/{args.iterations}: "
+                      f"{len(restored[0])} groups, {len(restored[1])} terminals")
+
+            run_failed_restore_case(binary, config_file, session_file, env, log_file)
+            print("failed-restore preservation: passed")
+        except Exception:
+            if app is not None:
+                try:
+                    close_window(app, window, env) if window else app.kill()
+                except Exception as cleanup_error:
+                    print(f"cleanup error: {cleanup_error}", file=sys.stderr)
+            print(f"Sakura log: {log_file}", file=sys.stderr)
+            if log_file.exists():
+                print(log_file.read_text(encoding="utf-8", errors="replace")[-4000:],
+                      file=sys.stderr)
+            raise
+        finally:
+            if app is not None and app.poll() is None:
+                app.kill()
+            if xvfb is not None:
+                xvfb.terminate()
+                try:
+                    xvfb.wait(timeout=3)
+                except subprocess.TimeoutExpired:
+                    xvfb.kill()
+
+    print("session stress test passed")
+
+
+if __name__ == "__main__":
+    main()
