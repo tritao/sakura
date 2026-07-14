@@ -4,6 +4,8 @@ set -euo pipefail
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 BUILD_DIR="${BUILD_DIR:-"$SCRIPT_DIR/build"}"
 BUILD_TYPE="${BUILD_TYPE:-Debug}"
+INSTALL_PREFIX="${INSTALL_PREFIX:-/usr/local}"
+BUILD_TARGET="${BUILD_TARGET:-sakura}"
 
 # Set VTE_PREFIX explicitly when VTE was installed outside the system paths.
 # The /tmp prefix is the unprivileged fallback used on this development machine.
@@ -34,6 +36,7 @@ cmake_args=(
 	-S "$SCRIPT_DIR"
 	-B "$BUILD_DIR"
 	-DCMAKE_BUILD_TYPE="$BUILD_TYPE"
+	-DCMAKE_INSTALL_PREFIX="$INSTALL_PREFIX"
 	-DCMAKE_C_FLAGS="$EXTRA_CFLAGS"
 	-DCMAKE_EXE_LINKER_FLAGS="$EXTRA_LDFLAGS"
 )
@@ -44,7 +47,7 @@ fi
 
 cmake "${cmake_args[@]}"
 if [[ -n "${JOBS:-}" ]]; then
-	cmake --build "$BUILD_DIR" --target sakura --parallel "$JOBS"
+	cmake --build "$BUILD_DIR" --target "$BUILD_TARGET" --parallel "$JOBS"
 else
-	cmake --build "$BUILD_DIR" --target sakura --parallel
+	cmake --build "$BUILD_DIR" --target "$BUILD_TARGET" --parallel
 fi

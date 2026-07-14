@@ -464,6 +464,7 @@ struct sakura_sidebar_node {
 struct sakura_tab {
 	GtkWidget *hbox;
 	GtkWidget *label;
+	GtkWidget *spinner;
 	GtkWidget *vte;      /* Reference to VTE terminal */
 	GtkWidget *scrollbar;
 	GtkBorder padding;   /* inner-property data */
@@ -1219,6 +1220,15 @@ sakura_tab_set_status (struct sakura_tab *sk_tab, SakuraTabStatus status,
 
 	sk_tab->status = status;
 	sk_tab->attention = visible_attention;
+	if (sk_tab->spinner != NULL) {
+		if (status == SAKURA_TAB_STATUS_RUNNING) {
+			gtk_widget_show(sk_tab->spinner);
+			gtk_spinner_start(GTK_SPINNER(sk_tab->spinner));
+		} else {
+			gtk_spinner_stop(GTK_SPINNER(sk_tab->spinner));
+			gtk_widget_hide(sk_tab->spinner);
+		}
+	}
 	sakura_sidebar_update_tab(sk_tab);
 	sakura_sidebar_update_attention_count();
 
@@ -5595,6 +5605,7 @@ sakura_add_tab_with_options (const gchar *restore_cwd,
 {
 	struct sakura_tab *sk_tab;
 	GtkWidget *tab_title_hbox; GtkWidget *close_button; /* We could put them inside struct sakura_tab, but it is not necessary */
+	GtkWidget *tab_label_box;
 	GtkWidget *event_box;
 	gint index, page, npages;
 	gchar *cwd = NULL; gchar *default_label_text = NULL;
@@ -5619,6 +5630,11 @@ sakura_add_tab_with_options (const gchar *restore_cwd,
 	/* Create the tab label */
 	sk_tab->label = gtk_label_new(NULL);
 	gtk_label_set_ellipsize(GTK_LABEL(sk_tab->label), PANGO_ELLIPSIZE_END);
+	sk_tab->spinner = gtk_spinner_new();
+	gtk_widget_set_no_show_all(sk_tab->spinner, TRUE);
+	gtk_widget_set_size_request(sk_tab->spinner, 16, 16);
+	gtk_widget_set_valign(sk_tab->spinner, GTK_ALIGN_CENTER);
+	gtk_widget_set_tooltip_text(sk_tab->spinner, _("Working"));
 
 	/* Create hbox for our label & button */
 	tab_title_hbox = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 2);
@@ -5626,7 +5642,10 @@ sakura_add_tab_with_options (const gchar *restore_cwd,
 
 	/* Label widgets has no window associated, so we need an event box to catch click events */
 	event_box = gtk_event_box_new();
-	gtk_container_add(GTK_CONTAINER(event_box), sk_tab->label);
+	tab_label_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 2);
+	gtk_box_pack_start(GTK_BOX(tab_label_box), sk_tab->spinner, FALSE, FALSE, 0);
+	gtk_box_pack_start(GTK_BOX(tab_label_box), sk_tab->label, TRUE, TRUE, 0);
+	gtk_container_add(GTK_CONTAINER(event_box), tab_label_box);
 	gtk_widget_set_events(event_box, GDK_BUTTON_PRESS_MASK);
 
 	/* Expand&fill the event_box to get click events all along the tab */

@@ -6,23 +6,26 @@
 
 ## Installation
 
-How to compile and install this beast ?
+The included installer builds Sakura and installs the executable, desktop
+launcher, icon, documentation, and helper scripts:
 
 ```bash
-$ cmake .
-$ make
-$ sudo make install
+$ ./install.sh
 ```
-**sakura** now uses the CMake building system (RIP our old system MOBS, we'll remember you ;)).
 
-To install **sakura** with a different prefix, cmake needs to be invoked with the proper environment
-variables, so for example, to install sakura in `/usr`, you must type:
+The default prefix is `/usr/local`, so the installer may ask for your sudo
+password. After installation, search for **Sakura** in the Linux Mint
+application menu. The desktop database is refreshed automatically when the
+system tool is available.
+
+For a per-user install without sudo, use:
 
 ```bash
-$ cmake -DCMAKE_INSTALL_PREFIX=/usr .
+$ PREFIX="$HOME/.local" ./install.sh
 ```
 
-Use CMAKE_BUILD_TYPE=Debug if you need debug symbols. Default type is "Release".
+Set `BUILD_TYPE=Debug` if you need debug symbols. The lower-level CMake
+installation commands remain available for packaging and development.
 
 Make sure your distribution sources the vte script for OSC 7 support in no login shells. If not, please add the following line to you .bashrc:
 
@@ -36,8 +39,9 @@ Make sure your distribution sources the vte script for OSC 7 support in no login
 
 ### Codex sessions
 
-Sakura can restore Codex conversations by their saved session ID. Install the
-optional Codex hook once:
+Sakura can restore Codex conversations by their saved session ID. The installer
+automatically enables the optional Codex hook when the `codex` command is
+available. If Codex is installed later, enable it with:
 
 ```bash
 scripts/sakura-codex-session-hook --install
@@ -95,8 +99,9 @@ backups, and verifies that a failed restore does not overwrite the original
 session file.
 
 Tracked Codex tabs show their current state in the terminal sidebar: working,
-needs approval, or ready to review. When a background Codex turn finishes or
-needs approval, Sakura marks that terminal as needing attention and updates the
+needs approval, or ready to review. Working tabs also show an animated spinner
+in the notebook tab label. When a background Codex turn finishes or needs
+approval, Sakura marks that terminal as needing attention and updates the
 sidebar count. Ordinary terminals use bell and process-exit signals as a
 fallback.
 
