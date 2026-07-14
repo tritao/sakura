@@ -258,7 +258,10 @@ struct scheme predefined_schemes[NUM_SCHEMES] = {
 
 enum {
 	SAKURA_SIDEBAR_COLUMN_TITLE,
+	SAKURA_SIDEBAR_COLUMN_SUBTITLE,
+	SAKURA_SIDEBAR_COLUMN_MARKUP,
 	SAKURA_SIDEBAR_COLUMN_ICON,
+	SAKURA_SIDEBAR_COLUMN_TOOLTIP,
 	SAKURA_SIDEBAR_COLUMN_NODE,
 	SAKURA_SIDEBAR_N_COLUMNS
 };
@@ -404,6 +407,8 @@ struct sakura_sidebar_node {
 	SakuraSidebarNodeType type;
 	gchar *id;
 	gchar *title;
+	gchar *subtitle;
+	gchar *tooltip;
 	struct sakura_sidebar_node *parent;
 	struct sakura_tab *tab;
 	GtkTreeRowReference *row;
@@ -419,6 +424,9 @@ struct sakura_tab {
 	int colorset;
 	GPid pid;           /* pid of the forked process */
 	gulong exit_handler_id;
+	gchar *cwd;
+	gchar *host;
+	gchar *raw_title;
 	struct sakura_sidebar_node *sidebar_node;
 };
 
@@ -583,6 +591,7 @@ static void     sakura_error (const char *, ...);
 static void     sakura_build_command (int *, char ***);
 static char *   sakura_get_term_cwd (struct sakura_tab *);
 static char *   sakura_get_term_cwd_osc7 (struct sakura_tab *);
+static void     sakura_update_tab_metadata (struct sakura_tab *, const gchar *);
 static guint    sakura_tokeycode (guint key);
 static void     sakura_set_keybind (const gchar *, guint);
 static guint    sakura_get_keybind (const gchar *);
@@ -1006,7 +1015,39 @@ sakura_sidebar_free_node (struct sakura_sidebar_node *node)
 		gtk_tree_row_reference_free(node->row);
 	g_free(node->id);
 	g_free(node->title);
+	g_free(node->subtitle);
+	g_free(node->tooltip);
 	g_free(node);
+}
+
+
+static void
+sakura_sidebar_set_node_row (struct sakura_sidebar_node *node, GtkTreeIter *iter)
+{
+	const gchar *icon_name;
+	gchar *escaped_title, *escaped_subtitle, *markup;
+
+	icon_name = node->type == SAKURA_SIDEBAR_GROUP ? "folder" : "utilities-terminal";
+	escaped_title = g_markup_escape_text(node->title != NULL ? node->title : "", -1);
+	escaped_subtitle = g_markup_escape_text(node->subtitle != NULL ? node->subtitle : "", -1);
+	if (node->subtitle != NULL && node->subtitle[0] != '\0')
+		markup = g_strdup_printf("%s\n<small>%s</small>", escaped_title, escaped_subtitle);
+	else
+		markup = g_strdup(escaped_title);
+
+	gtk_tree_store_set(sakura.sidebar_model, iter,
+	                   SAKURA_SIDEBAR_COLUMN_TITLE, node->title,
+	                   SAKURA_SIDEBAR_COLUMN_SUBTITLE, node->subtitle,
+	                   SAKURA_SIDEBAR_COLUMN_MARKUP, markup,
+	                   SAKURA_SIDEBAR_COLUMN_ICON, icon_name,
+	                   SAKURA_SIDEBAR_COLUMN_TOOLTIP,
+	                   node->tooltip != NULL ? node->tooltip : node->title,
+	                   SAKURA_SIDEBAR_COLUMN_NODE, node,
+	                   -1);
+
+	g_free(escaped_title);
+	g_free(escaped_subtitle);
+	g_free(markup);
 }
 
 
@@ -1016,18 +1057,12 @@ sakura_sidebar_insert_node (struct sakura_sidebar_node *node)
 	GtkTreeIter iter, parent_iter;
 	GtkTreeIter *parent = NULL;
 	GtkTreePath *path;
-	const gchar *icon_name;
 
 	if (node->parent != NULL && sakura_sidebar_get_iter(node->parent, &parent_iter))
 		parent = &parent_iter;
 
 	gtk_tree_store_append(sakura.sidebar_model, &iter, parent);
-	icon_name = node->type == SAKURA_SIDEBAR_GROUP ? "folder" : "utilities-terminal";
-	gtk_tree_store_set(sakura.sidebar_model, &iter,
-	                   SAKURA_SIDEBAR_COLUMN_TITLE, node->title,
-	                   SAKURA_SIDEBAR_COLUMN_ICON, icon_name,
-	                   SAKURA_SIDEBAR_COLUMN_NODE, node,
-	                   -1);
+	sakura_sidebar_set_node_row(node, &iter);
 
 	path = gtk_tree_model_get_path(GTK_TREE_MODEL(sakura.sidebar_model), &iter);
 	node->row = gtk_tree_row_reference_new(GTK_TREE_MODEL(sakura.sidebar_model), path);
@@ -1079,11 +1114,13 @@ sakura_sidebar_add_terminal (struct sakura_tab *sk_tab, struct sakura_sidebar_no
 
 	node = g_new0(struct sakura_sidebar_node, 1);
 	node->type = SAKURA_SIDEBAR_TERMINAL;
-	node->title = g_strdup(gtk_label_get_text(GTK_LABEL(sk_tab->label)));
+	node->title = g_strdup(_("Terminal"));
+	node->subtitle = g_strdup("");
 	node->parent = parent != NULL ? parent : sakura.sidebar_root;
 	node->tab = sk_tab;
 	sk_tab->sidebar_node = node;
 	sakura_sidebar_insert_node(node);
+	sakura_sidebar_update_tab(sk_tab);
 	sakura_sidebar_select_tab(sk_tab);
 }
 
@@ -1092,16 +1129,61 @@ static void
 sakura_sidebar_update_tab (struct sakura_tab *sk_tab)
 {
 	GtkTreeIter iter;
+	struct sakura_sidebar_node *node;
+	gchar *title, *subtitle, *tooltip, *display_path;
+	gint page;
 
 	if (sk_tab == NULL || sk_tab->sidebar_node == NULL ||
 	    !sakura_sidebar_get_iter(sk_tab->sidebar_node, &iter))
 		return;
 
-	g_free(sk_tab->sidebar_node->title);
-	sk_tab->sidebar_node->title = g_strdup(gtk_label_get_text(GTK_LABEL(sk_tab->label)));
-	gtk_tree_store_set(sakura.sidebar_model, &iter,
-	                   SAKURA_SIDEBAR_COLUMN_TITLE, sk_tab->sidebar_node->title,
-	                   -1);
+	node = sk_tab->sidebar_node;
+	if (sk_tab->label_set_byuser) {
+		title = g_strdup(gtk_label_get_text(GTK_LABEL(sk_tab->label)));
+		g_strstrip(title);
+	} else if (sk_tab->cwd != NULL && sk_tab->cwd[0] != '\0') {
+		if (g_strcmp0(sk_tab->cwd, g_get_home_dir()) == 0)
+			title = g_strdup("~");
+		else
+			title = g_path_get_basename(sk_tab->cwd);
+	} else {
+		page = gtk_notebook_page_num(GTK_NOTEBOOK(sakura.notebook), sk_tab->hbox);
+		title = g_strdup_printf(_("Terminal %d"), page >= 0 ? page + 1 : 1);
+	}
+
+	display_path = NULL;
+	if (sk_tab->cwd != NULL && sk_tab->cwd[0] != '\0') {
+		const gchar *home = g_get_home_dir();
+		if (home != NULL && g_str_has_prefix(sk_tab->cwd, home) &&
+		    (sk_tab->cwd[strlen(home)] == '\0' || sk_tab->cwd[strlen(home)] == '/'))
+			display_path = g_strdup_printf("~%s", sk_tab->cwd + strlen(home));
+		else
+			display_path = g_strdup(sk_tab->cwd);
+	}
+	if (sk_tab->host != NULL && display_path != NULL)
+		subtitle = g_strdup_printf("%s · %s", sk_tab->host, display_path);
+	else if (sk_tab->host != NULL)
+		subtitle = g_strdup(sk_tab->host);
+	else if (display_path != NULL)
+		subtitle = g_strdup(display_path);
+	else
+		subtitle = g_strdup("");
+
+	if (sk_tab->raw_title != NULL && sk_tab->raw_title[0] != '\0' && subtitle[0] != '\0')
+		tooltip = g_strdup_printf("%s\n%s", sk_tab->raw_title, subtitle);
+	else if (sk_tab->raw_title != NULL && sk_tab->raw_title[0] != '\0')
+		tooltip = g_strdup(sk_tab->raw_title);
+	else
+		tooltip = g_strdup(subtitle);
+
+	g_free(node->title);
+	g_free(node->subtitle);
+	g_free(node->tooltip);
+	node->title = title;
+	node->subtitle = subtitle;
+	node->tooltip = tooltip;
+	sakura_sidebar_set_node_row(node, &iter);
+	g_free(display_path);
 }
 
 
@@ -1292,8 +1374,7 @@ sakura_sidebar_rename_group_cb (GtkWidget *widget, void *data)
 			g_free(node->title);
 			node->title = g_strdup(title);
 			if (sakura_sidebar_get_iter(node, &iter))
-				gtk_tree_store_set(sakura.sidebar_model, &iter,
-				                   SAKURA_SIDEBAR_COLUMN_TITLE, node->title, -1);
+				sakura_sidebar_set_node_row(node, &iter);
 			sakura_sidebar_save_groups();
 		}
 	}
@@ -1440,6 +1521,7 @@ sakura_sidebar_init (void)
 	gsize i, n_groups;
 
 	sakura.sidebar_model = gtk_tree_store_new(SAKURA_SIDEBAR_N_COLUMNS,
+	                                         G_TYPE_STRING, G_TYPE_STRING, G_TYPE_STRING,
 	                                         G_TYPE_STRING, G_TYPE_STRING, G_TYPE_POINTER);
 	sakura.sidebar_tree = gtk_tree_view_new_with_model(GTK_TREE_MODEL(sakura.sidebar_model));
 	sakura.sidebar_selection = gtk_tree_view_get_selection(GTK_TREE_VIEW(sakura.sidebar_tree));
@@ -1448,15 +1530,18 @@ sakura_sidebar_init (void)
 	gtk_tree_view_set_enable_tree_lines(GTK_TREE_VIEW(sakura.sidebar_tree), TRUE);
 	gtk_tree_view_set_activate_on_single_click(GTK_TREE_VIEW(sakura.sidebar_tree), TRUE);
 	gtk_tree_view_set_reorderable(GTK_TREE_VIEW(sakura.sidebar_tree), TRUE);
+	gtk_tree_view_set_tooltip_column(GTK_TREE_VIEW(sakura.sidebar_tree), SAKURA_SIDEBAR_COLUMN_TOOLTIP);
 	gtk_widget_set_name(sakura.sidebar_tree, "terminal-sidebar");
 
 	icon_renderer = gtk_cell_renderer_pixbuf_new();
 	text_renderer = gtk_cell_renderer_text_new();
+	g_object_set(text_renderer, "ellipsize", PANGO_ELLIPSIZE_END, NULL);
 	column = gtk_tree_view_column_new();
+	gtk_tree_view_column_set_spacing(column, 6);
 	gtk_tree_view_column_pack_start(column, icon_renderer, FALSE);
 	gtk_tree_view_column_add_attribute(column, icon_renderer, "icon-name", SAKURA_SIDEBAR_COLUMN_ICON);
 	gtk_tree_view_column_pack_start(column, text_renderer, TRUE);
-	gtk_tree_view_column_add_attribute(column, text_renderer, "text", SAKURA_SIDEBAR_COLUMN_TITLE);
+	gtk_tree_view_column_add_attribute(column, text_renderer, "markup", SAKURA_SIDEBAR_COLUMN_MARKUP);
 	gtk_tree_view_append_column(GTK_TREE_VIEW(sakura.sidebar_tree), column);
 
 	scrolled = gtk_scrolled_window_new(NULL, NULL);
@@ -1799,6 +1884,7 @@ sakura_title_changed_cb (GtkWidget *widget, void *data)
 	sk_tab = sakura_get_sktab(sakura, modified_page);
 
 	tabtitle = vte_terminal_get_window_title(VTE_TERMINAL(sk_tab->vte));
+	sakura_update_tab_metadata(sk_tab, tabtitle);
 
 	/* User set values overrides any other one */
 	if (!sk_tab->label_set_byuser) {
@@ -1944,6 +2030,7 @@ sakura_set_name_dialog_cb (GtkWidget *widget, void *data)
 		sakura_set_tab_label_text(gtk_entry_get_text(GTK_ENTRY(entry)), page);
 		sakura_set_window_title(gtk_entry_get_text(GTK_ENTRY(entry)));
 		sk_tab->label_set_byuser=true; 
+		sakura_sidebar_update_tab(sk_tab);
 		sakura.main_title=NULL; /* Ignore the user-set window title if the user names the tab */
 	}
 
@@ -4245,6 +4332,10 @@ sakura_add_tab()
 		}
 	}
 
+	g_free(sk_tab->cwd);
+	sk_tab->cwd = g_strdup(cwd);
+	sakura_update_tab_metadata(sk_tab,
+	                           vte_terminal_get_window_title(VTE_TERMINAL(sk_tab->vte)));
 	free(cwd);
 
 	/* Applying tab title pattern from config (https://answers.launchpad.net/sakura/+question/267951) */
@@ -4335,6 +4426,9 @@ sakura_del_tab(gint page)
 	sakura_sidebar_remove_tab(sk_tab);
 	gtk_widget_hide(sk_tab->hbox);
 	g_signal_handler_disconnect (sk_tab->vte, sk_tab->exit_handler_id);
+	g_free(sk_tab->cwd);
+	g_free(sk_tab->host);
+	g_free(sk_tab->raw_title);
 	gtk_notebook_remove_page(GTK_NOTEBOOK(sakura.notebook), page);
 
 	/* Find the next page, if it exists, and grab focus */
@@ -4662,6 +4756,52 @@ sakura_get_term_cwd_osc7(struct sakura_tab* sk_tab)
 	}
 
 	return cwd;
+}
+
+
+static void
+sakura_update_tab_metadata (struct sakura_tab *sk_tab, const gchar *raw_title)
+{
+	const gchar *directory_uri;
+	const gchar *local_host;
+	gchar *uri_host = NULL;
+	gchar *uri_cwd = NULL;
+	gchar *fallback_cwd;
+
+	if (sk_tab == NULL)
+		return;
+
+	g_free(sk_tab->raw_title);
+	sk_tab->raw_title = g_strdup(raw_title != NULL ? raw_title : "");
+	g_free(sk_tab->host);
+	sk_tab->host = NULL;
+
+	directory_uri = vte_terminal_get_current_directory_uri(VTE_TERMINAL(sk_tab->vte));
+	if (directory_uri != NULL)
+		uri_cwd = g_filename_from_uri(directory_uri, &uri_host, NULL);
+
+	if (uri_cwd != NULL && uri_cwd[0] == '/') {
+		g_free(sk_tab->cwd);
+		sk_tab->cwd = g_strdup(uri_cwd);
+	}
+
+	local_host = g_get_host_name();
+	if (uri_host != NULL && uri_host[0] != '\0' &&
+	    g_ascii_strcasecmp(uri_host, "localhost") != 0 &&
+	    g_ascii_strcasecmp(uri_host, local_host) != 0)
+		sk_tab->host = g_strdup(uri_host);
+
+	if (sk_tab->cwd == NULL || sk_tab->cwd[0] == '\0') {
+		fallback_cwd = sakura_get_term_cwd(sk_tab);
+		if (fallback_cwd != NULL) {
+			g_free(sk_tab->cwd);
+			sk_tab->cwd = fallback_cwd;
+		}
+	}
+
+	g_free(uri_cwd);
+	g_free(uri_host);
+	sakura_sidebar_update_tab(sk_tab);
 }
 
 
