@@ -32,6 +32,7 @@
 #include <sys/wait.h>
 #include <sys/stat.h>
 #include <fcntl.h>
+#include <errno.h>
 #include <locale.h>
 #include <libintl.h>
 #include <glib.h>
@@ -266,7 +267,7 @@ enum {
 	SAKURA_SIDEBAR_N_COLUMNS
 };
 
-#define DEFAULT_SIDEBAR_WIDTH 260
+#define DEFAULT_SIDEBAR_WIDTH 200
 
 #define FADE_WINDOW_CSS "\
 window#fade_window {\
@@ -349,12 +350,18 @@ static struct {
 	bool bold_is_bright;             /* Show bold characters as bright */
 	bool dont_save;                  /* Don't save config file */
 	bool first_run;                  /* To only execute commands first time sakura is launched */
+	bool session_restoring;
+	bool session_ready;
+	bool session_shutting_down;
+	guint session_save_source_id;
 	GtkWidget *item_copy_link;       /* We include here only the items which need to be hidden */
 	GtkWidget *item_open_link;
 	GtkWidget *item_open_mail;
 	GtkWidget *open_link_separator;
 	GKeyFile *cfg;
+	GKeyFile *session_cfg;
 	char *configfile;
+	char *sessionfile;
 	char *icon;
 	char *shell_path;
 	char *main_title;		/* Main window static title from user input */
@@ -429,7 +436,6 @@ struct sakura_tab {
 	gchar *raw_title;
 	struct sakura_sidebar_node *sidebar_node;
 };
-
 
 #define ICON_FILE "terminal-tango.svg"
 #define SCROLL_LINES 4096
@@ -585,6 +591,10 @@ static void     sakura_sidebar_toggle_cb (GtkWidget *, void *);
 static void     sakura_sidebar_selection_changed_cb (GtkTreeSelection *, void *);
 static gboolean sakura_sidebar_button_press_cb (GtkWidget *, GdkEventButton *, void *);
 static void     sakura_sidebar_paned_position_cb (GObject *, GParamSpec *, void *);
+static void     sakura_session_load (void);
+static void     sakura_session_save (void);
+static void     sakura_session_schedule_save (void);
+static gboolean sakura_session_restore (void);
 
 /* Misc */
 static void     sakura_error (const char *, ...);
@@ -601,6 +611,8 @@ static void     sakura_sanitize_working_directory (void);
 static void     sakura_init ();
 static void     sakura_init_popup ();
 static void     sakura_add_tab ();
+static void     sakura_add_tab_with_options (const gchar *, struct sakura_sidebar_node *,
+                                             const gchar *, gboolean);
 static void     sakura_del_tab (gint);
 static void     sakura_close_tab (gint); /* Save config, del tab and destroy sakura */
 static void     sakura_destroy ();
@@ -643,6 +655,8 @@ static char *option_config_file;
 static gboolean option_fullscreen;
 static gboolean option_maximize;
 static gint option_colorset;
+static gboolean option_new_session;
+static gboolean option_new_window;
 
 
 static GOptionEntry entries[] = {
@@ -662,6 +676,8 @@ static GOptionEntry entries[] = {
 	{ "maximize", 'm', 0, G_OPTION_ARG_NONE, &option_maximize, N_("Maximize window"), NULL },
 	{ "fullscreen", 's', 0, G_OPTION_ARG_NONE, &option_fullscreen, N_("Fullscreen mode"), NULL },
 	{ "config-file", 0, 0, G_OPTION_ARG_FILENAME, &option_config_file, N_("Use alternate configuration file"), NULL },
+	{ "new-session", 0, 0, G_OPTION_ARG_NONE, &option_new_session, N_("Start a new workspace instead of restoring the previous one"), NULL },
+	{ "new-window", 0, G_OPTION_FLAG_HIDDEN, G_OPTION_ARG_NONE, &option_new_window, NULL, NULL },
 	{ "colorset", 0, 0, G_OPTION_ARG_INT, &option_colorset, N_("Select initial colorset"), NULL },
 	{ NULL }
 };
@@ -1184,6 +1200,7 @@ sakura_sidebar_update_tab (struct sakura_tab *sk_tab)
 	node->tooltip = tooltip;
 	sakura_sidebar_set_node_row(node, &iter);
 	g_free(display_path);
+	sakura_session_schedule_save();
 }
 
 
@@ -1243,6 +1260,7 @@ sakura_sidebar_selection_changed_cb (GtkTreeSelection *selection, void *data)
 		sakura.sidebar_syncing = FALSE;
 	}
 	gtk_widget_grab_focus(node->tab->vte);
+	sakura_session_schedule_save();
 }
 
 
@@ -1483,9 +1501,227 @@ sakura_sidebar_save_groups (void)
 		                           (const gchar * const *)titles->pdata, titles->len);
 	}
 	sakura.config_modified = TRUE;
+	sakura_session_schedule_save();
 	g_ptr_array_free(ids, TRUE);
 	g_ptr_array_free(parents, TRUE);
 	g_ptr_array_free(titles, TRUE);
+}
+
+
+static void
+sakura_sidebar_collect_terminals (GtkTreeModel *model, GtkTreeIter *parent,
+                                  GPtrArray *terminals)
+{
+	GtkTreeIter iter;
+	gboolean valid;
+
+	valid = parent == NULL
+		? gtk_tree_model_get_iter_first(model, &iter)
+		: gtk_tree_model_iter_children(model, &iter, parent);
+	while (valid) {
+		struct sakura_sidebar_node *node = NULL;
+		gtk_tree_model_get(model, &iter, SAKURA_SIDEBAR_COLUMN_NODE, &node, -1);
+		if (node != NULL && node->type == SAKURA_SIDEBAR_TERMINAL)
+			g_ptr_array_add(terminals, node);
+		else if (node != NULL && node->type == SAKURA_SIDEBAR_GROUP)
+			sakura_sidebar_collect_terminals(model, &iter, terminals);
+		valid = gtk_tree_model_iter_next(model, &iter);
+	}
+}
+
+
+static gboolean
+sakura_session_save_timeout_cb (gpointer data)
+{
+	sakura.session_save_source_id = 0;
+	sakura_session_save();
+	return G_SOURCE_REMOVE;
+}
+
+
+static void
+sakura_session_schedule_save (void)
+{
+	if (sakura.sessionfile == NULL || option_new_window ||
+	    !sakura.session_ready || sakura.session_restoring || sakura.dont_save)
+		return;
+
+	if (sakura.session_save_source_id == 0)
+		sakura.session_save_source_id = g_timeout_add(500, sakura_session_save_timeout_cb, NULL);
+}
+
+
+static void
+sakura_session_save (void)
+{
+	GKeyFile *session;
+	GPtrArray *group_ids, *group_parents, *group_titles, *terminals;
+	GError *error = NULL;
+	gchar *data, *temporary_file;
+	gsize data_length;
+	gint selected_page, selected_terminal = -1;
+	guint i;
+
+	if (sakura.sessionfile == NULL || option_new_window || sakura.dont_save || sakura.session_shutting_down ||
+	    sakura.sidebar_model == NULL)
+		return;
+
+	if (sakura.session_save_source_id != 0) {
+		g_source_remove(sakura.session_save_source_id);
+		sakura.session_save_source_id = 0;
+	}
+
+	session = g_key_file_new();
+	group_ids = g_ptr_array_new_with_free_func(g_free);
+	group_parents = g_ptr_array_new_with_free_func(g_free);
+	group_titles = g_ptr_array_new_with_free_func(g_free);
+	terminals = g_ptr_array_new();
+	sakura_sidebar_collect_groups(GTK_TREE_MODEL(sakura.sidebar_model), NULL,
+	                              group_ids, group_parents, group_titles);
+	sakura_sidebar_collect_terminals(GTK_TREE_MODEL(sakura.sidebar_model), NULL, terminals);
+
+	selected_page = gtk_notebook_get_current_page(GTK_NOTEBOOK(sakura.notebook));
+	if (selected_page >= 0) {
+		struct sakura_tab *selected_tab = sakura_get_sktab(sakura, selected_page);
+		for (i = 0; i < terminals->len; i++) {
+			struct sakura_sidebar_node *node = g_ptr_array_index(terminals, i);
+			if (node->tab == selected_tab) {
+				selected_terminal = (gint)i;
+				break;
+			}
+		}
+	}
+
+	g_key_file_set_integer(session, "Session", "version", 1);
+	g_key_file_set_integer(session, "Session", "group_count", group_ids->len);
+	g_key_file_set_integer(session, "Session", "terminal_count", terminals->len);
+	g_key_file_set_integer(session, "Session", "selected_terminal", selected_terminal);
+	g_key_file_set_boolean(session, "Session", "sidebar_visible", sakura.sidebar_visible);
+	g_key_file_set_integer(session, "Session", "sidebar_width",
+	                       sakura.sidebar_paned != NULL
+	                       ? gtk_paned_get_position(GTK_PANED(sakura.sidebar_paned))
+	                       : sakura.sidebar_width);
+
+	for (i = 0; i < group_ids->len; i++) {
+		gchar *section = g_strdup_printf("Group%u", i);
+		g_key_file_set_string(session, section, "id", g_ptr_array_index(group_ids, i));
+		g_key_file_set_string(session, section, "parent", g_ptr_array_index(group_parents, i));
+		g_key_file_set_string(session, section, "title", g_ptr_array_index(group_titles, i));
+		g_free(section);
+	}
+
+	for (i = 0; i < terminals->len; i++) {
+		struct sakura_sidebar_node *node = g_ptr_array_index(terminals, i);
+		struct sakura_tab *tab = node->tab;
+		gchar *section = g_strdup_printf("Terminal%u", i);
+		const gchar *title = gtk_label_get_text(GTK_LABEL(tab->label));
+
+		g_key_file_set_string(session, section, "parent",
+		                      node->parent != NULL ? node->parent->id : "root");
+		g_key_file_set_string(session, section, "cwd", tab->cwd != NULL ? tab->cwd : "");
+		g_key_file_set_boolean(session, section, "title_set_by_user", tab->label_set_byuser);
+		if (tab->label_set_byuser)
+			g_key_file_set_string(session, section, "title", title != NULL ? title : "");
+		g_free(section);
+	}
+
+	data = g_key_file_to_data(session, &data_length, &error);
+	if (data == NULL) {
+		SAY("Could not serialize session: %s", error->message);
+		g_error_free(error);
+	} else {
+		temporary_file = g_strdup_printf("%s.tmp.%d", sakura.sessionfile, (int)getpid());
+		if (!g_file_set_contents(temporary_file, data, data_length, &error) ||
+		    chmod(temporary_file, 0600) != 0 ||
+		    g_rename(temporary_file, sakura.sessionfile) != 0) {
+			SAY("Could not save session: %s", error != NULL ? error->message : g_strerror(errno));
+			if (error != NULL)
+				g_error_free(error);
+			g_remove(temporary_file);
+		}
+		g_free(temporary_file);
+		g_free(data);
+	}
+
+	g_key_file_free(session);
+	g_ptr_array_free(group_ids, TRUE);
+	g_ptr_array_free(group_parents, TRUE);
+	g_ptr_array_free(group_titles, TRUE);
+	g_ptr_array_free(terminals, TRUE);
+}
+
+
+static void
+sakura_session_load (void)
+{
+	GError *error = NULL;
+
+	if (sakura.sessionfile == NULL)
+		return;
+
+	sakura.session_cfg = g_key_file_new();
+	if (!g_key_file_load_from_file(sakura.session_cfg, sakura.sessionfile, 0, &error)) {
+		g_key_file_free(sakura.session_cfg);
+		sakura.session_cfg = NULL;
+		if (error != NULL)
+			g_error_free(error);
+	} else if (!option_new_session && !option_new_window &&
+	           g_key_file_get_integer(sakura.session_cfg, "Session", "version", NULL) == 1) {
+		if (g_key_file_has_key(sakura.session_cfg, "Session", "sidebar_visible", NULL))
+			sakura.sidebar_visible = g_key_file_get_boolean(sakura.session_cfg, "Session", "sidebar_visible", NULL);
+		if (g_key_file_has_key(sakura.session_cfg, "Session", "sidebar_width", NULL)) {
+			gint sidebar_width = g_key_file_get_integer(sakura.session_cfg, "Session", "sidebar_width", NULL);
+			if (sidebar_width >= 160 && sidebar_width <= 500)
+				sakura.sidebar_width = sidebar_width;
+		}
+	}
+}
+
+
+static gboolean
+sakura_session_restore (void)
+{
+	gint terminal_count, selected_terminal, restored = 0;
+	guint i;
+
+	if (sakura.session_cfg == NULL ||
+	    g_key_file_get_integer(sakura.session_cfg, "Session", "version", NULL) != 1 ||
+	    !g_key_file_has_key(sakura.session_cfg, "Session", "terminal_count", NULL))
+		return FALSE;
+
+	terminal_count = g_key_file_get_integer(sakura.session_cfg, "Session", "terminal_count", NULL);
+	if (terminal_count <= 0)
+		return FALSE;
+
+	selected_terminal = g_key_file_get_integer(sakura.session_cfg, "Session", "selected_terminal", NULL);
+	for (i = 0; i < (guint)terminal_count; i++) {
+		gchar *section = g_strdup_printf("Terminal%u", i);
+		gchar *parent_id = g_key_file_get_string(sakura.session_cfg, section, "parent", NULL);
+		gchar *cwd = g_key_file_get_string(sakura.session_cfg, section, "cwd", NULL);
+		gchar *title = g_key_file_get_string(sakura.session_cfg, section, "title", NULL);
+		gboolean title_set = g_key_file_get_boolean(sakura.session_cfg, section,
+		                                             "title_set_by_user", NULL);
+		struct sakura_sidebar_node *parent = sakura_sidebar_find_group_by_id(parent_id);
+		title_set = title_set && title != NULL && title[0] != '\0';
+
+		if (cwd != NULL && (cwd[0] == '\0' || !g_file_test(cwd, G_FILE_TEST_IS_DIR))) {
+			g_free(cwd);
+			cwd = NULL;
+		}
+		sakura_add_tab_with_options(cwd, parent, title_set ? title : NULL, title_set);
+		if (selected_terminal == (gint)i)
+			selected_terminal = restored;
+		restored++;
+
+		g_free(section);
+		g_free(parent_id);
+		g_free(cwd);
+		g_free(title);
+	}
+
+	if (restored > 0 && selected_terminal >= 0 && selected_terminal < restored)
+		gtk_notebook_set_current_page(GTK_NOTEBOOK(sakura.notebook), selected_terminal);
+	return restored > 0;
 }
 
 
@@ -1494,6 +1730,7 @@ sakura_sidebar_model_reordered_cb (GtkTreeModel *model, GtkTreePath *path,
                                    GtkTreeIter *iter, gint *new_order, void *data)
 {
 	sakura_sidebar_save_groups();
+	sakura_session_schedule_save();
 }
 
 
@@ -1504,14 +1741,18 @@ sakura_sidebar_toggle_cb (GtkWidget *widget, void *data)
 	if (sakura.sidebar != NULL)
 		gtk_widget_set_visible(sakura.sidebar, sakura.sidebar_visible);
 	sakura_set_config_boolean("sidebar_visible", sakura.sidebar_visible);
+	sakura_session_schedule_save();
 }
 
 
 static void
 sakura_sidebar_paned_position_cb (GObject *object, GParamSpec *pspec, void *data)
 {
-	if (sakura.sidebar_paned != NULL && sakura.sidebar_visible)
-		sakura_set_config_integer("sidebar_width", gtk_paned_get_position(GTK_PANED(sakura.sidebar_paned)));
+	if (sakura.sidebar_paned != NULL && sakura.sidebar_visible) {
+		sakura.sidebar_width = gtk_paned_get_position(GTK_PANED(sakura.sidebar_paned));
+		sakura_set_config_integer("sidebar_width", sakura.sidebar_width);
+	}
+	sakura_session_schedule_save();
 }
 
 
@@ -1525,6 +1766,7 @@ sakura_sidebar_init (void)
 	gchar **group_ids, **group_parents, **group_titles;
 	gsize n_ids = 0, n_parents = 0, n_titles = 0;
 	gsize i, n_groups;
+	gboolean session_has_groups;
 
 	sakura.sidebar_model = gtk_tree_store_new(SAKURA_SIDEBAR_N_COLUMNS,
 	                                         G_TYPE_STRING, G_TYPE_STRING, G_TYPE_STRING,
@@ -1582,10 +1824,28 @@ sakura_sidebar_init (void)
 	sakura.sidebar_groups = g_list_append(sakura.sidebar_groups, sakura.sidebar_root);
 	sakura_sidebar_insert_node(sakura.sidebar_root);
 
-	group_ids = g_key_file_get_string_list(sakura.cfg, cfg_group, "sidebar_group_ids", &n_ids, NULL);
-	group_parents = g_key_file_get_string_list(sakura.cfg, cfg_group, "sidebar_group_parents", &n_parents, NULL);
-	group_titles = g_key_file_get_string_list(sakura.cfg, cfg_group, "sidebar_group_titles", &n_titles, NULL);
-	n_groups = MIN(n_ids, MIN(n_parents, n_titles));
+	session_has_groups = !option_new_session && !option_new_window &&
+		sakura.session_cfg != NULL &&
+		g_key_file_get_integer(sakura.session_cfg, "Session", "version", NULL) == 1 &&
+		g_key_file_has_key(sakura.session_cfg, "Session", "group_count", NULL);
+	if (session_has_groups) {
+		n_groups = g_key_file_get_integer(sakura.session_cfg, "Session", "group_count", NULL);
+		group_ids = g_new0(gchar *, n_groups + 1);
+		group_parents = g_new0(gchar *, n_groups + 1);
+		group_titles = g_new0(gchar *, n_groups + 1);
+		for (i = 0; i < n_groups; i++) {
+			gchar *section = g_strdup_printf("Group%u", (guint)i);
+			group_ids[i] = g_key_file_get_string(sakura.session_cfg, section, "id", NULL);
+			group_parents[i] = g_key_file_get_string(sakura.session_cfg, section, "parent", NULL);
+			group_titles[i] = g_key_file_get_string(sakura.session_cfg, section, "title", NULL);
+			g_free(section);
+		}
+	} else {
+		group_ids = g_key_file_get_string_list(sakura.cfg, cfg_group, "sidebar_group_ids", &n_ids, NULL);
+		group_parents = g_key_file_get_string_list(sakura.cfg, cfg_group, "sidebar_group_parents", &n_parents, NULL);
+		group_titles = g_key_file_get_string_list(sakura.cfg, cfg_group, "sidebar_group_titles", &n_titles, NULL);
+		n_groups = MIN(n_ids, MIN(n_parents, n_titles));
+	}
 	for (i = 0; i < n_groups; i++) {
 		struct sakura_sidebar_node *node, *parent;
 		gchar *end = NULL;
@@ -1933,6 +2193,7 @@ sakura_delete_event_cb (GtkWidget *widget, void *data)
 				gtk_widget_destroy(dialog);
 
 				if (response==GTK_RESPONSE_YES) {
+					sakura_session_save();
 					sakura_config_done();
 					return FALSE;
 				} else {
@@ -1943,6 +2204,7 @@ sakura_delete_event_cb (GtkWidget *widget, void *data)
 		}
 	}
 
+	sakura_session_save();
 	sakura_config_done();
 	return FALSE;
 }
@@ -3328,6 +3590,11 @@ sakura_init()
 	/* Default terminal. Only in config file */
 	sakura.term = g_key_file_get_value(sakura.cfg, cfg_group, "term", NULL);
 
+	if (!sakura.dont_save) {
+		sakura.sessionfile = g_strdup_printf("%s.session", sakura.configfile);
+		sakura_session_load();
+	}
+
 	/*** Sakura window initialization ***/
 
 	/* Use the same dark/light preference as GNOME Terminal and GTK header
@@ -3691,6 +3958,12 @@ static void
 sakura_destroy()
 {
 	GList *group;
+	sakura.session_shutting_down = TRUE;
+
+	if (sakura.session_save_source_id != 0) {
+		g_source_remove(sakura.session_save_source_id);
+		sakura.session_save_source_id = 0;
+	}
 
 	/* Delete all existing tabs */
 	while (gtk_notebook_get_n_pages(GTK_NOTEBOOK(sakura.notebook)) >= 1) {
@@ -3703,10 +3976,13 @@ sakura_destroy()
 	sakura.sidebar_root = NULL;
 
 	g_key_file_free(sakura.cfg);
+	if (sakura.session_cfg != NULL)
+		g_key_file_free(sakura.session_cfg);
 
 	pango_font_description_free(sakura.font);
 
 	free(sakura.configfile);
+	g_free(sakura.sessionfile);
 
 	gtk_main_quit();
 }
@@ -3875,7 +4151,6 @@ sakura_set_size (void)
 	if (sakura.resized) {
 		sakura.columns = vte_terminal_get_column_count(VTE_TERMINAL(sk_tab->vte));
 		sakura.rows = vte_terminal_get_row_count(VTE_TERMINAL(sk_tab->vte));
-		SAY("New columns %ld and rows %ld", sakura.columns, sakura.rows);
 		sakura.resized = FALSE;
 	}
 
@@ -3926,7 +4201,6 @@ sakura_set_size (void)
 	}
 
 	gtk_window_resize(GTK_WINDOW(sakura.main_window), sakura.width, sakura.height);
-	SAY("Resized to %d %d", sakura.width, sakura.height);
 }
 
 
@@ -4085,7 +4359,17 @@ sakura_spawn_callback (VteTerminal *vte, GPid pid, GError *error, gpointer user_
 
 
 static void
-sakura_add_tab()
+sakura_add_tab (void)
+{
+	sakura_add_tab_with_options(NULL, NULL, NULL, FALSE);
+}
+
+
+static void
+sakura_add_tab_with_options (const gchar *restore_cwd,
+                              struct sakura_sidebar_node *restore_parent,
+                              const gchar *restore_title,
+                              gboolean restore_title_set)
 {
 	struct sakura_tab *sk_tab;
 	GtkWidget *tab_title_hbox; GtkWidget *close_button; /* We could put them inside struct sakura_tab, but it is not necessary */
@@ -4095,7 +4379,7 @@ sakura_add_tab()
 	struct sakura_sidebar_node *sidebar_parent;
 
 	sk_tab = g_new0(struct sakura_tab, 1);
-	sidebar_parent = sakura_sidebar_selected_group();
+	sidebar_parent = restore_parent != NULL ? restore_parent : sakura_sidebar_selected_group();
 
 	/* Create the tab label */
 	sk_tab->label = gtk_label_new(NULL);
@@ -4145,14 +4429,16 @@ sakura_add_tab()
 	/* -1 if there is no pages yet */
 	page = gtk_notebook_get_current_page(GTK_NOTEBOOK(sakura.notebook));
 
-	/* Use previous terminal (if there is one) cwd and colorset */
-	if (page >= 0) {
+	/* Use the restored directory when reopening a workspace. Otherwise use the
+	 * previous terminal (if there is one) cwd and colorset. */
+	if (restore_cwd != NULL && restore_cwd[0] != '\0') {
+		cwd = g_strdup(restore_cwd);
+	} else if (page >= 0) {
 		struct sakura_tab *prev_term;
 		prev_term = sakura_get_sktab(sakura, page);
 		/* If OSC7 method doesn't work, use the old one as fallback */
 		if ((cwd = sakura_get_term_cwd_osc7(prev_term)) == NULL) {
-			SAY("osc7 is null");
-			sakura_get_term_cwd(prev_term); 
+			cwd = sakura_get_term_cwd(prev_term);
 		}
 
 		sk_tab->colorset = prev_term->colorset;
@@ -4353,8 +4639,12 @@ sakura_add_tab()
 	                           vte_terminal_get_window_title(VTE_TERMINAL(sk_tab->vte)));
 	free(cwd);
 
-	/* Applying tab title pattern from config (https://answers.launchpad.net/sakura/+question/267951) */
-	if (sakura.tab_default_title != NULL) {
+	/* Applying the restored title or tab title pattern from config
+	 * (https://answers.launchpad.net/sakura/+question/267951) */
+	if (restore_title_set) {
+		default_label_text = (gchar *)restore_title;
+		sk_tab->label_set_byuser = true;
+	} else if (sakura.tab_default_title != NULL) {
 		default_label_text = sakura.tab_default_title;
 		sk_tab->label_set_byuser = true;
 	} else {
@@ -4365,6 +4655,7 @@ sakura_add_tab()
 	page = gtk_notebook_get_current_page(GTK_NOTEBOOK(sakura.notebook));
 	sakura_set_tab_label_text(default_label_text, page);
 	sakura_sidebar_add_terminal(sk_tab, sidebar_parent);
+	sakura_session_schedule_save();
 
 	/* Init vte terminal */
 	vte_terminal_set_scrollback_lines(VTE_TERMINAL(sk_tab->vte), sakura.scroll_lines);
@@ -4452,6 +4743,7 @@ sakura_del_tab(gint page)
 		sk_tab = sakura_get_sktab(sakura, page);
 		gtk_widget_grab_focus(sk_tab->vte);
 	}
+	sakura_session_save();
 }
 
 
@@ -4461,7 +4753,7 @@ sakura_new_window()
 {
 	GPid pid;
 	GError* error = NULL;
-	char** spawn_argv = malloc(sizeof(char*) * ((sakura.orig_argc ? sakura.orig_argc : 1) + 1));
+	char** spawn_argv = malloc(sizeof(char*) * ((sakura.orig_argc ? sakura.orig_argc : 1) + 2));
 	if(!spawn_argv) {
 		fprintf(stderr, "Error allocating memory for starting new instance!\n");
 		return;
@@ -4498,6 +4790,7 @@ sakura_new_window()
 			*dst = *src;
 		}
 	}
+	*dst++ = "--new-window";
 	*dst = NULL;
 
 	/* Get a startup notification ID / xdg-activation token and add it to the environment */
@@ -4944,9 +5237,17 @@ main(int argc, char **argv)
 	gtk_init(&nargc, &nargv); g_strfreev(nargv);
 	sakura_init();
 
-	/* Add initial tabs (1 by default) */
-	for (i=0; i<option_ntabs; i++)
-		sakura_add_tab();
+	/* Restore the previous workspace for a normal launch. Explicit multi-tab
+	 * launches and --new-session remain useful for starting fresh instances. */
+	sakura.session_restoring = TRUE;
+	if (option_new_session || option_new_window || option_ntabs > 1 || !sakura_session_restore()) {
+		for (i=0; i<option_ntabs; i++)
+			sakura_add_tab();
+	}
+	sakura.session_restoring = FALSE;
+	sakura.session_ready = TRUE;
+	if (!option_new_window)
+		sakura_session_save();
 
 	/* Post init stuff */
 	sakura.first_run=false;
