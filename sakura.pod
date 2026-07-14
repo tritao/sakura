@@ -38,14 +38,16 @@ with that terminal tab. Sakura exports its path as both C<HISTFILE> and
 C<SAKURA_HISTORY_FILE>. Explicitly closing a tab removes its history file;
 closing or restarting Sakura preserves it.
 
-Sakura does not edit shell startup files. Bash users who want history written
-immediately can add equivalent logic to their shell configuration:
+For Bash, Sakura automatically launches regular shell tabs through a private
+startup layer. It sources the normal C<~/.bashrc> first, then adds an
+idempotent C<history -a; history -n> prompt hook without modifying user shell
+files. Other shells still receive C<HISTFILE> and can use their native history
+settings. Set C<SAKURA_DISABLE_HISTORY_INTEGRATION=1> before launching Sakura
+to disable the automatic Bash layer.
 
-    if [[ -n "$SAKURA_HISTORY_FILE" ]]; then
-        HISTFILE="$SAKURA_HISTORY_FILE"
-        shopt -s histappend
-        PROMPT_COMMAND="history -a; history -n${PROMPT_COMMAND:+;$PROMPT_COMMAND}"
-    fi
+Tracked Codex tabs show whether they are working, waiting for approval, or
+ready to review. Background completion and approval events are counted in the
+sidebar; ordinary terminals fall back to bell and process-exit signals.
 
 =head1 HELP OPTIONS
 

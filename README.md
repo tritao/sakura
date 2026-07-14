@@ -73,17 +73,32 @@ with the same terminal tab. Sakura exports its path as both `HISTFILE` and
 `SAKURA_HISTORY_FILE`. Closing a tab explicitly removes its history file;
 closing or restarting Sakura preserves it.
 
-Sakura does not modify shell startup files. Bash users who want commands
-written immediately, including commands from more than one process, can add
-the equivalent of this to their shell configuration:
+For Bash, Sakura automatically launches regular shell tabs through a private
+startup layer. It sources the normal `~/.bashrc` first, then appends an
+idempotent `history -a; history -n` prompt hook without modifying user shell
+files. Other shells still receive `HISTFILE` and can use their native history
+settings. Set `SAKURA_DISABLE_HISTORY_INTEGRATION=1` before launching Sakura
+to disable the automatic Bash layer.
+
+### Session persistence stress test
+
+With `Xvfb` and `xdotool` installed, the isolated session stress test can be
+run from the build tree:
 
 ```bash
-if [[ -n "$SAKURA_HISTORY_FILE" ]]; then
-    HISTFILE="$SAKURA_HISTORY_FILE"
-    shopt -s histappend
-    PROMPT_COMMAND="history -a; history -n${PROMPT_COMMAND:+;$PROMPT_COMMAND}"
-fi
+cmake --build build --target session-stress
 ```
+
+It repeatedly drags terminals between nested groups, closes and restores the
+workspace, checks CWD/title/selection/Codex metadata, validates session
+backups, and verifies that a failed restore does not overwrite the original
+session file.
+
+Tracked Codex tabs show their current state in the terminal sidebar: working,
+needs approval, or ready to review. When a background Codex turn finishes or
+needs approval, Sakura marks that terminal as needing attention and updates the
+sidebar count. Ordinary terminals use bell and process-exit signals as a
+fallback.
 
 ## Keybindings
 
