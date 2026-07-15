@@ -581,6 +581,36 @@ sakura_key_press_cb (GtkWidget *widget, GdkEventKey *event, gpointer user_data)
 			return TRUE;
 		}
 	}
+	if ((event->state & (GDK_CONTROL_MASK | GDK_MOD1_MASK)) ==
+	    (GDK_CONTROL_MASK | GDK_MOD1_MASK)) {
+		switch (gdk_keyval_to_lower(event->keyval)) {
+			case GDK_KEY_h:
+				sakura_focus_direction_cb(NULL, GINT_TO_POINTER(SAKURA_FOCUS_LEFT));
+				return TRUE;
+			case GDK_KEY_l:
+				sakura_focus_direction_cb(NULL, GINT_TO_POINTER(SAKURA_FOCUS_RIGHT));
+				return TRUE;
+			case GDK_KEY_k:
+				sakura_focus_direction_cb(NULL, GINT_TO_POINTER(SAKURA_FOCUS_UP));
+				return TRUE;
+			case GDK_KEY_j:
+				sakura_focus_direction_cb(NULL, GINT_TO_POINTER(SAKURA_FOCUS_DOWN));
+				return TRUE;
+			default:
+				break;
+		}
+	}
+	if ((event->state & (GDK_CONTROL_MASK | GDK_SHIFT_MASK)) ==
+	    (GDK_CONTROL_MASK | GDK_SHIFT_MASK)) {
+		if (event->keyval == GDK_KEY_Z) {
+			sakura_toggle_zoom_current_cb(NULL, NULL);
+			return TRUE;
+		}
+		if (event->keyval == GDK_KEY_equal || event->keyval == GDK_KEY_plus) {
+			sakura_equalize_current_cb(NULL, NULL);
+			return TRUE;
+		}
+	}
 
 	page = gtk_notebook_get_current_page(GTK_NOTEBOOK(sakura.notebook));
 	current_tab = page >= 0 ? sakura_tab_at_page(page) : NULL;
@@ -1464,6 +1494,141 @@ sakura_split_current_cb (GtkWidget *widget, void *data)
 	sakura_tab_add_with_options(NULL, NULL, NULL, FALSE,
 	                            SAKURA_TAB_SHELL, SAKURA_TOOL_NONE,
 	                            NULL, NULL, NULL, NULL, &config);
+}
+
+
+static gboolean
+sakura_focus_candidate_better(SakuraFocusDirection direction,
+                              gint active_x, gint active_y,
+                              gint active_width, gint active_height,
+                              gint candidate_x, gint candidate_y,
+                              gint candidate_width, gint candidate_height,
+                              gint *distance_out)
+{
+	gint active_right = active_x + active_width;
+	gint active_bottom = active_y + active_height;
+	gint candidate_right = candidate_x + candidate_width;
+	gint candidate_bottom = candidate_y + candidate_height;
+	gint gap, perpendicular;
+	gboolean overlap;
+
+	switch (direction) {
+		case SAKURA_FOCUS_LEFT:
+			if (candidate_right > active_x)
+				return FALSE;
+			gap = active_x - candidate_right;
+			overlap = candidate_bottom > active_y && candidate_y < active_bottom;
+			perpendicular = abs((candidate_y + candidate_height / 2) -
+			                   (active_y + active_height / 2));
+			break;
+		case SAKURA_FOCUS_RIGHT:
+			if (candidate_x < active_right)
+				return FALSE;
+			gap = candidate_x - active_right;
+			overlap = candidate_bottom > active_y && candidate_y < active_bottom;
+			perpendicular = abs((candidate_y + candidate_height / 2) -
+			                   (active_y + active_height / 2));
+			break;
+		case SAKURA_FOCUS_UP:
+			if (candidate_bottom > active_y)
+				return FALSE;
+			gap = active_y - candidate_bottom;
+			overlap = candidate_right > active_x && candidate_x < active_right;
+			perpendicular = abs((candidate_x + candidate_width / 2) -
+			                   (active_x + active_width / 2));
+			break;
+		case SAKURA_FOCUS_DOWN:
+			if (candidate_y < active_bottom)
+				return FALSE;
+			gap = candidate_y - active_bottom;
+			overlap = candidate_right > active_x && candidate_x < active_right;
+			perpendicular = abs((candidate_x + candidate_width / 2) -
+			                   (active_x + active_width / 2));
+			break;
+		default:
+			return FALSE;
+	}
+	*distance_out = gap * 1000 + (overlap ? 0 : 100000) + perpendicular;
+	return TRUE;
+}
+
+
+void
+sakura_focus_direction_cb(GtkWidget *widget, void *data)
+{
+	SakuraPage *page = sakura.active_page;
+	SakuraTab *active = sakura.active_tab;
+	SakuraTab *best = NULL;
+	SakuraFocusDirection direction = GPOINTER_TO_INT(data);
+	gint active_x, active_y, active_width, active_height;
+	gint best_distance = G_MAXINT;
+	guint index;
+
+	(void)widget;
+	if (page == NULL || active == NULL || active->hbox == NULL ||
+	    data == NULL || !gtk_widget_translate_coordinates(active->hbox,
+                                                        page->container, 0, 0,
+                                                        &active_x, &active_y))
+		return;
+	active_width = gtk_widget_get_allocated_width(active->hbox);
+	active_height = gtk_widget_get_allocated_height(active->hbox);
+	for (index = 0; page->panes != NULL && index < page->panes->len; index++) {
+		SakuraTab *candidate = g_ptr_array_index(page->panes, index);
+		gint candidate_x, candidate_y, candidate_width, candidate_height, distance;
+		if (candidate == NULL || candidate == active || candidate->hbox == NULL ||
+		    !gtk_widget_get_visible(candidate->hbox) ||
+		    !gtk_widget_translate_coordinates(candidate->hbox, page->container,
+	                                           0, 0, &candidate_x, &candidate_y))
+			continue;
+		candidate_width = gtk_widget_get_allocated_width(candidate->hbox);
+		candidate_height = gtk_widget_get_allocated_height(candidate->hbox);
+		if (sakura_focus_candidate_better(direction, active_x, active_y,
+		                                  active_width, active_height,
+		                                  candidate_x, candidate_y,
+		                                  candidate_width, candidate_height,
+		                                  &distance) && distance < best_distance) {
+			best = candidate;
+			best_distance = distance;
+		}
+	}
+	if (best != NULL)
+		sakura_select_tab(best, TRUE);
+}
+
+
+void
+sakura_toggle_zoom_current_cb(GtkWidget *widget, void *data)
+{
+	SakuraPage *page = sakura.active_page;
+
+	(void)widget;
+	(void)data;
+	if (page == NULL || sakura.active_tab == NULL)
+		return;
+	sakura_layout_set_zoomed(page, sakura.active_tab, !page->zoomed);
+	sakura_session_mark_dirty();
+}
+
+
+void
+sakura_equalize_current_cb(GtkWidget *widget, void *data)
+{
+	SakuraLayoutNode *split;
+	GtkAllocation allocation;
+
+	(void)widget;
+	(void)data;
+	if (sakura.active_tab == NULL || sakura.active_tab->layout_leaf == NULL)
+		return;
+	split = sakura.active_tab->layout_leaf->parent;
+	if (split == NULL || split->kind != SAKURA_LAYOUT_SPLIT || split->widget == NULL)
+		return;
+	split->data.split.ratio = 0.5;
+	gtk_widget_get_allocation(split->widget, &allocation);
+	gtk_paned_set_position(GTK_PANED(split->widget),
+	                       split->data.split.direction == SAKURA_SPLIT_RIGHT
+	                     ? allocation.width / 2 : allocation.height / 2);
+	sakura_session_mark_dirty();
 }
 
 

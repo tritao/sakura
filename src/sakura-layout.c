@@ -418,6 +418,60 @@ sakura_layout_first_leaf(SakuraLayoutNode *node)
 }
 
 
+static gboolean
+sakura_layout_node_contains(const SakuraLayoutNode *node,
+                            const SakuraLayoutNode *target)
+{
+	if (node == NULL || target == NULL)
+		return FALSE;
+	if (node == target)
+		return TRUE;
+	return node->kind == SAKURA_LAYOUT_SPLIT &&
+	       (sakura_layout_node_contains(node->data.split.first, target) ||
+	        sakura_layout_node_contains(node->data.split.second, target));
+}
+
+
+static void
+sakura_layout_set_visible(SakuraLayoutNode *node,
+                          SakuraLayoutNode *target)
+{
+	if (node == NULL)
+		return;
+	if (node->kind == SAKURA_LAYOUT_LEAF) {
+		if (node->widget != NULL)
+			gtk_widget_set_visible(node->widget, node == target);
+		return;
+	}
+	if (sakura_layout_node_contains(node->data.split.first, target)) {
+		if (node->data.split.second != NULL && node->data.split.second->widget != NULL)
+			gtk_widget_hide(node->data.split.second->widget);
+		sakura_layout_set_visible(node->data.split.first, target);
+	} else {
+		if (node->data.split.first != NULL && node->data.split.first->widget != NULL)
+			gtk_widget_hide(node->data.split.first->widget);
+		sakura_layout_set_visible(node->data.split.second, target);
+	}
+}
+
+
+void
+sakura_layout_set_zoomed(SakuraPage *page, SakuraTab *tab, gboolean zoomed)
+{
+	if (page == NULL || page->layout_root == NULL)
+		return;
+	page->zoomed = zoomed;
+	if (!zoomed) {
+		gtk_widget_show_all(page->layout_root->widget != NULL
+		                   ? page->layout_root->widget : page->container);
+		return;
+	}
+	if (tab == NULL || tab->page != page || tab->layout_leaf == NULL)
+		return;
+	sakura_layout_set_visible(page->layout_root, tab->layout_leaf);
+}
+
+
 gboolean
 sakura_layout_remove_leaf_widgets(SakuraLayoutNode *leaf)
 {
