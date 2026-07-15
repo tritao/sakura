@@ -827,8 +827,10 @@ sakura_tab_delete_page(gint page)
 			sakura.active_page = NULL;
 	}
 	gtk_notebook_remove_page(GTK_NOTEBOOK(sakura.notebook), page);
-	if (tab_page != NULL)
+	if (tab_page != NULL) {
+		sakura_sidebar_remove_page(tab_page);
 		sakura_page_free(tab_page);
+	}
 	if (page_panes != NULL) {
 		for (index = 0; index < page_panes->len; index++)
 			sakura_tab_free(g_ptr_array_index(page_panes, index));
@@ -1430,6 +1432,11 @@ sakura_term_buttonpressed_cb (GtkWidget *widget,
 		return FALSE;
 	sakura.active_tab = tab;
 	sakura.active_page = tab->page;
+	if (tab->page != NULL && tab->page->panes != NULL && tab->page->panes->len <= 1)
+		sakura_sidebar_queue_select_node(tab->page->sidebar_node);
+	else
+		sakura_sidebar_queue_select_node(tab->sidebar_node);
+	sakura_sidebar_update_page(tab->page);
 
 	sakura.current_match = vte_terminal_match_check_event(
 		VTE_TERMINAL(tab->vte), (GdkEvent *)button_event, &tag);
@@ -1640,7 +1647,11 @@ sakura_pane_focus_in_cb(GtkWidget *widget, GdkEventFocus *event, gpointer data)
 	sakura.active_tab = tab;
 	sakura.active_page = tab->page;
 	sakura_tab_clear_attention(tab);
-	sakura_sidebar_queue_select_node(tab->sidebar_node);
+	if (tab->page->panes != NULL && tab->page->panes->len <= 1)
+		sakura_sidebar_queue_select_node(tab->page->sidebar_node);
+	else
+		sakura_sidebar_queue_select_node(tab->sidebar_node);
+	sakura_sidebar_update_page(tab->page);
 	sakura_tab_bar_refresh();
 	return FALSE;
 }

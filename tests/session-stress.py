@@ -214,7 +214,10 @@ def visible_rows(groups, terminals):
             visit(child)
         for index, parent in enumerate(terminals):
             if parent == group_id:
-                rows.append(("terminal", index))
+                # A single-pane page is represented by its page row. The
+                # underlying terminal remains the drag target for metadata
+                # and session assertions.
+                rows.append(("page", index))
 
     visit("root")
     return rows
@@ -492,7 +495,7 @@ def main():
                     rows = visible_rows(current[0], current[1])
                     terminal_choices = [(row, row_index)
                                         for row_index, row in enumerate(rows)
-                                        if row[0] == "terminal" and
+                                        if row[0] == "page" and
                                         row_index <= args.max_drag_row]
                     group_choices = [(row, row_index)
                                      for row_index, row in enumerate(rows)

@@ -83,6 +83,7 @@ typedef enum {
 
 typedef enum {
 	SAKURA_SIDEBAR_GROUP,
+	SAKURA_SIDEBAR_PAGE,
 	SAKURA_SIDEBAR_TERMINAL
 } SakuraSidebarNodeType;
 
@@ -271,6 +272,7 @@ struct sakura_sidebar_node {
 	gchar *tooltip;
 	gchar *last_terminal_id;
 	SakuraSidebarNode *parent;
+	SakuraPage *page;
 	SakuraTab *tab;
 	GtkTreeRowReference *row;
 };
@@ -432,6 +434,8 @@ gboolean sakura_tab_is_in_active_scope(SakuraTab *tab);
 SakuraSidebarNode *sakura_sidebar_default_parent(void);
 void sakura_sidebar_set_scope(SakuraSidebarNode *scope);
 void sakura_sidebar_add_terminal(SakuraTab *tab, SakuraSidebarNode *parent);
+void sakura_sidebar_update_page(SakuraPage *page);
+void sakura_sidebar_remove_page(SakuraPage *page);
 void sakura_select_scope_default(void);
 void sakura_remember_current_scope_tab(SakuraTab *tab);
 void sakura_focus_tab(SakuraTab *tab);
