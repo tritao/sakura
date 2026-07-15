@@ -48,12 +48,10 @@
 #include <webkit2/webkit2.h>
 #endif
 
+#include "sakura-private.h"
+
+
 struct sakura_codex_name_query;
-struct sakura_codex_name_update {
-	gchar *tracking_token;
-	gchar *session_id;
-	gchar *name;
-};
 
 #define _(String) gettext(String)
 #define N_(String) (String)
@@ -68,8 +66,6 @@ struct sakura_codex_name_update {
 		fflush(stderr);\
 	}\
 } while (0)
-
-#define PALETTE_SIZE 16
 
 /* 16 color palettes in GdkRGBA format (red, green, blue, alpha) */
 
@@ -321,20 +317,6 @@ padding-right: 2px;\
 background-color: alpha(@theme_fg_color, 0.14);\
 }"
 
-enum {
-	SAKURA_SIDEBAR_COLUMN_TITLE,
-	SAKURA_SIDEBAR_COLUMN_SUBTITLE,
-	SAKURA_SIDEBAR_COLUMN_MARKUP,
-	SAKURA_SIDEBAR_COLUMN_ICON,
-	SAKURA_SIDEBAR_COLUMN_STATUS_MARKUP,
-	SAKURA_SIDEBAR_COLUMN_STATUS_MARKER_VISIBLE,
-	SAKURA_SIDEBAR_COLUMN_STATUS_ACTIVE,
-	SAKURA_SIDEBAR_COLUMN_STATUS_PULSE,
-	SAKURA_SIDEBAR_COLUMN_TOOLTIP,
-	SAKURA_SIDEBAR_COLUMN_NODE,
-	SAKURA_SIDEBAR_N_COLUMNS
-};
-
 #define DEFAULT_SIDEBAR_WIDTH 200
 
 #define FADE_WINDOW_CSS "\
@@ -344,254 +326,10 @@ window#fade_window {\
 
 #define FADE_WINDOW_OPACITY 0.5
 
-#define NUM_COLORSETS 6
 #define PCRE2_CODE_UNIT_WIDTH 8
 #include <pcre2.h>
 
-struct sakura_sidebar_node;
-struct sakura_tab;
-
-
-/* Tab bar visibility */
-typedef enum {
-	SHOW_TAB_BAR_ALWAYS,
-	SHOW_TAB_BAR_MULTIPLE,
-	SHOW_TAB_BAR_NEVER
-} ShowTabBar;
-
-
-/* Global sakura data */
-static struct {
-	GtkWidget *main_window;
-	GtkWidget *header_bar;
-	GtkWidget *sidebar_paned;
-	GtkWidget *sidebar;
-	GtkWidget *sidebar_title;
-	GtkWidget *sidebar_tree;
-	GtkTreeStore *sidebar_model;
-	GtkTreeSelection *sidebar_selection;
-	struct sakura_sidebar_node *sidebar_root;
-	GList *sidebar_groups;
-	guint sidebar_next_group_id;
-	gboolean sidebar_syncing;
-	GtkTreeRowReference *sidebar_pending_selection;
-	guint sidebar_selection_source_id;
-	gboolean sidebar_visible;
-	gint sidebar_width;
-	GtkWidget *notebook;
-	GtkWidget *content_box;
-	GtkWidget *tab_bar_shell;
-	GtkWidget *tab_bar_scope_label;
-	GtkWidget *tab_bar_scrolled;
-	GtkWidget *tab_bar;
-	GtkWidget *tab_bar_new_button;
-	GtkWidget *tab_bar_empty;
-	struct sakura_sidebar_node *active_group_scope;
-	struct sakura_tab *active_tab;
-	gboolean tab_bar_refreshing;
-	GtkWidget *menu;
-	GtkWidget *fade_window;  /* Window used for fading effect */
-	PangoFontDescription *font;
-	gdouble line_height; /* Font line height */
-	GdkRGBA forecolors[NUM_COLORSETS];
-	GdkRGBA backcolors[NUM_COLORSETS];
-	GdkRGBA curscolors[NUM_COLORSETS];
-	guint schemes[NUM_COLORSETS];  /* Selected color scheme for each colorset */
-	const GdkRGBA *palette;
-	guint palette_idx;
-	GdkRGBA system_foreground;
-	GdkRGBA system_background;
-	GdkRGBA system_cursor;
-	GdkRGBA system_palette[PALETTE_SIZE];
-	bool have_system_colors;
-	bool system_bold_is_bright;
-	gint last_colorset;
-	char *current_match;
-	guint width;
-	guint height;
-	glong columns;
-	glong rows;
-	gint scroll_lines;
-	VteCursorShape cursor_type;
-	ShowTabBar show_tab_bar;         /* Show the tab bar: always, multiple, never */
-	bool show_scrollbar;
-	bool show_closebutton;
-	bool new_tab_after_current;
-	bool tabs_on_bottom;
-	bool less_questions;
-        bool copy_on_select;
-	bool urgent_bell;
-	bool audible_bell;
-	bool blinking_cursor;
-	bool fullscreen;
-	bool config_modified;            /* Configuration has been modified */
-	bool externally_modified;        /* Configuration file has been modified by another process */
-	bool resized;
-	bool disable_numbered_tabswitch; /* For disabling direct tabswitching key */
-	bool use_fading;                 /* Fade the window when the focus change */
-	bool scrollable_tabs;
-	bool bold_is_bright;             /* Show bold characters as bright */
-	bool dont_save;                  /* Don't save config file */
-	bool first_run;                  /* To only execute commands first time sakura is launched */
-	bool session_restoring;
-	bool session_ready;
-	bool session_shutting_down;
-	bool session_restore_failed;
-	bool session_dirty;
-	guint session_save_source_id;
-	guint codex_tracking_source_id;
-	guint cwd_tracking_source_id;
-	guint sidebar_spinner_source_id;
-	guint sidebar_spinner_pulse;
-	GSubprocess *codex_name_helper_process;
-	GDataInputStream *codex_name_helper_output;
-	GOutputStream *codex_name_helper_input;
-	GQueue *codex_name_query_queue;
-	struct sakura_codex_name_query *codex_name_query_in_flight;
-	guint codex_name_helper_request_id;
-	GtkWidget *item_copy_link;       /* We include here only the items which need to be hidden */
-	GtkWidget *item_open_link;
-	GtkWidget *item_open_mail;
-	GtkWidget *open_link_separator;
-	GtkWidget *item_select_text;
-	GKeyFile *cfg;
-	GKeyFile *session_cfg;
-	char *configfile;
-	char *sessionfile;
-	char *session_lock_path;
-	int session_lock_fd;
-	char *codex_tracking_dir;
-	char *history_dir;
-	char *bash_history_rc;
-	char *icon;
-	char *shell_path;
-	char *editor_command;
-	char *main_title;		/* Main window static title from user input */
-	char *term;
-	gchar *tab_default_title;
-	gint add_tab_accelerator;
-	gint del_tab_accelerator;
-	gint switch_tab_accelerator;
-	gint move_tab_accelerator;
-	gint copy_accelerator;
-	gint scrollbar_accelerator;
-	gint open_url_accelerator;
-	gint font_size_accelerator;
-	gint set_tab_name_accelerator;
-	gint search_accelerator;
-	gint set_colorset_accelerator;
-	gint new_window_accelerator;
-	gint add_tab_key;
-	gint del_tab_key;
-	gint prev_tab_key;
-	gint next_tab_key;
-	gint copy_key;
-	gint paste_key;
-	gint scrollbar_key;
-	gint set_tab_name_key;
-	gint search_key;
-	gint fullscreen_key;
-	gint increase_font_size_key;
-	gint decrease_font_size_key;
-	gint set_colorset_keys[NUM_COLORSETS];
-	gint paste_button;
-	gint menu_button;
-	gint new_window_key;
-	int orig_argc; /* Used for new windows */
-	char** orig_argv; /* Used for new windows */
-	VteRegex *http_vteregexp, *mail_vteregexp;
-	char *word_chars;                /* Exceptions for word selection */
-	char *argv[3];
-} sakura;
-
-typedef enum {
-	SAKURA_TAB_SHELL,
-	SAKURA_TAB_CODEX,
-	SAKURA_TAB_TOOL
-} SakuraTabKind;
-
-typedef enum {
-	SAKURA_TOOL_NONE,
-	SAKURA_TOOL_GITUI,
-	SAKURA_TOOL_GH_DASH,
-	SAKURA_TOOL_GH_PR,
-	SAKURA_TOOL_GIT_COLA
-} SakuraToolKind;
-
-typedef enum {
-	SAKURA_OPEN_HERE_FILE_MANAGER,
-	SAKURA_OPEN_HERE_EDITOR
-} SakuraOpenHereKind;
-
-typedef enum {
-	SAKURA_TAB_STATUS_NONE,
-	SAKURA_TAB_STATUS_IDLE,
-	SAKURA_TAB_STATUS_RUNNING,
-	SAKURA_TAB_STATUS_NEEDS_APPROVAL,
-	SAKURA_TAB_STATUS_READY,
-	SAKURA_TAB_STATUS_INTERRUPTED,
-	SAKURA_TAB_STATUS_ERROR
-} SakuraTabStatus;
-
-typedef enum {
-	SAKURA_SIDEBAR_GROUP,
-	SAKURA_SIDEBAR_TERMINAL
-} SakuraSidebarNodeType;
-
-struct sakura_sidebar_node {
-	SakuraSidebarNodeType type;
-	gchar *id;
-	gchar *title;
-	gchar *subtitle;
-	gchar *tooltip;
-	gchar *last_terminal_id;
-	struct sakura_sidebar_node *parent;
-	struct sakura_tab *tab;
-	GtkTreeRowReference *row;
-};
-
-struct sakura_tab {
-	GtkWidget *hbox;
-	GtkWidget *label;
-	GtkWidget *spinner;
-	GtkWidget *tab_button;
-	GtkWidget *tab_item;
-	GtkWidget *tab_button_icon;
-	GtkWidget *tab_button_label;
-	GtkWidget *tab_button_status;
-	GtkWidget *tab_button_spinner;
-	GtkWidget *tab_button_close;
-	GtkWidget *vte;      /* Reference to VTE terminal */
-	GtkWidget *scrollbar;
-#ifdef HAVE_WEBKITGTK
-	GtkWidget *browser;
-	GtkWidget *browser_back;
-	GtkWidget *browser_forward;
-#endif
-	GtkBorder padding;   /* inner-property data */
-	bool label_set_byuser;
-	int colorset;
-	GPid pid;           /* pid of the forked process */
-	gulong exit_handler_id;
-	gchar *cwd;
-	gchar *host;
-	gchar *raw_title;
-	gchar *terminal_id;
-	SakuraTabKind kind;
-	SakuraToolKind tool;
-	gchar *tool_target;
-	gchar *codex_session_id;
-	gchar *codex_session_name;
-	gchar *codex_tracking_token;
-	gboolean codex_name_query_active;
-	guint codex_name_retry_source_id;
-	guint codex_name_retry_count;
-	gboolean codex_interrupt_requested;
-	SakuraTabStatus status;
-	gboolean attention;
-	gboolean text_selection_mode;
-	struct sakura_sidebar_node *sidebar_node;
-};
+SakuraApp sakura;
 
 #define ICON_NAME "org.gnome.Terminal"
 #define CODEX_ICON_NAME "sakura-codex"
@@ -611,8 +349,6 @@ struct sakura_tab {
 #define DEFAULT_LINE_HEIGHT 1.0
 #define FONT_MINIMAL_SIZE (PANGO_SCALE*6)
 #define DEFAULT_WORD_CHARS "-,./?%&#_~:"
-#define TAB_MAX_SIZE 40
-#define TAB_MIN_SIZE 6
 #define FORWARD 1
 #define BACKWARDS 2
 #define DEFAULT_ADD_TAB_ACCELERATOR  (GDK_CONTROL_MASK|GDK_SHIFT_MASK)
@@ -652,17 +388,6 @@ static int cs_keys[NUM_COLORSETS] =
 #define ERROR_BUFFER_LENGTH 256
 const char cfg_group[] = "sakura";
 
-/* Get a set sakura tab data from/to our GObject (notebook) */
-static GQuark term_data_id = 0;
-#define  sakura_get_sktab( sakura, page_idx )  \
-    (struct sakura_tab*)g_object_get_qdata(  \
-            G_OBJECT( gtk_notebook_get_nth_page( (GtkNotebook*)sakura.notebook, page_idx ) ), term_data_id)
-
-#define  sakura_set_sktab( sakura, page_idx, sk_tab )  \
-    g_object_set_qdata_full( \
-            G_OBJECT( gtk_notebook_get_nth_page( (GtkNotebook*)sakura.notebook, page_idx) ), \
-            term_data_id, sk_tab, (GDestroyNotify)g_free);
-
 /* Configuration macros */
 #define  sakura_set_config_integer(key, value) do {\
 	g_key_file_set_integer(sakura.cfg, cfg_group, key, value);\
@@ -686,18 +411,14 @@ static GQuark term_data_id = 0;
 
 
 /* Spawn callback */
-void sakura_spawn_callback (VteTerminal *, GPid, GError *, gpointer);
 /* VTE callbacks */
-static gboolean sakura_term_buttonpressed_cb (GtkWidget *, GdkEventButton *, gpointer);
-static gboolean sakura_term_buttonreleased_cb (GtkWidget *, GdkEventButton *, gpointer);
-static gboolean sakura_term_keypress_cb (GtkWidget *, GdkEventKey *, gpointer);
-static void     sakura_set_text_selection_mode (struct sakura_tab *, gboolean);
-static void     sakura_beep_cb (GtkWidget *, void *);
-static void     sakura_increase_font_cb (GtkWidget *, void *);
-static void     sakura_decrease_font_cb (GtkWidget *, void *);
-static void     sakura_child_exited_cb (GtkWidget *, void *);
-static void     sakura_eof_cb (GtkWidget *, void *);
-static void     sakura_title_changed_cb (GtkWidget *, void *);
+gboolean        sakura_term_buttonpressed_cb (GtkWidget *, GdkEventButton *, gpointer);
+gboolean        sakura_term_buttonreleased_cb (GtkWidget *, GdkEventButton *, gpointer);
+void            sakura_beep_cb (GtkWidget *, void *);
+void            sakura_increase_font_cb (GtkWidget *, void *);
+void            sakura_decrease_font_cb (GtkWidget *, void *);
+void            sakura_child_exited_cb (GtkWidget *, void *);
+void            sakura_eof_cb (GtkWidget *, void *);
 static gboolean sakura_delete_event_cb (GtkWidget *, void *);
 static void     sakura_destroy_window_cb (GtkWidget *, void *);
 /* Main window callbacks */
@@ -708,55 +429,34 @@ static gboolean sakura_focus_out_cb (GtkWidget *, GdkEvent *, void *);
 static void     sakura_conf_changed_cb (GtkWidget *, void *);
 static void     sakura_show_event_cb (GtkWidget *, gpointer);
 /* Notebook, notebook labels and notebook buttons callbacks */
-static void     sakura_switch_page_cb (GtkWidget *, GtkWidget *, guint, void *);
-static void     sakura_page_removed_cb (GtkWidget *, void *);
-static gboolean sakura_notebook_scroll_cb (GtkWidget *, GdkEventScroll *);
-static gboolean sakura_label_clicked_cb (GtkWidget *, GdkEventButton *, void *);
-static gboolean sakura_notebook_focus_cb (GtkWindow *, GdkEvent *, void *);
-static void     sakura_closebutton_clicked_cb (GtkWidget *, void *);
-static void     sakura_tab_bar_refresh (void);
-static void     sakura_sidebar_set_scope (struct sakura_sidebar_node *);
-static guint    sakura_tab_bar_visible_count (void);
-static gboolean sakura_tab_is_in_active_scope (struct sakura_tab *);
-static struct sakura_sidebar_node *sakura_sidebar_default_parent (void);
-static struct sakura_sidebar_node *sakura_sidebar_selected_group (void);
-static gint     sakura_find_tab_by_terminal_id (const gchar *);
-static gboolean sakura_tab_bar_select_relative (gint);
-static gint     sakura_tab_bar_nth_visible_page (guint);
-static void     sakura_tab_bar_add_tab (struct sakura_tab *);
-static void     sakura_tab_bar_remove_tab (struct sakura_tab *);
-static gboolean sakura_tab_button_button_press_cb (GtkWidget *, GdkEventButton *, void *);
-static void     sakura_remember_current_scope_tab (struct sakura_tab *);
-static void     sakura_select_tab (struct sakura_tab *, gboolean);
-static void     sakura_select_scope_default (void);
+void            sakura_switch_page_cb (GtkWidget *, GtkWidget *, guint, void *);
+void            sakura_page_removed_cb (GtkWidget *, void *);
+void            sakura_notebook_page_reordered_cb (GtkNotebook *, GtkWidget *, guint, void *);
+gboolean        sakura_notebook_scroll_cb (GtkWidget *, GdkEventScroll *);
+gboolean        sakura_label_clicked_cb (GtkWidget *, GdkEventButton *, void *);
+gboolean        sakura_notebook_focus_cb (GtkWindow *, GdkEvent *, void *);
+void            sakura_closebutton_clicked_cb (GtkWidget *, void *);
+guint           sakura_tab_bar_visible_count (void);
+gboolean        sakura_tab_is_in_active_scope (struct sakura_tab *);
+gint            sakura_find_tab_by_terminal_id (const gchar *);
+gboolean        sakura_tab_bar_select_relative (gint);
+gint            sakura_tab_bar_nth_visible_page (guint);
+void            sakura_tab_bar_add_tab (struct sakura_tab *);
+void            sakura_tab_bar_remove_tab (struct sakura_tab *);
+void            sakura_select_tab (struct sakura_tab *, gboolean);
 /* Menuitem callbacks */
 static void     sakura_font_dialog_cb (GtkWidget *, void *);
-static void     sakura_set_name_dialog_cb (GtkWidget *, void *);
+void            sakura_set_name_dialog_cb (GtkWidget *, void *);
 static void     sakura_color_dialog_cb (GtkWidget *, void *);
 //static void     sakura_set_title_dialog (GtkWidget *, void *);
-static void     sakura_new_tab_cb (GtkWidget *, void *);
-static void     sakura_new_codex_cb (GtkWidget *, void *);
-static void     sakura_resume_codex_cb (GtkWidget *, void *);
-static void     sakura_install_codex_hook_cb (GtkWidget *, void *);
-static void     sakura_close_tab_cb (GtkWidget *, void *);
+void            sakura_new_tab_cb (GtkWidget *, void *);
+void            sakura_new_codex_cb (GtkWidget *, void *);
+void            sakura_resume_codex_cb (GtkWidget *, void *);
+void            sakura_close_tab_cb (GtkWidget *, void *);
 static void     sakura_fullscreen_cb (GtkWidget *, void *);
-static void     sakura_open_url_cb (GtkWidget *, void *);
-static gboolean sakura_launch_uri (const gchar *);
-#ifdef HAVE_WEBKITGTK
-static void     sakura_browser_back_cb (GtkWidget *, void *);
-static void     sakura_browser_forward_cb (GtkWidget *, void *);
-static void     sakura_browser_reload_cb (GtkWidget *, void *);
-static void     sakura_browser_external_cb (GtkWidget *, void *);
-static void     sakura_browser_navigation_changed_cb (GObject *, GParamSpec *, void *);
-#endif
-static void     sakura_open_mail_cb (GtkWidget *, void *);
-static void     sakura_copy_url_cb (GtkWidget *, void *);
-static void     sakura_copy_cb (GtkWidget *, void *);
-static void     sakura_paste_cb (GtkWidget *, void *);
-static void     sakura_select_text_cb (GtkWidget *, void *);
-static void     sakura_new_tool_cb (GtkWidget *, void *);
-static void     sakura_open_pr_cb (GtkWidget *, void *);
-static void     sakura_open_here_cb (GtkWidget *, void *);
+void            sakura_open_url_cb (GtkWidget *, void *);
+void            sakura_open_mail_cb (GtkWidget *, void *);
+void            sakura_copy_url_cb (GtkWidget *, void *);
 static void     sakura_show_tab_bar_cb (GtkWidget *, void *);
 static void     sakura_tabs_on_bottom_cb (GtkWidget *, void *);
 static void     sakura_less_questions_cb (GtkWidget *, void *);
@@ -765,72 +465,25 @@ static void     sakura_new_tab_after_current_cb (GtkWidget *, void *);
 static void     sakura_show_scrollbar_cb (GtkWidget *, void *);
 static void     sakura_disable_numbered_tabswitch_cb (GtkWidget *, void *);
 //static void     sakura_use_fading_cb (GtkWidget *, void *);
-static void     sakura_setname_entry_changed_cb (GtkWidget *, void *);
 static void     sakura_set_cursor_cb (GtkWidget *, void *);
 static void     sakura_blinking_cursor_cb (GtkWidget *, void *);
 static void     sakura_audible_bell_cb (GtkWidget *, void *);
 static void     sakura_urgent_bell_cb (GtkWidget *, void *);
-static void     sakura_sidebar_init (void);
-static void     sakura_sidebar_queue_select_node (struct sakura_sidebar_node *);
-static gboolean sakura_sidebar_select_pending_cb (gpointer);
-static void     sakura_sidebar_cancel_pending_selection (void);
-static void     sakura_sidebar_update_tab (struct sakura_tab *);
-static void     sakura_sidebar_remove_tab (struct sakura_tab *);
-static void     sakura_focus_tab (struct sakura_tab *);
-static void     sakura_sidebar_update_attention_count (void);
-static gboolean sakura_sidebar_spinner_pulse_cb (gpointer);
-static void     sakura_tab_set_status (struct sakura_tab *, SakuraTabStatus, gboolean);
-static void     sakura_tab_clear_attention (struct sakura_tab *);
-static void     sakura_sidebar_save_groups (void);
-static void     sakura_sidebar_sync_parents (void);
-static void     sakura_sidebar_model_reordered_cb (GtkTreeModel *, GtkTreePath *, GtkTreeIter *, gint *, void *);
-static void     sakura_sidebar_new_group_cb (GtkWidget *, void *);
-static void     sakura_sidebar_rename_group_cb (GtkWidget *, void *);
-static void     sakura_sidebar_delete_group_cb (GtkWidget *, void *);
-static void     sakura_sidebar_toggle_cb (GtkWidget *, void *);
-static void     sakura_sidebar_selection_changed_cb (GtkTreeSelection *, void *);
-static gboolean sakura_sidebar_button_press_cb (GtkWidget *, GdkEventButton *, void *);
-static GtkWidget *sakura_sidebar_context_menu_new (struct sakura_sidebar_node *);
-static GtkWidget *sakura_sidebar_tools_menu_new (struct sakura_sidebar_node *);
-static void     sakura_sidebar_prepare_context (struct sakura_sidebar_node *);
-static void     sakura_new_tab_in_scope_cb (GtkWidget *, void *);
-static void     sakura_new_codex_in_scope_cb (GtkWidget *, void *);
-static void     sakura_resume_codex_in_scope_cb (GtkWidget *, void *);
-static void     sakura_open_here_context_cb (GtkWidget *, void *);
-static void     sakura_open_pr_context_cb (GtkWidget *, void *);
-static void     sakura_new_tool_context_cb (GtkWidget *, void *);
-static void     sakura_sidebar_paned_position_cb (GObject *, GParamSpec *, void *);
-static void     sakura_session_load (void);
-static void     sakura_session_mark_dirty (void);
-static void     sakura_session_flush (void);
-static gboolean sakura_session_write (void);
-static void     sakura_session_accept_changes (void);
-static gboolean sakura_session_restore (void);
-static int      sakura_session_lock_acquire (const char *sessionfile);
-static gboolean sakura_session_start_new_instance (void);
-static gboolean sakura_session_confirm_new_instance (void);
-static gboolean sakura_codex_tracking_poll_cb (gpointer);
-static gboolean sakura_cwd_tracking_poll_cb (gpointer);
-static void     sakura_register_codex_icon (void);
-static gboolean sakura_codex_session_id_is_uuid (const gchar *);
-static struct sakura_tab *sakura_find_codex_tab_by_tracking_token (const gchar *);
-static void     sakura_codex_sync_name (struct sakura_tab *);
-static void     sakura_codex_name_helper_shutdown (void);
-static void     sakura_codex_name_helper_wait_done (GObject *, GAsyncResult *, gpointer);
-static gchar *  sakura_find_codex_name_helper (void);
-static void     sakura_refresh_codex_name_cb (GtkWidget *, void *);
-static void     sakura_rename_codex_session_cb (GtkWidget *, void *);
-static void     sakura_codex_set_name_async (struct sakura_tab *, const gchar *);
-static void     sakura_attach_codex_cb (GtkWidget *, void *);
-static void     sakura_codex_tracking_status_cb (GtkWidget *, void *);
+gboolean       sakura_sidebar_spinner_pulse_cb (gpointer);
+void            sakura_tab_set_status (struct sakura_tab *, SakuraTabStatus, gboolean);
+void            sakura_tab_clear_attention (struct sakura_tab *);
+SakuraTab *       sakura_find_codex_tab_by_tracking_token (const gchar *);
+void            sakura_codex_sync_name (struct sakura_tab *);
+void            sakura_codex_name_helper_shutdown (void);
+gchar *         sakura_find_codex_name_helper (void);
+void            sakura_rename_codex_session_cb (GtkWidget *, void *);
+void            sakura_codex_set_name_async (struct sakura_tab *, const gchar *);
+void            sakura_codex_tracking_menu_update (GtkWidget *);
+static void     sakura_codex_tracking_menu_show_cb (GtkWidget *, void *);
+void            sakura_codex_tracking_status_cb (GtkWidget *, void *);
 
 /* Misc */
-static void     sakura_error (const char *, ...);
-static void     sakura_build_command (int *, char ***);
-static char *   sakura_get_term_cwd (struct sakura_tab *);
-static char *   sakura_get_term_cwd_osc7 (struct sakura_tab *);
-static gboolean sakura_update_tab_cwd (struct sakura_tab *);
-static void     sakura_update_tab_metadata (struct sakura_tab *, const gchar *);
+void            sakura_error (const char *, ...);
 static guint    sakura_tokeycode (guint key);
 static void     sakura_set_keybind (const gchar *, guint);
 static guint    sakura_get_keybind (const gchar *);
@@ -840,36 +493,20 @@ static void     sakura_sanitize_working_directory (void);
 static void     sakura_init ();
 static void     sakura_init_popup ();
 static void     sakura_add_tab ();
-static void     sakura_spawn_codex (struct sakura_tab *, const gchar *, gchar **);
-static void     sakura_spawn_tool (struct sakura_tab *, const gchar *, gchar **);
-static GtkWidget *sakura_open_here_menu_new (void);
-static void     sakura_spawn_shell (struct sakura_tab *, const gchar *, gchar **);
-static void     sakura_add_tab_with_options (const gchar *, struct sakura_sidebar_node *,
+void            sakura_add_tab_with_options (const gchar *, struct sakura_sidebar_node *,
                                              const gchar *, gboolean, SakuraTabKind,
                                              SakuraToolKind, const gchar *, const gchar *,
-                                             const gchar *,
-                                             const gchar *);
-static void     sakura_del_tab (gint);
-static void     sakura_close_tab (gint); /* Save config, del tab and destroy sakura */
-static void     sakura_destroy ();
-static void     sakura_move_tab (gint);
-static gint     sakura_find_tab (VteTerminal *);
-static void     sakura_set_font ();
-static void     sakura_set_tab_label_text (const gchar *, gint);
-static void     sakura_set_window_title (const gchar *);
+                                             const gchar *, const gchar *);
+void            sakura_close_tab (gint); /* Save config, del tab and destroy sakura */
+void            sakura_destroy ();
+void            sakura_set_font ();
 static gboolean sakura_prefers_dark_theme (void);
 static void     sakura_set_dark_theme_environment (void);
 static gchar *  sakura_get_default_font (void);
 static gboolean sakura_load_gnome_terminal_colors (void);
-static void     sakura_set_size (void);
-static void     sakura_config_done ();
+void            sakura_config_done ();
 static void     sakura_set_colorset (int);
-static void     sakura_set_colors (void);
-static void     sakura_search_dialog (void);
-static void     sakura_search (const char *, bool);
-static void     sakura_copy (void);
-static void     sakura_paste (void);
-static void     sakura_paste_primary (void);
+void            sakura_set_colors (void);
 static void     sakura_show_scrollbar (void);
 static void     sakura_new_window (void);
 
@@ -935,7 +572,7 @@ sakura_key_press_cb (GtkWidget *widget, GdkEventKey *event, gpointer user_data)
 	if (event->type != GDK_KEY_PRESS) return FALSE;
 
 	page = gtk_notebook_get_current_page(GTK_NOTEBOOK(sakura.notebook));
-	current_tab = page >= 0 ? sakura_get_sktab(sakura, page) : NULL;
+	current_tab = page >= 0 ? sakura_tab_at_page(page) : NULL;
 	if (current_tab != NULL && current_tab->text_selection_mode &&
 	    event->keyval == GDK_KEY_Escape) {
 		sakura_set_text_selection_mode(current_tab, FALSE);
@@ -954,7 +591,7 @@ sakura_key_press_cb (GtkWidget *widget, GdkEventKey *event, gpointer user_data)
 		return TRUE;
 	} else if ((event->state & accel_mask) == sakura.del_tab_accelerator && keycode == sakura_tokeycode(sakura.del_tab_key)) {
 		/* Delete only the terminal exposed by the active scope. */
-		if (page >= 0 && sakura_tab_is_in_active_scope(sakura_get_sktab(sakura, page)))
+		if (page >= 0 && sakura_tab_is_in_active_scope(sakura_tab_at_page(page)))
 			sakura_close_tab(page);
 		return TRUE;
 	}
@@ -988,7 +625,7 @@ sakura_key_press_cb (GtkWidget *widget, GdkEventKey *event, gpointer user_data)
 					if (topage < visible_tabs) {
 						gint visible_page = sakura_tab_bar_nth_visible_page(topage);
 						if (visible_page >= 0)
-							sakura_select_tab(sakura_get_sktab(sakura, visible_page), FALSE);
+							sakura_select_tab(sakura_tab_at_page(visible_page), FALSE);
 					}
 					return TRUE;
 				} else if (keycode == sakura_tokeycode(sakura.prev_tab_key)) {
@@ -1004,10 +641,10 @@ sakura_key_press_cb (GtkWidget *widget, GdkEventKey *event, gpointer user_data)
 	/* Move tab keybinding pressed */
 	if ((event->state & accel_mask) == sakura.move_tab_accelerator) {
 		if (keycode == sakura_tokeycode(sakura.prev_tab_key)) {
-			sakura_move_tab(BACKWARDS);
+			sakura_tab_move_relative(-1);
 			return TRUE;
 		} else if (keycode == sakura_tokeycode(sakura.next_tab_key)) {
-			sakura_move_tab(FORWARD);
+			sakura_tab_move_relative(1);
 			return TRUE;
 		}
 	}
@@ -1084,7 +721,8 @@ sakura_resized_window_cb (GtkWidget *widget, GdkEventConfigure *event, void *dat
 	if (event->width != sakura.width || event->height != sakura.height) {
 		//SAY("Configure event received. Current w %d h %d ConfigureEvent w %d h %d",
 		//sakura.width, sakura.height, event->width, event->height);
-		gtk_widget_hide(sakura.fade_window);
+		if (sakura.fade_window != NULL)
+			gtk_widget_hide(sakura.fade_window);
 		sakura.resized = TRUE;
 	}
 
@@ -1106,7 +744,7 @@ sakura_focus_in_cb (GtkWidget *widget, GdkEvent *event, void *data)
 	if (sakura.notebook != NULL) {
 		gint page = gtk_notebook_get_current_page(GTK_NOTEBOOK(sakura.notebook));
 		if (page >= 0) {
-			struct sakura_tab *sk_tab = sakura_get_sktab(sakura, page);
+			struct sakura_tab *sk_tab = sakura_tab_at_page(page);
 			sakura_tab_clear_attention(sk_tab);
 		}
 	}
@@ -1115,14 +753,14 @@ sakura_focus_in_cb (GtkWidget *widget, GdkEvent *event, void *data)
 }
 
 
-/* Use focus-out-event to map the fade window */
+	/* Use focus-out-event to map the fade window */
 static gboolean
 sakura_focus_out_cb (GtkWidget *widget, GdkEvent *event, void *data)
 {
 	gint ax, ay, mx, my, x, y;
 
 	if (event->type != GDK_FOCUS_CHANGE) return FALSE;
-	if (!sakura.use_fading) return FALSE;
+	if (!sakura.use_fading || sakura.fade_window == NULL) return FALSE;
 
 	/* No fade when the menu is displayed */
 	if (gtk_widget_is_visible(sakura.menu)) return FALSE;
@@ -1166,3398 +804,38 @@ sakura_conf_changed_cb (GtkWidget *widget, void *data)
 /**********************/
 
 
-/* Handler for notebook scroll-event - switches tabs by scroll direction */
-static gboolean
-sakura_notebook_scroll_cb (GtkWidget *widget, GdkEventScroll *event)
-{
-	/* This callback cause undesirable scroll (when the mouse is over the vte window) when using
-	 * input methods like hime. Disable it by now */
+/* Notebook focus is handled by the tab module. */
 
-	/*
-	gint page, npages;
 
-	page = gtk_notebook_get_current_page(GTK_NOTEBOOK(sakura.notebook));
-	npages = gtk_notebook_get_n_pages(GTK_NOTEBOOK(sakura.notebook));
 
-	switch (event->direction) {
-		case GDK_SCROLL_DOWN:
-			gtk_notebook_set_current_page(GTK_NOTEBOOK(sakura.notebook), --page >= 0 ? page : npages - 1);
-			break;
-		case GDK_SCROLL_UP:
-			gtk_notebook_set_current_page(GTK_NOTEBOOK(sakura.notebook), ++page < npages ? page : 0);
-			break;
-		case GDK_SCROLL_LEFT:
-		case GDK_SCROLL_RIGHT:
-		case GDK_SCROLL_SMOOTH:
-			break;
-	}
-	*/
 
-	return FALSE;
-}
 
 
-/* Callback called when the user switches tabs or closes a tab (but not when a tab is added) */
-static void
-sakura_switch_page_cb (GtkWidget *widget, GtkWidget *widget_page, guint page_num, void *data)
-{
-	struct sakura_tab *sk_tab;
 
-	/* Don't use gtk_notebook_get_current_page in the callbacks, it returns the previous page */
 
-	sk_tab = sakura_get_sktab(sakura, page_num);
-	sakura.active_tab = sk_tab;
-	sakura_remember_current_scope_tab(sk_tab);
-	sakura_tab_clear_attention(sk_tab);
-	/* A notebook switch can be triggered while a sidebar click is still being
-	 * dispatched. Queue the tree update so the original click's target wins
-	 * over any intermediate scope/fallback switch. */
-	sakura_sidebar_queue_select_node(sk_tab->sidebar_node);
-	sakura_codex_sync_name(sk_tab);
 
-	/* Update the window title when a new tab is selected, but don't when an user title has been set */
-	//if (!sakura.tab_default_title && !sakura.main_title)
-	if (!sakura.main_title) {
-		if (g_strcmp0(gtk_label_get_text(GTK_LABEL(sk_tab->label)),"")!=0) {
-			sakura_set_window_title(gtk_label_get_text(GTK_LABEL(sk_tab->label)));
-		}
-	}
-	sakura_tab_bar_refresh();
 
-}
 
 
-static void
-sakura_page_removed_cb (GtkWidget *widget, void *data)
-{
-	if (gtk_notebook_get_n_pages(GTK_NOTEBOOK(sakura.notebook))==1) {
-		/* If the first tab is disabled, window size changes and we need to recalculate its size */
-		sakura_set_size();
-	}
-}
 
 
-/* Callback for focus-in-event to the notebook widget */
-static gboolean
-sakura_notebook_focus_cb (GtkWindow *window, GdkEvent *event, void *data)
-{
-	struct sakura_tab *sk_tab; gint page;
 
-	if (event->type != GDK_FOCUS_CHANGE) return FALSE;
 
-	page = gtk_notebook_get_current_page(GTK_NOTEBOOK(sakura.notebook));
-	sk_tab = sakura_get_sktab(sakura, page);
 
-	/* When clicking several times in the label, terminal loses its focus.
-	 * So, when the notebook got the focus, make sure the terminal HAS te focus */
-#ifdef HAVE_WEBKITGTK
-	if (sk_tab->browser != NULL) {
-		gtk_widget_grab_focus(sk_tab->browser);
-		return FALSE;
-	}
-#endif
-	gtk_widget_grab_focus(sk_tab->vte);
 
-	return FALSE;
-}
 
 
-static gboolean
-sakura_sidebar_get_iter (struct sakura_sidebar_node *node, GtkTreeIter *iter)
-{
-	GtkTreePath *path;
-	gboolean valid;
 
-	if (node == NULL || node->row == NULL || sakura.sidebar_model == NULL)
-		return FALSE;
 
-	path = gtk_tree_row_reference_get_path(node->row);
-	if (path == NULL)
-		return FALSE;
 
-	valid = gtk_tree_model_get_iter(GTK_TREE_MODEL(sakura.sidebar_model), iter, path);
-	gtk_tree_path_free(path);
-	return valid;
-}
 
 
-static void
-sakura_sidebar_free_node (struct sakura_sidebar_node *node)
-{
-	if (node == NULL)
-		return;
 
-	if (node->row != NULL)
-		gtk_tree_row_reference_free(node->row);
-	g_free(node->id);
-	g_free(node->title);
-	g_free(node->subtitle);
-	g_free(node->tooltip);
-	g_free(node->last_terminal_id);
-	g_free(node);
-}
 
 
-static void
-sakura_sidebar_update_attention_count (void)
-{
-	guint count = 0;
-	gint page, pages;
-	gchar *label;
 
-	if (sakura.sidebar_title == NULL || sakura.notebook == NULL)
-		return;
 
-	pages = gtk_notebook_get_n_pages(GTK_NOTEBOOK(sakura.notebook));
-	for (page = 0; page < pages; page++) {
-		struct sakura_tab *sk_tab = sakura_get_sktab(sakura, page);
-		if (sk_tab != NULL && sk_tab->attention)
-			count++;
-	}
-
-	if (count == 0) {
-		gtk_label_set_text(GTK_LABEL(sakura.sidebar_title), _("Workspace"));
-		return;
-	}
-
-	label = g_strdup_printf(_("Workspace (%u need attention)"), count);
-	gtk_label_set_text(GTK_LABEL(sakura.sidebar_title), label);
-	g_free(label);
-}
-
-
-static const gchar *
-sakura_tab_status_label (SakuraTabStatus status)
-{
-	switch (status) {
-		case SAKURA_TAB_STATUS_IDLE:
-			return _("Idle");
-		case SAKURA_TAB_STATUS_RUNNING:
-			return _("Working");
-		case SAKURA_TAB_STATUS_NEEDS_APPROVAL:
-			return _("Needs approval");
-		case SAKURA_TAB_STATUS_READY:
-			return _("Ready to review");
-		case SAKURA_TAB_STATUS_INTERRUPTED:
-			return _("Interrupted");
-		case SAKURA_TAB_STATUS_ERROR:
-			return _("Error");
-		case SAKURA_TAB_STATUS_NONE:
-		default:
-			return NULL;
-	}
-}
-
-
-static const gchar *
-sakura_tab_status_color (SakuraTabStatus status)
-{
-	switch (status) {
-		case SAKURA_TAB_STATUS_RUNNING:
-			return "#5b9bd5";
-		case SAKURA_TAB_STATUS_NEEDS_APPROVAL:
-			return "#e5a13a";
-		case SAKURA_TAB_STATUS_READY:
-			return "#72b879";
-		case SAKURA_TAB_STATUS_INTERRUPTED:
-			return "#8c8c8c";
-		case SAKURA_TAB_STATUS_ERROR:
-			return "#d96c75";
-		case SAKURA_TAB_STATUS_IDLE:
-			return "#8c8c8c";
-		case SAKURA_TAB_STATUS_NONE:
-		default:
-			return NULL;
-	}
-}
-
-
-static const gchar *
-sakura_tab_status_symbol (SakuraTabStatus status)
-{
-	switch (status) {
-		case SAKURA_TAB_STATUS_IDLE:
-			return "•";
-		case SAKURA_TAB_STATUS_NEEDS_APPROVAL:
-			return "?";
-		case SAKURA_TAB_STATUS_READY:
-			return "✓";
-		case SAKURA_TAB_STATUS_INTERRUPTED:
-			return "■";
-		case SAKURA_TAB_STATUS_ERROR:
-			return "!";
-		case SAKURA_TAB_STATUS_RUNNING:
-		case SAKURA_TAB_STATUS_NONE:
-		default:
-			return NULL;
-	}
-}
-
-
-static const gchar *
-sakura_tool_label (SakuraToolKind tool)
-{
-	switch (tool) {
-		case SAKURA_TOOL_GITUI:
-			return _("GitUI");
-		case SAKURA_TOOL_GH_DASH:
-			return _("GitHub Dashboard");
-		case SAKURA_TOOL_GH_PR:
-			return _("Pull request");
-		case SAKURA_TOOL_GIT_COLA:
-			return _("Git Cola");
-		case SAKURA_TOOL_NONE:
-		default:
-			return _("Tool");
-	}
-}
-
-
-static const gchar *
-sakura_tool_id (SakuraToolKind tool)
-{
-	switch (tool) {
-		case SAKURA_TOOL_GITUI:
-			return "gitui";
-		case SAKURA_TOOL_GH_DASH:
-			return "gh-dash";
-		case SAKURA_TOOL_GH_PR:
-			return "gh-pr";
-		case SAKURA_TOOL_GIT_COLA:
-			return "git-cola";
-		case SAKURA_TOOL_NONE:
-		default:
-			return NULL;
-	}
-}
-
-
-static SakuraToolKind
-sakura_tool_from_id (const gchar *id)
-{
-	if (g_strcmp0(id, "gitui") == 0)
-		return SAKURA_TOOL_GITUI;
-	if (g_strcmp0(id, "gh-dash") == 0)
-		return SAKURA_TOOL_GH_DASH;
-	if (g_strcmp0(id, "gh-pr") == 0)
-		return SAKURA_TOOL_GH_PR;
-	if (g_strcmp0(id, "git-cola") == 0)
-		return SAKURA_TOOL_GIT_COLA;
-	return SAKURA_TOOL_NONE;
-}
-
-
-static const gchar *
-sakura_tool_executable (SakuraToolKind tool)
-{
-	switch (tool) {
-		case SAKURA_TOOL_GITUI:
-			return "gitui";
-		case SAKURA_TOOL_GH_DASH:
-			return "gh";
-		case SAKURA_TOOL_GH_PR:
-			return "gh";
-		case SAKURA_TOOL_GIT_COLA:
-			return "git-cola";
-		case SAKURA_TOOL_NONE:
-		default:
-			return NULL;
-	}
-}
-
-
-static const gchar *
-sakura_tool_icon_name (SakuraToolKind tool)
-{
-	switch (tool) {
-		case SAKURA_TOOL_GITUI:
-			return GIT_ICON_NAME;
-		case SAKURA_TOOL_GH_DASH:
-			return GITHUB_ICON_NAME;
-		case SAKURA_TOOL_GH_PR:
-			return GITHUB_ICON_NAME;
-		case SAKURA_TOOL_GIT_COLA:
-			return GIT_ICON_NAME;
-		case SAKURA_TOOL_NONE:
-		default:
-			return "utilities-terminal";
-	}
-}
-
-
-static gboolean
-sakura_tool_requires_git_repository (SakuraToolKind tool)
-{
-	return tool == SAKURA_TOOL_GITUI || tool == SAKURA_TOOL_GIT_COLA;
-}
-
-
-static gchar *
-sakura_find_tool_executable (SakuraToolKind tool)
-{
-	const gchar *executable = sakura_tool_executable(tool);
-	const gchar *cargo_home;
-	gchar *path;
-
-	if (executable == NULL)
-		return NULL;
-
-	/* Prefer PATH so distro/package-managed installations keep precedence. */
-	path = g_find_program_in_path(executable);
-	if (path != NULL)
-		return path;
-
-	/* Desktop launches often do not inherit the shell's PATH. Rust's default
-	 * install location is ~/.cargo/bin, with CARGO_HOME as the override. */
-		if (tool == SAKURA_TOOL_GITUI) {
-		cargo_home = g_getenv("CARGO_HOME");
-		if (cargo_home != NULL && cargo_home[0] != '\0') {
-			path = g_build_filename(cargo_home, "bin", executable, NULL);
-			if (g_file_test(path, G_FILE_TEST_IS_REGULAR | G_FILE_TEST_IS_EXECUTABLE))
-				return path;
-			g_free(path);
-		}
-
-		path = g_build_filename(g_get_home_dir(), ".cargo", "bin", executable, NULL);
-		if (g_file_test(path, G_FILE_TEST_IS_REGULAR | G_FILE_TEST_IS_EXECUTABLE))
-			return path;
-		g_free(path);
-	}
-
-	return NULL;
-}
-
-
-static gboolean
-sakura_tool_is_available (SakuraToolKind tool)
-{
-	gchar *path;
-	gboolean available;
-
-#ifdef HAVE_WEBKITGTK
-	/* PR tabs can be rendered directly by WebKitGTK, so the GitHub CLI is
-	 * optional in this build. It remains required for the terminal fallback. */
-	if (tool == SAKURA_TOOL_GH_PR)
-		return TRUE;
-#endif
-
-	path = sakura_find_tool_executable(tool);
-	if (path == NULL)
-		return FALSE;
-	g_free(path);
-	if (tool != SAKURA_TOOL_GH_DASH)
-		return TRUE;
-
-	{
-		gchar *argv[] = { (gchar *)"gh", (gchar *)"dash", (gchar *)"--version", NULL };
-		GError *error = NULL;
-		gint status = 1;
-
-		available = g_spawn_sync(NULL, argv, NULL,
-		                         G_SPAWN_SEARCH_PATH |
-		                         G_SPAWN_STDOUT_TO_DEV_NULL |
-		                         G_SPAWN_STDERR_TO_DEV_NULL,
-		                         NULL, NULL, NULL, NULL, &status, &error) &&
-		             status == 0;
-		g_clear_error(&error);
-	}
-	return available;
-}
-
-
-static struct sakura_tab *
-sakura_find_tool_tab (SakuraToolKind tool, const gchar *cwd)
-{
-	gint page, pages;
-
-	if (tool == SAKURA_TOOL_NONE || sakura.notebook == NULL)
-		return NULL;
-
-	pages = gtk_notebook_get_n_pages(GTK_NOTEBOOK(sakura.notebook));
-	for (page = 0; page < pages; page++) {
-		struct sakura_tab *sk_tab = sakura_get_sktab(sakura, page);
-
-		if (sk_tab == NULL || sk_tab->kind != SAKURA_TAB_TOOL ||
-		    sk_tab->tool != tool)
-			continue;
-		/* The dashboard is global; repository tools get one instance per repository. */
-		if (sakura_tool_requires_git_repository(tool) &&
-		    g_strcmp0(sk_tab->cwd, cwd) != 0)
-			continue;
-		return sk_tab;
-	}
-	return NULL;
-}
-
-
-static struct sakura_tab *
-sakura_find_tool_target_tab (SakuraToolKind tool, const gchar *target)
-{
-	gint page, pages;
-
-	if (tool == SAKURA_TOOL_NONE || target == NULL || sakura.notebook == NULL)
-		return NULL;
-
-	pages = gtk_notebook_get_n_pages(GTK_NOTEBOOK(sakura.notebook));
-	for (page = 0; page < pages; page++) {
-		struct sakura_tab *sk_tab = sakura_get_sktab(sakura, page);
-
-		if (sk_tab != NULL && sk_tab->kind == SAKURA_TAB_TOOL &&
-		    sk_tab->tool == tool && g_strcmp0(sk_tab->tool_target, target) == 0)
-			return sk_tab;
-	}
-	return NULL;
-}
-
-
-static gboolean
-sakura_sidebar_spinner_pulse_cb (gpointer data)
-{
-	GtkTreeIter iter;
-	GtkTreeModel *model;
-
-	if (sakura.session_shutting_down || sakura.sidebar_model == NULL) {
-		sakura.sidebar_spinner_source_id = 0;
-		return G_SOURCE_REMOVE;
-	}
-
-	sakura.sidebar_spinner_pulse++;
-	model = GTK_TREE_MODEL(sakura.sidebar_model);
-	if (gtk_tree_model_get_iter_first(model, &iter)) {
-		do {
-			gboolean active;
-
-			gtk_tree_model_get(model, &iter,
-			                   SAKURA_SIDEBAR_COLUMN_STATUS_ACTIVE, &active,
-			                   -1);
-			if (active)
-				gtk_tree_store_set(sakura.sidebar_model, &iter,
-				                   SAKURA_SIDEBAR_COLUMN_STATUS_PULSE,
-				                   sakura.sidebar_spinner_pulse,
-				                   -1);
-		} while (gtk_tree_model_iter_next(model, &iter));
-	}
-
-	return G_SOURCE_CONTINUE;
-}
-
-
-static gboolean
-sakura_tab_is_current (struct sakura_tab *sk_tab)
-{
-	return sk_tab != NULL && sk_tab->hbox != NULL && sakura.notebook != NULL &&
-	       gtk_notebook_page_num(GTK_NOTEBOOK(sakura.notebook), sk_tab->hbox) ==
-	       gtk_notebook_get_current_page(GTK_NOTEBOOK(sakura.notebook));
-}
-
-
-static void
-sakura_tab_set_status (struct sakura_tab *sk_tab, SakuraTabStatus status,
-                       gboolean attention)
-{
-	gboolean visible_attention = attention;
-
-	if (sk_tab == NULL)
-		return;
-
-	/* A state change in the visible, focused terminal is already visible to the
-	 * user. Keep the state marker, but don't turn it into an unread alert. */
-	if (visible_attention && sakura.main_window != NULL &&
-	    sakura_tab_is_current(sk_tab) &&
-	    gtk_window_is_active(GTK_WINDOW(sakura.main_window)))
-		visible_attention = FALSE;
-
-	if (sk_tab->status == status && sk_tab->attention == visible_attention)
-		return;
-
-	sk_tab->status = status;
-	sk_tab->attention = visible_attention;
-	if (sk_tab->spinner != NULL) {
-		if (status == SAKURA_TAB_STATUS_RUNNING) {
-			gtk_widget_show(sk_tab->spinner);
-			gtk_spinner_start(GTK_SPINNER(sk_tab->spinner));
-		} else {
-			gtk_spinner_stop(GTK_SPINNER(sk_tab->spinner));
-			gtk_widget_hide(sk_tab->spinner);
-		}
-	}
-	sakura_sidebar_update_tab(sk_tab);
-	sakura_sidebar_update_attention_count();
-
-	if (visible_attention && sakura.main_window != NULL &&
-	    !gtk_window_is_active(GTK_WINDOW(sakura.main_window)) && sakura.urgent_bell)
-		gtk_window_set_urgency_hint(GTK_WINDOW(sakura.main_window), TRUE);
-}
-
-
-static void
-sakura_tab_clear_attention (struct sakura_tab *sk_tab)
-{
-	if (sk_tab == NULL || !sk_tab->attention)
-		return;
-
-	sk_tab->attention = FALSE;
-	sakura_sidebar_update_tab(sk_tab);
-	sakura_sidebar_update_attention_count();
-}
-
-
-static void
-sakura_sidebar_set_node_row (struct sakura_sidebar_node *node, GtkTreeIter *iter)
-{
-	const gchar *icon_name;
-	const gchar *status_label, *status_color, *status_symbol;
-	GtkIconTheme *icon_theme;
-	gchar *escaped_title, *escaped_subtitle, *markup, *status_markup = NULL;
-	gchar *tooltip_markup = NULL;
-	gboolean status_running, status_marker_visible;
-
-	icon_name = "utilities-terminal";
-	if (node->type == SAKURA_SIDEBAR_GROUP) {
-		icon_name = "folder";
-	} else if (node->tab != NULL && node->tab->kind == SAKURA_TAB_CODEX) {
-		/* Keep a stock-terminal fallback for uninstalled/source-tree runs. */
-		icon_theme = gtk_icon_theme_get_default();
-		if (icon_theme != NULL && gtk_icon_theme_has_icon(icon_theme, CODEX_ICON_NAME))
-			icon_name = CODEX_ICON_NAME;
-	} else if (node->tab != NULL && node->tab->kind == SAKURA_TAB_TOOL) {
-		icon_theme = gtk_icon_theme_get_default();
-		if (icon_theme != NULL &&
-		    gtk_icon_theme_has_icon(icon_theme, sakura_tool_icon_name(node->tab->tool)))
-			icon_name = sakura_tool_icon_name(node->tab->tool);
-	}
-	escaped_title = g_markup_escape_text(node->title != NULL ? node->title : "", -1);
-	escaped_subtitle = g_markup_escape_text(node->subtitle != NULL ? node->subtitle : "", -1);
-	status_label = node->tab != NULL ? sakura_tab_status_label(node->tab->status) : NULL;
-	status_running = node->tab != NULL && node->tab->status == SAKURA_TAB_STATUS_RUNNING;
-	status_color = node->tab != NULL ? sakura_tab_status_color(node->tab->status) : NULL;
-	status_symbol = node->tab != NULL ? sakura_tab_status_symbol(node->tab->status) : NULL;
-	if (!status_running && status_color != NULL && status_symbol != NULL)
-		status_markup = g_strdup_printf("<span foreground=\"%s\">%s</span>",
-		                                status_color, status_symbol);
-	status_marker_visible = status_markup != NULL;
-	if (node->subtitle != NULL && node->subtitle[0] != '\0')
-		markup = g_strdup_printf("%s\n<small>%s</small>", escaped_title, escaped_subtitle);
-	else
-		markup = g_strdup(escaped_title);
-	if (status_label != NULL) {
-		const gchar *base_tooltip = node->tooltip != NULL ? node->tooltip : node->title;
-		gchar *status_tooltip = g_strdup_printf("%s\n%s",
-		                                        base_tooltip != NULL ? base_tooltip : "",
-		                                        status_label);
-		tooltip_markup = status_tooltip;
-	}
-
-	gtk_tree_store_set(sakura.sidebar_model, iter,
-	                   SAKURA_SIDEBAR_COLUMN_TITLE, node->title,
-	                   SAKURA_SIDEBAR_COLUMN_SUBTITLE, node->subtitle,
-	                   SAKURA_SIDEBAR_COLUMN_MARKUP, markup,
-	                   SAKURA_SIDEBAR_COLUMN_ICON, icon_name,
-	                   SAKURA_SIDEBAR_COLUMN_STATUS_MARKUP, status_markup,
-	                   SAKURA_SIDEBAR_COLUMN_STATUS_MARKER_VISIBLE,
-	                   status_marker_visible,
-	                   SAKURA_SIDEBAR_COLUMN_STATUS_ACTIVE, status_running,
-	                   SAKURA_SIDEBAR_COLUMN_STATUS_PULSE,
-	                   status_running ? sakura.sidebar_spinner_pulse : 0,
-	                   SAKURA_SIDEBAR_COLUMN_TOOLTIP,
-	                   tooltip_markup != NULL ? tooltip_markup :
-	                   (node->tooltip != NULL ? node->tooltip : node->title),
-	                   SAKURA_SIDEBAR_COLUMN_NODE, node,
-	                   -1);
-
-	g_free(escaped_title);
-	g_free(escaped_subtitle);
-	g_free(markup);
-	g_free(status_markup);
-	g_free(tooltip_markup);
-}
-
-
-static gboolean
-sakura_tab_is_in_active_scope (struct sakura_tab *sk_tab)
-{
-	struct sakura_sidebar_node *node;
-
-	if (sk_tab == NULL || sk_tab->sidebar_node == NULL ||
-	    sakura.active_group_scope == NULL ||
-	    sakura.active_group_scope == sakura.sidebar_root)
-		return sk_tab != NULL;
-
-	for (node = sk_tab->sidebar_node->parent; node != NULL; node = node->parent) {
-		if (node == sakura.active_group_scope)
-			return TRUE;
-	}
-	return FALSE;
-}
-
-
-static struct sakura_sidebar_node *
-sakura_sidebar_default_parent (void)
-{
-	struct sakura_tab *current_tab = NULL;
-	gint page;
-
-	if (sakura.notebook != NULL) {
-		page = gtk_notebook_get_current_page(GTK_NOTEBOOK(sakura.notebook));
-		if (page >= 0)
-			current_tab = sakura_get_sktab(sakura, page);
-	}
-
-	/* A specific group is an insertion target even when the current page has
-	 * not yet been moved into it, such as when the group is empty. */
-	if (sakura.active_group_scope != NULL &&
-	    sakura.active_group_scope != sakura.sidebar_root &&
-	    (current_tab == NULL || !sakura_tab_is_in_active_scope(current_tab)))
-		return sakura.active_group_scope;
-
-	/* With All terminals selected, retain the current tab's ownership group
-	 * instead of treating the root scope as a real destination group. */
-	if (current_tab != NULL && current_tab->sidebar_node != NULL &&
-	    current_tab->sidebar_node->parent != NULL)
-		return current_tab->sidebar_node->parent;
-
-	if (sakura.active_group_scope != NULL)
-		return sakura.active_group_scope;
-	return sakura_sidebar_selected_group();
-}
-
-
-static guint
-sakura_tab_bar_visible_count (void)
-{
-	guint count = 0;
-	gint page, pages;
-
-	if (sakura.notebook == NULL)
-		return 0;
-
-	pages = gtk_notebook_get_n_pages(GTK_NOTEBOOK(sakura.notebook));
-	for (page = 0; page < pages; page++) {
-		struct sakura_tab *sk_tab = sakura_get_sktab(sakura, page);
-		if (sakura_tab_is_in_active_scope(sk_tab))
-			count++;
-	}
-	return count;
-}
-
-
-static gint
-sakura_tab_bar_nth_visible_page (guint visible_index)
-{
-	guint index = 0;
-	gint page, pages;
-
-	if (sakura.notebook == NULL)
-		return -1;
-
-	pages = gtk_notebook_get_n_pages(GTK_NOTEBOOK(sakura.notebook));
-	for (page = 0; page < pages; page++) {
-		struct sakura_tab *sk_tab = sakura_get_sktab(sakura, page);
-		if (!sakura_tab_is_in_active_scope(sk_tab))
-			continue;
-		if (index++ == visible_index)
-			return page;
-	}
-	return -1;
-}
-
-
-static gboolean
-sakura_tab_bar_select_relative (gint direction)
-{
-	guint count, index;
-	gint page, current_page;
-
-	count = sakura_tab_bar_visible_count();
-	if (count == 0)
-		return FALSE;
-
-	current_page = gtk_notebook_get_current_page(GTK_NOTEBOOK(sakura.notebook));
-	index = 0;
-	for (page = 0; page < current_page; page++) {
-		struct sakura_tab *sk_tab = sakura_get_sktab(sakura, page);
-		if (sakura_tab_is_in_active_scope(sk_tab))
-			index++;
-	}
-	if (current_page < 0 || !sakura_tab_is_in_active_scope(
-			current_page >= 0 ? sakura_get_sktab(sakura, current_page) : NULL))
-		index = direction < 0 ? count - 1 : 0;
-	else if (direction < 0)
-		index = index == 0 ? count - 1 : index - 1;
-	else
-		index = (index + 1) % count;
-
-	page = sakura_tab_bar_nth_visible_page(index);
-	if (page < 0)
-		return FALSE;
-	sakura_select_tab(sakura_get_sktab(sakura, page), FALSE);
-	return TRUE;
-}
-
-
-static void
-sakura_tab_button_clicked_cb (GtkWidget *widget, void *data)
-{
-	struct sakura_tab *sk_tab = data;
-
-	if (sk_tab == NULL || sk_tab->hbox == NULL)
-		return;
-	sakura_select_tab(sk_tab, TRUE);
-}
-
-
-static void
-sakura_tab_button_close_cb (GtkWidget *widget, void *data)
-{
-	struct sakura_tab *sk_tab = data;
-	gint page;
-
-	if (sk_tab == NULL || sk_tab->hbox == NULL)
-		return;
-	page = gtk_notebook_page_num(GTK_NOTEBOOK(sakura.notebook), sk_tab->hbox);
-	if (page >= 0)
-		sakura_close_tab(page);
-}
-
-
-static void
-sakura_tab_bar_update_tab (struct sakura_tab *sk_tab)
-{
-	const gchar *status_color, *status_symbol;
-	const gchar *tooltip;
-	GtkWidget *status_slot;
-
-	if (sk_tab == NULL || sk_tab->tab_button == NULL)
-		return;
-
-	if (sk_tab->sidebar_node != NULL && sk_tab->sidebar_node->title != NULL)
-		gtk_label_set_text(GTK_LABEL(sk_tab->tab_button_label), sk_tab->sidebar_node->title);
-	else
-		gtk_label_set_text(GTK_LABEL(sk_tab->tab_button_label), _("Terminal"));
-	status_slot = gtk_widget_get_parent(sk_tab->tab_button_status);
-
-	tooltip = sk_tab->sidebar_node != NULL && sk_tab->sidebar_node->tooltip != NULL
-	        ? sk_tab->sidebar_node->tooltip
-	        : gtk_label_get_text(GTK_LABEL(sk_tab->tab_button_label));
-	gtk_widget_set_tooltip_text(sk_tab->tab_button, tooltip);
-
-	status_color = sakura_tab_status_color(sk_tab->status);
-	status_symbol = sakura_tab_status_symbol(sk_tab->status);
-	if (sk_tab->status == SAKURA_TAB_STATUS_RUNNING) {
-		gtk_widget_show(status_slot);
-		gtk_widget_hide(sk_tab->tab_button_status);
-		gtk_widget_show(sk_tab->tab_button_spinner);
-		gtk_spinner_start(GTK_SPINNER(sk_tab->tab_button_spinner));
-	} else {
-		gtk_spinner_stop(GTK_SPINNER(sk_tab->tab_button_spinner));
-		gtk_widget_hide(sk_tab->tab_button_spinner);
-		if (status_color != NULL && status_symbol != NULL) {
-			gchar *status_markup = g_strdup_printf("<span foreground=\"%s\">%s</span>",
-			                                       status_color, status_symbol);
-			gtk_label_set_markup(GTK_LABEL(sk_tab->tab_button_status), status_markup);
-			g_free(status_markup);
-			gtk_widget_show(status_slot);
-			gtk_widget_show(sk_tab->tab_button_status);
-		} else {
-			gtk_widget_hide(status_slot);
-			gtk_widget_hide(sk_tab->tab_button_status);
-		}
-	}
-}
-
-
-static void
-sakura_tab_bar_refresh (void)
-{
-	guint visible_count, order = 0;
-	gint page, pages, current_page;
-	gboolean show_tabs;
-	const gchar *scope_title;
-	gchar *scope_label;
-
-	if (sakura.tab_bar == NULL || sakura.notebook == NULL)
-		return;
-	/* Changing the notebook page emits switch-page synchronously. During
-	 * startup GTK can still report no current page while emitting that signal,
-	 * so let the outer refresh finish instead of recursively refreshing until
-	 * the stack overflows. */
-	if (sakura.tab_bar_refreshing)
-		return;
-	sakura.tab_bar_refreshing = TRUE;
-
-	visible_count = sakura_tab_bar_visible_count();
-	scope_title = sakura.active_group_scope != NULL &&
-	              sakura.active_group_scope->title != NULL
-	            ? sakura.active_group_scope->title
-	            : _("All terminals");
-	scope_label = g_strdup_printf(_("%s (%u)"), scope_title, visible_count);
-	gtk_label_set_text(GTK_LABEL(sakura.tab_bar_scope_label), scope_label);
-	g_free(scope_label);
-
-	pages = gtk_notebook_get_n_pages(GTK_NOTEBOOK(sakura.notebook));
-	current_page = sakura.active_tab != NULL
-	             ? gtk_notebook_page_num(GTK_NOTEBOOK(sakura.notebook),
-	                                     sakura.active_tab->hbox)
-	             : -1;
-
-	for (page = 0; page < pages; page++) {
-		struct sakura_tab *sk_tab = sakura_get_sktab(sakura, page);
-		gboolean visible = sakura_tab_is_in_active_scope(sk_tab);
-
-		if (sk_tab == NULL)
-			continue;
-		sakura_tab_bar_update_tab(sk_tab);
-		if (sk_tab->tab_item != NULL) {
-			gtk_widget_set_visible(sk_tab->tab_item, visible);
-			gtk_box_reorder_child(GTK_BOX(sakura.tab_bar), sk_tab->tab_item, order++);
-			GtkStyleContext *style_context =
-				gtk_widget_get_style_context(sk_tab->tab_item);
-			if (visible && page == current_page)
-				gtk_style_context_add_class(style_context, "selected");
-			else
-				gtk_style_context_remove_class(style_context, "selected");
-		}
-	}
-
-	show_tabs = visible_count > 0 &&
-	            (sakura.show_tab_bar == SHOW_TAB_BAR_ALWAYS ||
-	             (sakura.show_tab_bar == SHOW_TAB_BAR_MULTIPLE && visible_count > 1));
-	gtk_widget_set_visible(sakura.tab_bar_scrolled, show_tabs);
-	gtk_widget_set_visible(sakura.tab_bar_shell, show_tabs || visible_count == 0);
-	gtk_widget_set_visible(sakura.notebook, visible_count > 0);
-	gtk_widget_set_visible(sakura.tab_bar_empty, visible_count == 0);
-
-	if (sakura.tab_bar_new_button != NULL)
-		gtk_widget_set_visible(sakura.tab_bar_new_button, show_tabs);
-	sakura.tab_bar_refreshing = FALSE;
-}
-
-
-static void
-sakura_select_tab (struct sakura_tab *sk_tab, gboolean focus)
-{
-	gint page, current_page;
-	struct sakura_sidebar_node *scope;
-
-	if (sk_tab == NULL || sk_tab->hbox == NULL || sakura.notebook == NULL)
-		return;
-
-	if (!sakura_tab_is_in_active_scope(sk_tab)) {
-		scope = sk_tab->sidebar_node != NULL && sk_tab->sidebar_node->parent != NULL
-		      ? sk_tab->sidebar_node->parent : sakura.sidebar_root;
-		sakura_sidebar_set_scope(scope);
-	}
-
-	page = gtk_notebook_page_num(GTK_NOTEBOOK(sakura.notebook), sk_tab->hbox);
-	if (page < 0)
-		return;
-
-	sakura.active_tab = sk_tab;
-	current_page = gtk_notebook_get_current_page(GTK_NOTEBOOK(sakura.notebook));
-	if (current_page != page)
-		gtk_notebook_set_current_page(GTK_NOTEBOOK(sakura.notebook), page);
-	else
-		sakura_sidebar_queue_select_node(sk_tab->sidebar_node);
-
-	sakura_tab_bar_refresh();
-	if (focus)
-		sakura_focus_tab(sk_tab);
-}
-
-
-static void
-sakura_select_scope_default (void)
-{
-	struct sakura_tab *sk_tab = NULL;
-	gint page;
-
-	if (sakura.notebook == NULL || sakura.active_group_scope == NULL)
-		return;
-
-	if (sakura.active_tab != NULL &&
-	    gtk_notebook_page_num(GTK_NOTEBOOK(sakura.notebook), sakura.active_tab->hbox) >= 0 &&
-	    sakura_tab_is_in_active_scope(sakura.active_tab)) {
-		sk_tab = sakura.active_tab;
-	} else if (sakura.active_group_scope->last_terminal_id != NULL) {
-		page = sakura_find_tab_by_terminal_id(
-			sakura.active_group_scope->last_terminal_id);
-		if (page >= 0)
-			sk_tab = sakura_get_sktab(sakura, page);
-		if (sk_tab != NULL && !sakura_tab_is_in_active_scope(sk_tab))
-			sk_tab = NULL;
-	}
-
-	if (sk_tab == NULL) {
-		page = sakura_tab_bar_nth_visible_page(0);
-		if (page >= 0)
-			sk_tab = sakura_get_sktab(sakura, page);
-	}
-
-	if (sk_tab != NULL) {
-		sakura_select_tab(sk_tab, TRUE);
-		return;
-	}
-
-	/* An empty scope has no active terminal, but the scope itself remains
-	 * selected so the next terminal is created in the right group. */
-	sakura.active_tab = NULL;
-	sakura_tab_bar_refresh();
-	sakura_sidebar_queue_select_node(sakura.active_group_scope);
-}
-
-
-static void
-sakura_remember_current_scope_tab (struct sakura_tab *current_tab)
-{
-	gint page;
-	struct sakura_tab *sk_tab;
-
-	if (sakura.active_group_scope == NULL || sakura.notebook == NULL)
-		return;
-	sk_tab = current_tab;
-	if (sk_tab == NULL) {
-		page = gtk_notebook_get_current_page(GTK_NOTEBOOK(sakura.notebook));
-		if (page < 0)
-			return;
-		sk_tab = sakura_get_sktab(sakura, page);
-	}
-	if (sk_tab == NULL || !sakura_tab_is_in_active_scope(sk_tab) ||
-	    sk_tab->terminal_id == NULL)
-		return;
-	if (g_strcmp0(sakura.active_group_scope->last_terminal_id, sk_tab->terminal_id) != 0) {
-		g_free(sakura.active_group_scope->last_terminal_id);
-		sakura.active_group_scope->last_terminal_id = g_strdup(sk_tab->terminal_id);
-	}
-}
-
-
-static gboolean
-sakura_tab_button_button_press_cb (GtkWidget *widget, GdkEventButton *event, void *data)
-{
-	struct sakura_tab *sk_tab = data;
-	GtkWidget *menu, *item;
-
-	if (event->button != GDK_BUTTON_SECONDARY || sk_tab == NULL)
-		return FALSE;
-
-	menu = gtk_menu_new();
-	item = gtk_menu_item_new_with_label(_("Rename terminal..."));
-	g_signal_connect(item, "activate", G_CALLBACK(sakura_set_name_dialog_cb), sk_tab);
-	gtk_menu_shell_append(GTK_MENU_SHELL(menu), item);
-	gtk_menu_shell_append(GTK_MENU_SHELL(menu), gtk_separator_menu_item_new());
-	item = gtk_menu_item_new_with_label(_("Close terminal"));
-	g_signal_connect(item, "activate", G_CALLBACK(sakura_tab_button_close_cb), sk_tab);
-	gtk_menu_shell_append(GTK_MENU_SHELL(menu), item);
-
-	gtk_widget_show_all(menu);
-	gtk_menu_popup_at_pointer(GTK_MENU(menu), (GdkEvent *)event);
-	return TRUE;
-}
-
-
-static void
-sakura_tab_bar_add_tab (struct sakura_tab *sk_tab)
-{
-	GtkWidget *button_box, *button, *status_slot, *status, *spinner, *label, *close_button, *image;
-	GtkWidget *tool_icon = NULL;
-
-	if (sakura.tab_bar == NULL || sk_tab == NULL)
-		return;
-
-	button = gtk_button_new();
-	gtk_button_set_relief(GTK_BUTTON(button), GTK_RELIEF_NONE);
-	gtk_widget_set_can_focus(button, TRUE);
-	button_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 3);
-	status_slot = gtk_overlay_new();
-	gtk_widget_set_size_request(status_slot, 16, 16);
-	status = gtk_label_new(NULL);
-	spinner = gtk_spinner_new();
-	gtk_widget_set_size_request(status, 16, 16);
-	gtk_widget_set_size_request(spinner, 16, 16);
-	gtk_widget_set_no_show_all(spinner, TRUE);
-	gtk_container_add(GTK_CONTAINER(status_slot), status);
-	gtk_overlay_add_overlay(GTK_OVERLAY(status_slot), spinner);
-	if (sk_tab->kind == SAKURA_TAB_TOOL) {
-		tool_icon = gtk_image_new_from_icon_name(sakura_tool_icon_name(sk_tab->tool),
-		                                         GTK_ICON_SIZE_MENU);
-		gtk_box_pack_start(GTK_BOX(button_box), tool_icon, FALSE, FALSE, 0);
-	}
-	label = gtk_label_new(_("Terminal"));
-	gtk_label_set_ellipsize(GTK_LABEL(label), PANGO_ELLIPSIZE_END);
-	gtk_box_pack_start(GTK_BOX(button_box), label, FALSE, FALSE, 0);
-	gtk_box_pack_start(GTK_BOX(button_box), status_slot, FALSE, FALSE, 0);
-	gtk_container_add(GTK_CONTAINER(button), button_box);
-
-	sk_tab->tab_item = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
-	sk_tab->tab_button = button;
-	sk_tab->tab_button_icon = tool_icon;
-	sk_tab->tab_button_label = label;
-	sk_tab->tab_button_status = status;
-	sk_tab->tab_button_spinner = spinner;
-	gtk_style_context_add_class(gtk_widget_get_style_context(sk_tab->tab_item),
-	                            "sakura-tab");
-	gtk_box_pack_start(GTK_BOX(sk_tab->tab_item), button, FALSE, FALSE, 0);
-
-	if (sakura.show_closebutton) {
-		close_button = gtk_button_new();
-		gtk_button_set_relief(GTK_BUTTON(close_button), GTK_RELIEF_NONE);
-		gtk_widget_set_name(close_button, "closebutton");
-		gtk_style_context_add_class(gtk_widget_get_style_context(close_button),
-		                            "sakura-tab-close");
-		gtk_widget_set_tooltip_text(close_button, _("Close terminal"));
-		image = gtk_image_new_from_icon_name("window-close", GTK_ICON_SIZE_MENU);
-		gtk_container_add(GTK_CONTAINER(close_button), image);
-		gtk_box_pack_start(GTK_BOX(sk_tab->tab_item), close_button, FALSE, FALSE, 0);
-		sk_tab->tab_button_close = close_button;
-		g_signal_connect(close_button, "clicked", G_CALLBACK(sakura_tab_button_close_cb), sk_tab);
-	}
-
-	gtk_box_pack_start(GTK_BOX(sakura.tab_bar), sk_tab->tab_item, FALSE, FALSE, 0);
-	g_signal_connect(button, "clicked", G_CALLBACK(sakura_tab_button_clicked_cb), sk_tab);
-	gtk_widget_add_events(button, GDK_BUTTON_PRESS_MASK);
-	g_signal_connect(button, "button-press-event",
-	                 G_CALLBACK(sakura_tab_button_button_press_cb), sk_tab);
-	gtk_widget_show_all(sk_tab->tab_item);
-	gtk_widget_hide(status_slot);
-	gtk_widget_hide(status);
-	gtk_widget_hide(spinner);
-	sakura_tab_bar_update_tab(sk_tab);
-}
-
-
-static void
-sakura_tab_bar_remove_tab (struct sakura_tab *sk_tab)
-{
-	if (sk_tab == NULL || sk_tab->tab_item == NULL || sakura.tab_bar == NULL)
-		return;
-	gtk_container_remove(GTK_CONTAINER(sakura.tab_bar), sk_tab->tab_item);
-	sk_tab->tab_item = NULL;
-	sk_tab->tab_button = NULL;
-	sk_tab->tab_button_icon = NULL;
-	sk_tab->tab_button_label = NULL;
-	sk_tab->tab_button_status = NULL;
-	sk_tab->tab_button_spinner = NULL;
-	sk_tab->tab_button_close = NULL;
-}
-
-
-static void
-sakura_register_codex_icon (void)
-{
-	GtkIconTheme *icon_theme;
-	gchar *icon_path;
-
-	icon_theme = gtk_icon_theme_get_default();
-	if (icon_theme == NULL)
-		return;
-
-	/* The development tree mirrors the hicolor layout, so GTK can resolve
-	 * the same icon name without requiring a package installation. */
-	icon_path = g_build_filename(SAKURA_SOURCE_ICON_DIR, "hicolor", "scalable",
-	                             "apps", CODEX_ICON_NAME ".svg", NULL);
-	if (g_file_test(icon_path, G_FILE_TEST_IS_REGULAR))
-		gtk_icon_theme_prepend_search_path(icon_theme, SAKURA_SOURCE_ICON_DIR);
-	g_free(icon_path);
-}
-
-
-static void
-sakura_sidebar_insert_node (struct sakura_sidebar_node *node)
-{
-	GtkTreeIter iter, parent_iter;
-	GtkTreeIter *parent = NULL;
-	GtkTreePath *path;
-
-	if (node->parent != NULL && sakura_sidebar_get_iter(node->parent, &parent_iter))
-		parent = &parent_iter;
-
-	gtk_tree_store_append(sakura.sidebar_model, &iter, parent);
-	sakura_sidebar_set_node_row(node, &iter);
-
-	path = gtk_tree_model_get_path(GTK_TREE_MODEL(sakura.sidebar_model), &iter);
-	node->row = gtk_tree_row_reference_new(GTK_TREE_MODEL(sakura.sidebar_model), path);
-	gtk_tree_path_free(path);
-
-	if (node->parent != NULL && sakura_sidebar_get_iter(node->parent, &parent_iter)) {
-		path = gtk_tree_model_get_path(GTK_TREE_MODEL(sakura.sidebar_model), &parent_iter);
-		gtk_tree_view_expand_row(GTK_TREE_VIEW(sakura.sidebar_tree), path, FALSE);
-		gtk_tree_path_free(path);
-	}
-}
-
-
-static struct sakura_sidebar_node *
-sakura_sidebar_selected_node (void)
-{
-	GtkTreeIter iter;
-	GtkTreeModel *model;
-	struct sakura_sidebar_node *node = NULL;
-
-	if (sakura.sidebar_selection == NULL ||
-	    !gtk_tree_selection_get_selected(sakura.sidebar_selection, &model, &iter))
-		return NULL;
-
-	gtk_tree_model_get(model, &iter, SAKURA_SIDEBAR_COLUMN_NODE, &node, -1);
-	return node;
-}
-
-
-static struct sakura_sidebar_node *
-sakura_sidebar_selected_group (void)
-{
-	struct sakura_sidebar_node *node = sakura_sidebar_selected_node();
-
-	if (node == NULL)
-		return sakura.sidebar_root;
-	if (node->type == SAKURA_SIDEBAR_GROUP)
-		return node;
-	if (node->parent != NULL)
-		return node->parent;
-	return sakura.sidebar_root;
-}
-
-
-static void
-sakura_sidebar_set_scope (struct sakura_sidebar_node *scope)
-{
-	if (scope == NULL || scope->type != SAKURA_SIDEBAR_GROUP)
-		scope = sakura.sidebar_root;
-	if (scope == NULL)
-		return;
-
-	if (sakura.active_group_scope == scope) {
-		sakura_tab_bar_refresh();
-		return;
-	}
-
-	sakura_remember_current_scope_tab(NULL);
-	sakura.active_group_scope = scope;
-	sakura_tab_bar_refresh();
-	if (sakura.notebook != NULL && gtk_notebook_get_n_pages(GTK_NOTEBOOK(sakura.notebook)) > 0)
-		sakura_set_size();
-	sakura_session_mark_dirty();
-}
-
-
-static void
-sakura_sidebar_add_terminal (struct sakura_tab *sk_tab, struct sakura_sidebar_node *parent)
-{
-	struct sakura_sidebar_node *node;
-
-	node = g_new0(struct sakura_sidebar_node, 1);
-	node->type = SAKURA_SIDEBAR_TERMINAL;
-	node->title = g_strdup(_("Terminal"));
-	node->subtitle = g_strdup("");
-	node->parent = parent != NULL ? parent : sakura.sidebar_root;
-	node->tab = sk_tab;
-	sk_tab->sidebar_node = node;
-	sakura_sidebar_insert_node(node);
-	sakura_tab_bar_add_tab(sk_tab);
-	sakura_sidebar_update_tab(sk_tab);
-	if (sakura.active_tab == sk_tab)
-		sakura_sidebar_queue_select_node(sk_tab->sidebar_node);
-	else if (sakura_tab_is_in_active_scope(sk_tab) &&
-	         (sakura.active_tab == NULL ||
-	          !sakura_tab_is_in_active_scope(sakura.active_tab)))
-		sakura_select_tab(sk_tab, TRUE);
-	else
-		sakura_tab_bar_refresh();
-	sakura_set_size();
-}
-
-
-static void
-sakura_sidebar_update_tab (struct sakura_tab *sk_tab)
-{
-	GtkTreeIter iter;
-	struct sakura_sidebar_node *node;
-	gchar *title, *subtitle, *tooltip, *display_path;
-	gint page;
-
-	if (sk_tab == NULL || sk_tab->sidebar_node == NULL ||
-	    !sakura_sidebar_get_iter(sk_tab->sidebar_node, &iter))
-		return;
-
-	node = sk_tab->sidebar_node;
-	if (sk_tab->label_set_byuser) {
-		title = g_strdup(gtk_label_get_text(GTK_LABEL(sk_tab->label)));
-		g_strstrip(title);
-	} else if (sk_tab->kind == SAKURA_TAB_CODEX) {
-		title = sk_tab->codex_session_name != NULL &&
-		         sk_tab->codex_session_name[0] != '\0'
-		         ? g_strdup(sk_tab->codex_session_name)
-		         : g_strdup(_("Codex"));
-	} else if (sk_tab->kind == SAKURA_TAB_TOOL &&
-	           (sk_tab->tool == SAKURA_TOOL_GH_DASH ||
-	            sk_tab->tool == SAKURA_TOOL_GH_PR)) {
-		title = g_strdup(sakura_tool_label(sk_tab->tool));
-	} else if (sk_tab->cwd != NULL && sk_tab->cwd[0] != '\0') {
-		if (g_strcmp0(sk_tab->cwd, g_get_home_dir()) == 0)
-			title = g_strdup("~");
-		else
-			title = g_path_get_basename(sk_tab->cwd);
-	} else {
-		page = gtk_notebook_page_num(GTK_NOTEBOOK(sakura.notebook), sk_tab->hbox);
-		title = g_strdup_printf(_("Terminal %d"), page >= 0 ? page + 1 : 1);
-	}
-
-	display_path = NULL;
-	/* Tool tabs may use a working directory internally, but it is not useful
-	 * as terminal-style sidebar metadata (for example, a browser tab). */
-	if (sk_tab->kind != SAKURA_TAB_TOOL &&
-	    sk_tab->cwd != NULL && sk_tab->cwd[0] != '\0') {
-		const gchar *home = g_get_home_dir();
-		if (home != NULL && g_str_has_prefix(sk_tab->cwd, home) &&
-		    (sk_tab->cwd[strlen(home)] == '\0' || sk_tab->cwd[strlen(home)] == '/'))
-			display_path = g_strdup_printf("~%s", sk_tab->cwd + strlen(home));
-		else
-			display_path = g_strdup(sk_tab->cwd);
-	}
-	if (sk_tab->host != NULL && display_path != NULL)
-		subtitle = g_strdup_printf("%s · %s", sk_tab->host, display_path);
-	else if (sk_tab->host != NULL)
-		subtitle = g_strdup(sk_tab->host);
-	else if (display_path != NULL)
-		subtitle = g_strdup(display_path);
-	else
-		subtitle = g_strdup("");
-
-	if (sk_tab->raw_title != NULL && sk_tab->raw_title[0] != '\0' && subtitle[0] != '\0')
-		tooltip = g_strdup_printf("%s\n%s", sk_tab->raw_title, subtitle);
-	else if (sk_tab->raw_title != NULL && sk_tab->raw_title[0] != '\0')
-		tooltip = g_strdup(sk_tab->raw_title);
-	else
-		tooltip = g_strdup(subtitle);
-
-	g_free(node->title);
-	g_free(node->subtitle);
-	g_free(node->tooltip);
-	node->title = title;
-	node->subtitle = subtitle;
-	node->tooltip = tooltip;
-	sakura_sidebar_set_node_row(node, &iter);
-	sakura_tab_bar_update_tab(sk_tab);
-	g_free(display_path);
-	sakura_session_mark_dirty();
-}
-
-
-static void
-sakura_sidebar_select_node_now (struct sakura_sidebar_node *node)
-{
-	GtkTreePath *path;
-
-	if (sakura.sidebar_selection == NULL || node == NULL || node->row == NULL)
-		return;
-
-	path = gtk_tree_row_reference_get_path(node->row);
-	if (path == NULL)
-		return;
-
-	sakura.sidebar_syncing = TRUE;
-	gtk_tree_selection_select_path(sakura.sidebar_selection, path);
-	gtk_tree_view_scroll_to_cell(GTK_TREE_VIEW(sakura.sidebar_tree), path, NULL, FALSE, 0, 0);
-	sakura.sidebar_syncing = FALSE;
-	gtk_tree_path_free(path);
-}
-
-
-static void
-sakura_sidebar_cancel_pending_selection (void)
-{
-	if (sakura.sidebar_selection_source_id != 0) {
-		g_source_remove(sakura.sidebar_selection_source_id);
-		sakura.sidebar_selection_source_id = 0;
-	}
-	if (sakura.sidebar_pending_selection != NULL) {
-		gtk_tree_row_reference_free(sakura.sidebar_pending_selection);
-		sakura.sidebar_pending_selection = NULL;
-	}
-}
-
-
-static gboolean
-sakura_sidebar_select_pending_cb (gpointer data)
-{
-	GtkTreePath *path;
-	GtkTreeRowReference *row;
-	GtkTreeIter iter;
-	struct sakura_sidebar_node *node = NULL;
-
-	(void)data;
-	sakura.sidebar_selection_source_id = 0;
-	row = sakura.sidebar_pending_selection;
-	sakura.sidebar_pending_selection = NULL;
-	if (row == NULL)
-		return G_SOURCE_REMOVE;
-
-	path = gtk_tree_row_reference_get_path(row);
-	gtk_tree_row_reference_free(row);
-	if (path == NULL)
-		return G_SOURCE_REMOVE;
-
-	/* This runs after GTK has finished the originating tree event. Keep the
-	 * programmatic selection out of the application-level selection handler. */
-	if (gtk_tree_model_get_iter(GTK_TREE_MODEL(sakura.sidebar_model), &iter, path))
-		gtk_tree_model_get(GTK_TREE_MODEL(sakura.sidebar_model), &iter,
-		                   SAKURA_SIDEBAR_COLUMN_NODE, &node, -1);
-	if (node != NULL)
-		sakura_sidebar_select_node_now(node);
-	gtk_tree_path_free(path);
-	return G_SOURCE_REMOVE;
-}
-
-
-static void
-sakura_sidebar_queue_select_node (struct sakura_sidebar_node *node)
-{
-	GtkTreePath *path;
-
-	if (sakura.sidebar_selection == NULL || node == NULL || node->row == NULL)
-		return;
-
-	path = gtk_tree_row_reference_get_path(node->row);
-	if (path == NULL)
-		return;
-
-	sakura_sidebar_cancel_pending_selection();
-	sakura.sidebar_pending_selection = gtk_tree_row_reference_new(
-		GTK_TREE_MODEL(sakura.sidebar_model), path);
-	sakura.sidebar_selection_source_id = g_idle_add(sakura_sidebar_select_pending_cb, NULL);
-	gtk_tree_path_free(path);
-}
-
-
-static gboolean
-sakura_focus_tab_cb (gpointer data)
-{
-	GtkWidget *vte = GTK_WIDGET(data);
-
-	if (gtk_widget_get_visible(vte) && gtk_widget_get_realized(vte))
-		gtk_widget_grab_focus(vte);
-	g_object_unref(vte);
-	return G_SOURCE_REMOVE;
-}
-
-
-static void
-sakura_focus_tab (struct sakura_tab *sk_tab)
-{
-	if (sk_tab == NULL || sk_tab->vte == NULL)
-		return;
-
-#ifdef HAVE_WEBKITGTK
-	if (sk_tab->browser != NULL) {
-		gtk_widget_grab_focus(sk_tab->browser);
-		return;
-	}
-#endif
-
-	/* Let the tree view finish handling the click before moving focus to the
-	 * selected terminal. Keep the widget alive until the idle callback runs. */
-	g_idle_add(sakura_focus_tab_cb, g_object_ref(sk_tab->vte));
-}
-
-
-static void
-sakura_sidebar_remove_tab (struct sakura_tab *sk_tab)
-{
-	GtkTreeIter iter;
-
-	if (sk_tab == NULL || sk_tab->sidebar_node == NULL)
-		return;
-
-	sakura_tab_bar_remove_tab(sk_tab);
-	if (sk_tab->sidebar_node->parent != NULL &&
-	    g_strcmp0(sk_tab->sidebar_node->parent->last_terminal_id, sk_tab->terminal_id) == 0)
-		g_clear_pointer(&sk_tab->sidebar_node->parent->last_terminal_id, g_free);
-	if (sakura_sidebar_get_iter(sk_tab->sidebar_node, &iter))
-		gtk_tree_store_remove(sakura.sidebar_model, &iter);
-	sakura_sidebar_free_node(sk_tab->sidebar_node);
-	sk_tab->sidebar_node = NULL;
-	sakura_sidebar_update_attention_count();
-}
-
-
-static void
-sakura_sidebar_selection_changed_cb (GtkTreeSelection *selection, void *data)
-{
-	struct sakura_sidebar_node *node;
-
-	if (sakura.sidebar_syncing)
-		return;
-
-	node = sakura_sidebar_selected_node();
-	if (node == NULL)
-		return;
-	if (node->type == SAKURA_SIDEBAR_GROUP) {
-		sakura_sidebar_set_scope(node);
-		sakura_select_scope_default();
-		return;
-	}
-	if (node->type != SAKURA_SIDEBAR_TERMINAL || node->tab == NULL)
-		return;
-
-	sakura_select_tab(node->tab, TRUE);
-	sakura_session_mark_dirty();
-}
-
-
-struct sakura_sidebar_tool_target {
-	struct sakura_sidebar_node *node;
-	SakuraToolKind tool;
-};
-
-
-struct sakura_sidebar_move_target {
-	struct sakura_tab *tab;
-	struct sakura_sidebar_node *group;
-};
-
-
-static void
-sakura_sidebar_tool_target_free (gpointer data, GClosure *closure)
-{
-	(void)closure;
-	g_free(data);
-}
-
-
-static void
-sakura_sidebar_move_target_free (gpointer data, GClosure *closure)
-{
-	(void)closure;
-	g_free(data);
-}
-
-
-static void
-sakura_sidebar_prepare_context (struct sakura_sidebar_node *node)
-{
-	struct sakura_sidebar_node *scope;
-
-	if (node == NULL)
-		node = sakura.sidebar_root;
-	if (node->type == SAKURA_SIDEBAR_TERMINAL)
-		scope = node->parent != NULL ? node->parent : sakura.sidebar_root;
-	else
-		scope = node;
-	if (scope == NULL)
-		return;
-
-	if (sakura.active_group_scope != scope) {
-		sakura_sidebar_set_scope(scope);
-		sakura_select_scope_default();
-	}
-	if (node->type == SAKURA_SIDEBAR_TERMINAL && node->tab != NULL)
-		sakura_select_tab(node->tab, FALSE);
-}
-
-
-static void
-sakura_new_tab_in_scope_cb (GtkWidget *widget, void *data)
-{
-	sakura_sidebar_prepare_context(data);
-	sakura_new_tab_cb(widget, NULL);
-}
-
-
-static void
-sakura_new_codex_in_scope_cb (GtkWidget *widget, void *data)
-{
-	sakura_sidebar_prepare_context(data);
-	sakura_new_codex_cb(widget, NULL);
-}
-
-
-static void
-sakura_resume_codex_in_scope_cb (GtkWidget *widget, void *data)
-{
-	sakura_sidebar_prepare_context(data);
-	sakura_resume_codex_cb(widget, NULL);
-}
-
-
-static void
-sakura_open_here_context_cb (GtkWidget *widget, void *data)
-{
-	SakuraOpenHereKind kind = GPOINTER_TO_INT(
-		g_object_get_data(G_OBJECT(widget), "sakura-open-here-kind"));
-
-	sakura_sidebar_prepare_context(data);
-	sakura_open_here_cb(widget, GINT_TO_POINTER(kind));
-}
-
-
-static void
-sakura_open_pr_context_cb (GtkWidget *widget, void *data)
-{
-	sakura_sidebar_prepare_context(data);
-	sakura_open_pr_cb(widget, NULL);
-}
-
-
-static void
-sakura_new_tool_context_cb (GtkWidget *widget, void *data)
-{
-	struct sakura_sidebar_tool_target *target = data;
-
-	if (target == NULL)
-		return;
-	sakura_sidebar_prepare_context(target->node);
-	sakura_new_tool_cb(widget, GINT_TO_POINTER(target->tool));
-}
-
-
-static void
-sakura_sidebar_move_terminal_cb (GtkWidget *widget, void *data)
-{
-	struct sakura_sidebar_move_target *target = data;
-	struct sakura_sidebar_node *node, *old_parent;
-	GtkTreeIter old_iter, parent_iter, new_iter;
-	GtkTreePath *path;
-
-	if (target == NULL || target->tab == NULL || target->group == NULL ||
-	    target->tab->sidebar_node == NULL ||
-	    target->tab->sidebar_node->parent == target->group)
-		return;
-	node = target->tab->sidebar_node;
-	old_parent = node->parent;
-	if (!sakura_sidebar_get_iter(node, &old_iter) ||
-	    !sakura_sidebar_get_iter(target->group, &parent_iter))
-		return;
-
-	sakura_sidebar_cancel_pending_selection();
-	sakura.sidebar_syncing = TRUE;
-	if (node->row != NULL) {
-		gtk_tree_row_reference_free(node->row);
-		node->row = NULL;
-	}
-	gtk_tree_store_remove(sakura.sidebar_model, &old_iter);
-	if (old_parent != NULL &&
-	    g_strcmp0(old_parent->last_terminal_id, node->tab->terminal_id) == 0)
-		g_clear_pointer(&old_parent->last_terminal_id, g_free);
-	node->parent = target->group;
-	gtk_tree_store_append(sakura.sidebar_model, &new_iter,
-		                  &parent_iter);
-	path = gtk_tree_model_get_path(GTK_TREE_MODEL(sakura.sidebar_model), &new_iter);
-	node->row = gtk_tree_row_reference_new(GTK_TREE_MODEL(sakura.sidebar_model), path);
-	gtk_tree_path_free(path);
-	sakura_sidebar_set_node_row(node, &new_iter);
-	sakura.sidebar_syncing = FALSE;
-
-	if (sakura.active_tab == target->tab)
-		sakura_select_tab(target->tab, TRUE);
-	else
-		sakura_tab_bar_refresh();
-	sakura_sidebar_save_groups();
-}
-
-
-static GtkWidget *
-sakura_sidebar_open_here_menu_new (struct sakura_sidebar_node *node)
-{
-	GtkWidget *menu, *item;
-	SakuraOpenHereKind kind;
-
-	menu = gtk_menu_new();
-	for (kind = SAKURA_OPEN_HERE_FILE_MANAGER;
-	     kind <= SAKURA_OPEN_HERE_EDITOR; kind++) {
-		item = gtk_menu_item_new_with_label(
-			kind == SAKURA_OPEN_HERE_FILE_MANAGER ? _("File Manager") : _("Editor"));
-		g_object_set_data(G_OBJECT(item), "sakura-open-here-kind",
-		                  GINT_TO_POINTER(kind));
-		g_signal_connect(item, "activate",
-		                 G_CALLBACK(sakura_open_here_context_cb), node);
-		gtk_menu_shell_append(GTK_MENU_SHELL(menu), item);
-	}
-	return menu;
-}
-
-
-static GtkWidget *
-sakura_sidebar_move_terminal_menu_new (struct sakura_tab *sk_tab)
-{
-	GtkWidget *menu, *item;
-	GList *group;
-
-	menu = gtk_menu_new();
-	for (group = sakura.sidebar_groups; group != NULL; group = group->next) {
-		struct sakura_sidebar_node *node = group->data;
-		struct sakura_sidebar_move_target *target;
-
-		if (node == NULL || node == sk_tab->sidebar_node->parent)
-			continue;
-		item = gtk_menu_item_new_with_label(
-			node == sakura.sidebar_root ? _("All terminals") : node->title);
-		target = g_new0(struct sakura_sidebar_move_target, 1);
-		target->tab = sk_tab;
-		target->group = node;
-		g_signal_connect_data(item, "activate",
-		                      G_CALLBACK(sakura_sidebar_move_terminal_cb), target,
-		                      sakura_sidebar_move_target_free, 0);
-		gtk_menu_shell_append(GTK_MENU_SHELL(menu), item);
-	}
-	{
-		GList *items = gtk_container_get_children(GTK_CONTAINER(menu));
-		if (items == NULL) {
-			gtk_widget_destroy(menu);
-			return NULL;
-		}
-		g_list_free(items);
-	}
-	return menu;
-}
-
-
-static GtkWidget *
-sakura_sidebar_tools_menu_new (struct sakura_sidebar_node *node)
-{
-	GtkWidget *menu, *item;
-	const SakuraToolKind tools[] = {
-		SAKURA_TOOL_GITUI, SAKURA_TOOL_GIT_COLA, SAKURA_TOOL_GH_DASH
-	};
-	guint tool_index;
-	SakuraToolKind tool;
-	const gchar *label;
-
-	menu = gtk_menu_new();
-	for (tool_index = 0; tool_index < G_N_ELEMENTS(tools); tool_index++) {
-		tool = tools[tool_index];
-		label = sakura_tool_label(tool);
-		item = gtk_menu_item_new_with_label(label);
-		{
-			struct sakura_sidebar_tool_target *target = g_new0(
-				struct sakura_sidebar_tool_target, 1);
-			target->node = node;
-			target->tool = tool;
-			g_signal_connect_data(item, "activate",
-			                      G_CALLBACK(sakura_new_tool_context_cb), target,
-			                      sakura_sidebar_tool_target_free, 0);
-		}
-		gtk_menu_shell_append(GTK_MENU_SHELL(menu), item);
-	}
-	item = gtk_menu_item_new_with_label(_("Open pull request..."));
-	g_signal_connect(item, "activate", G_CALLBACK(sakura_open_pr_context_cb), node);
-	gtk_menu_shell_append(GTK_MENU_SHELL(menu), item);
-	return menu;
-}
-
-
-static GtkWidget *
-sakura_sidebar_context_menu_new (struct sakura_sidebar_node *node)
-{
-	GtkWidget *menu, *item, *submenu;
-	struct sakura_sidebar_node *context_node = node != NULL
-	                                           ? node : sakura.sidebar_root;
-
-	menu = gtk_menu_new();
-	if (context_node != NULL && context_node->type == SAKURA_SIDEBAR_TERMINAL) {
-		item = gtk_menu_item_new_with_label(_("New terminal in group"));
-		g_signal_connect(item, "activate", G_CALLBACK(sakura_new_tab_in_scope_cb),
-		                 context_node);
-		gtk_menu_shell_append(GTK_MENU_SHELL(menu), item);
-
-		item = gtk_menu_item_new_with_label(_("Open Here"));
-		gtk_menu_item_set_submenu(GTK_MENU_ITEM(item),
-		                          sakura_sidebar_open_here_menu_new(context_node));
-		gtk_menu_shell_append(GTK_MENU_SHELL(menu), item);
-
-		item = gtk_menu_item_new_with_label(_("Tools"));
-		gtk_menu_item_set_submenu(GTK_MENU_ITEM(item),
-		                          sakura_sidebar_tools_menu_new(context_node));
-		gtk_menu_shell_append(GTK_MENU_SHELL(menu), item);
-
-		submenu = sakura_sidebar_move_terminal_menu_new(context_node->tab);
-		if (submenu != NULL) {
-			item = gtk_menu_item_new_with_label(_("Move to group"));
-			gtk_menu_item_set_submenu(GTK_MENU_ITEM(item), submenu);
-			gtk_menu_shell_append(GTK_MENU_SHELL(menu), item);
-		}
-
-		submenu = gtk_menu_new();
-		item = gtk_menu_item_new_with_label(_("New Codex session"));
-		g_signal_connect(item, "activate",
-		                 G_CALLBACK(sakura_new_codex_in_scope_cb), context_node);
-		gtk_menu_shell_append(GTK_MENU_SHELL(submenu), item);
-		item = gtk_menu_item_new_with_label(_("Resume session..."));
-		g_signal_connect(item, "activate",
-		                 G_CALLBACK(sakura_resume_codex_in_scope_cb), context_node);
-		gtk_menu_shell_append(GTK_MENU_SHELL(submenu), item);
-		item = gtk_menu_item_new_with_label(_("Codex"));
-		gtk_menu_item_set_submenu(GTK_MENU_ITEM(item), submenu);
-		gtk_menu_shell_append(GTK_MENU_SHELL(menu), item);
-
-		gtk_menu_shell_append(GTK_MENU_SHELL(menu), gtk_separator_menu_item_new());
-		item = gtk_menu_item_new_with_label(_("Rename terminal..."));
-		g_signal_connect(item, "activate", G_CALLBACK(sakura_set_name_dialog_cb),
-		                 context_node->tab);
-		gtk_menu_shell_append(GTK_MENU_SHELL(menu), item);
-		if (context_node->tab != NULL && context_node->tab->kind == SAKURA_TAB_CODEX) {
-			item = gtk_menu_item_new_with_label(_("Rename Codex session..."));
-			g_signal_connect(item, "activate",
-			                 G_CALLBACK(sakura_rename_codex_session_cb),
-			                 context_node->tab);
-			gtk_menu_shell_append(GTK_MENU_SHELL(menu), item);
-		}
-		gtk_menu_shell_append(GTK_MENU_SHELL(menu), gtk_separator_menu_item_new());
-		item = gtk_menu_item_new_with_label(_("Close terminal"));
-		g_signal_connect(item, "activate", G_CALLBACK(sakura_close_tab_cb),
-		                 context_node->tab);
-		gtk_menu_shell_append(GTK_MENU_SHELL(menu), item);
-	} else if (context_node != NULL && context_node->type == SAKURA_SIDEBAR_GROUP) {
-		item = gtk_menu_item_new_with_label(
-			context_node == sakura.sidebar_root ? _("New terminal") : _("New terminal here"));
-		g_signal_connect(item, "activate", G_CALLBACK(sakura_new_tab_in_scope_cb),
-		                 context_node);
-		gtk_menu_shell_append(GTK_MENU_SHELL(menu), item);
-
-		item = gtk_menu_item_new_with_label(_("New subgroup"));
-		g_signal_connect(item, "activate", G_CALLBACK(sakura_sidebar_new_group_cb),
-		                 context_node);
-		gtk_menu_shell_append(GTK_MENU_SHELL(menu), item);
-
-		if (context_node != sakura.sidebar_root) {
-			item = gtk_menu_item_new_with_label(_("Open Here"));
-			gtk_menu_item_set_submenu(GTK_MENU_ITEM(item),
-			                          sakura_sidebar_open_here_menu_new(context_node));
-			gtk_menu_shell_append(GTK_MENU_SHELL(menu), item);
-		}
-
-		if (context_node == sakura.sidebar_root) {
-			item = gtk_menu_item_new_with_label(_("Tools"));
-			gtk_menu_item_set_submenu(GTK_MENU_ITEM(item),
-			                          sakura_sidebar_tools_menu_new(context_node));
-			gtk_menu_shell_append(GTK_MENU_SHELL(menu), item);
-		} else {
-			gtk_menu_shell_append(GTK_MENU_SHELL(menu), gtk_separator_menu_item_new());
-			item = gtk_menu_item_new_with_label(_("Rename group..."));
-			g_signal_connect(item, "activate",
-			                 G_CALLBACK(sakura_sidebar_rename_group_cb), context_node);
-			gtk_menu_shell_append(GTK_MENU_SHELL(menu), item);
-			gtk_menu_shell_append(GTK_MENU_SHELL(menu), gtk_separator_menu_item_new());
-			item = gtk_menu_item_new_with_label(_("Delete group"));
-			g_signal_connect(item, "activate",
-			                 G_CALLBACK(sakura_sidebar_delete_group_cb), context_node);
-			gtk_menu_shell_append(GTK_MENU_SHELL(menu), item);
-		}
-	}
-	return menu;
-}
-
-
-static gboolean
-sakura_sidebar_button_press_cb (GtkWidget *widget, GdkEventButton *event, void *data)
-{
-	GtkTreePath *path = NULL;
-	GtkTreeViewColumn *column = NULL;
-	GtkTreeIter iter;
-	GtkWidget *menu;
-	struct sakura_sidebar_node *node;
-
-	/* A folder label is a row, not the expander itself. GTK therefore does
-	 * not expand it when it receives a double click. Keep single-click
-	 * activation intact and toggle only group rows on a primary double click. */
-	if (event->button == GDK_BUTTON_PRIMARY &&
-	    event->type == GDK_2BUTTON_PRESS &&
-	    GTK_IS_TREE_VIEW(widget) &&
-	    gtk_tree_view_get_path_at_pos(GTK_TREE_VIEW(widget), event->x, event->y,
-	                                  &path, &column, NULL, NULL)) {
-		if (gtk_tree_model_get_iter(GTK_TREE_MODEL(sakura.sidebar_model), &iter, path))
-			gtk_tree_model_get(GTK_TREE_MODEL(sakura.sidebar_model), &iter,
-			                   SAKURA_SIDEBAR_COLUMN_NODE, &node, -1);
-		else
-			node = NULL;
-
-		if (node != NULL && node->type == SAKURA_SIDEBAR_GROUP) {
-			if (gtk_tree_view_row_expanded(GTK_TREE_VIEW(widget), path))
-				gtk_tree_view_collapse_row(GTK_TREE_VIEW(widget), path);
-			else
-				gtk_tree_view_expand_row(GTK_TREE_VIEW(widget), path, FALSE);
-			gtk_tree_path_free(path);
-			return TRUE;
-		}
-		gtk_tree_path_free(path);
-		return FALSE;
-	}
-
-	if (event->button != GDK_BUTTON_SECONDARY)
-		return FALSE;
-
-	if (GTK_IS_TREE_VIEW(widget) &&
-	    gtk_tree_view_get_path_at_pos(GTK_TREE_VIEW(widget), event->x, event->y,
-	                                  &path, &column, NULL, NULL)) {
-		/* Resolve the menu target from the row under the pointer. The selection
-		 * change callback may run asynchronously, so the selected row can still
-		 * refer to the previous group at this point. */
-		if (gtk_tree_model_get_iter(GTK_TREE_MODEL(sakura.sidebar_model), &iter, path))
-			gtk_tree_model_get(GTK_TREE_MODEL(sakura.sidebar_model), &iter,
-			                   SAKURA_SIDEBAR_COLUMN_NODE, &node, -1);
-		else
-			node = NULL;
-		gtk_tree_selection_select_path(sakura.sidebar_selection, path);
-	} else {
-		gtk_tree_selection_unselect_all(sakura.sidebar_selection);
-		node = sakura.sidebar_root;
-	}
-
-	menu = sakura_sidebar_context_menu_new(node);
-
-	gtk_widget_show_all(menu);
-	gtk_menu_popup_at_pointer(GTK_MENU(menu), (GdkEvent *)event);
-	if (path != NULL)
-		gtk_tree_path_free(path);
-
-	return TRUE;
-}
-
-
-static void
-sakura_sidebar_new_group_cb (GtkWidget *widget, void *data)
-{
-	GtkWidget *dialog, *entry;
-	GtkTreeIter iter;
-	struct sakura_sidebar_node *parent, *node;
-	struct sakura_sidebar_node *context_node = data;
-	const gchar *title;
-
-	if (context_node != NULL && context_node->type == SAKURA_SIDEBAR_TERMINAL)
-		context_node = context_node->parent;
-	parent = context_node != NULL
-	       ? context_node
-	       : (sakura.active_group_scope != NULL
-	          ? sakura.active_group_scope : sakura_sidebar_selected_group());
-	dialog = gtk_dialog_new_with_buttons(_("New group"),
-	                                     GTK_WINDOW(sakura.main_window),
-	                                     GTK_DIALOG_MODAL | GTK_DIALOG_USE_HEADER_BAR,
-	                                     _("_Cancel"), GTK_RESPONSE_CANCEL,
-	                                     _("_Create"), GTK_RESPONSE_ACCEPT,
-	                                     NULL);
-	entry = gtk_entry_new();
-	gtk_entry_set_placeholder_text(GTK_ENTRY(entry), _("Group name"));
-	gtk_entry_set_activates_default(GTK_ENTRY(entry), TRUE);
-	gtk_box_pack_start(GTK_BOX(gtk_dialog_get_content_area(GTK_DIALOG(dialog))),
-	                   entry, FALSE, FALSE, 12);
-	gtk_dialog_set_default_response(GTK_DIALOG(dialog), GTK_RESPONSE_ACCEPT);
-	gtk_widget_show_all(gtk_dialog_get_content_area(GTK_DIALOG(dialog)));
-
-	if (gtk_dialog_run(GTK_DIALOG(dialog)) == GTK_RESPONSE_ACCEPT) {
-		title = gtk_entry_get_text(GTK_ENTRY(entry));
-		if (title[0] != '\0') {
-			node = g_new0(struct sakura_sidebar_node, 1);
-			node->type = SAKURA_SIDEBAR_GROUP;
-			node->id = g_strdup_printf("group-%u", sakura.sidebar_next_group_id++);
-			node->title = g_strdup(title);
-			node->parent = parent != NULL ? parent : sakura.sidebar_root;
-			sakura.sidebar_groups = g_list_append(sakura.sidebar_groups, node);
-			sakura_sidebar_insert_node(node);
-			if (sakura_sidebar_get_iter(node, &iter)) {
-				GtkTreePath *path = gtk_tree_model_get_path(GTK_TREE_MODEL(sakura.sidebar_model), &iter);
-				gtk_tree_view_expand_row(GTK_TREE_VIEW(sakura.sidebar_tree), path, FALSE);
-				gtk_tree_selection_select_path(sakura.sidebar_selection, path);
-				gtk_tree_path_free(path);
-			}
-			sakura_sidebar_save_groups();
-		}
-	}
-	gtk_widget_destroy(dialog);
-}
-
-
-static void
-sakura_sidebar_rename_group_cb (GtkWidget *widget, void *data)
-{
-	struct sakura_sidebar_node *node = data;
-	GtkWidget *dialog, *entry;
-	GtkTreeIter iter;
-	const gchar *title;
-
-	if (node == NULL || node->type != SAKURA_SIDEBAR_GROUP)
-		return;
-
-	dialog = gtk_dialog_new_with_buttons(_("Rename group"),
-	                                     GTK_WINDOW(sakura.main_window),
-	                                     GTK_DIALOG_MODAL | GTK_DIALOG_USE_HEADER_BAR,
-	                                     _("_Cancel"), GTK_RESPONSE_CANCEL,
-	                                     _("_Apply"), GTK_RESPONSE_ACCEPT,
-	                                     NULL);
-	entry = gtk_entry_new();
-	gtk_entry_set_text(GTK_ENTRY(entry), node->title);
-	gtk_entry_set_activates_default(GTK_ENTRY(entry), TRUE);
-	gtk_box_pack_start(GTK_BOX(gtk_dialog_get_content_area(GTK_DIALOG(dialog))),
-	                   entry, FALSE, FALSE, 12);
-	gtk_dialog_set_default_response(GTK_DIALOG(dialog), GTK_RESPONSE_ACCEPT);
-	gtk_widget_show_all(gtk_dialog_get_content_area(GTK_DIALOG(dialog)));
-
-	if (gtk_dialog_run(GTK_DIALOG(dialog)) == GTK_RESPONSE_ACCEPT) {
-		title = gtk_entry_get_text(GTK_ENTRY(entry));
-		if (title[0] != '\0') {
-			g_free(node->title);
-			node->title = g_strdup(title);
-			if (sakura_sidebar_get_iter(node, &iter))
-				sakura_sidebar_set_node_row(node, &iter);
-			sakura_tab_bar_refresh();
-			sakura_sidebar_save_groups();
-		}
-	}
-	gtk_widget_destroy(dialog);
-}
-
-
-static void
-sakura_sidebar_delete_group_cb (GtkWidget *widget, void *data)
-{
-	struct sakura_sidebar_node *node = data;
-	GtkTreeIter iter;
-
-	if (node == NULL || node == sakura.sidebar_root ||
-	    node->type != SAKURA_SIDEBAR_GROUP ||
-	    !sakura_sidebar_get_iter(node, &iter))
-		return;
-
-	if (gtk_tree_model_iter_has_child(GTK_TREE_MODEL(sakura.sidebar_model), &iter)) {
-		GtkWidget *dialog = gtk_message_dialog_new(GTK_WINDOW(sakura.main_window),
-		                                           GTK_DIALOG_MODAL,
-		                                           GTK_MESSAGE_INFO,
-		                                           GTK_BUTTONS_OK,
-		                                           _("Only empty terminal groups can be deleted."));
-		gtk_dialog_run(GTK_DIALOG(dialog));
-		gtk_widget_destroy(dialog);
-		return;
-	}
-
-	if (sakura.active_group_scope == node) {
-		sakura_sidebar_set_scope(sakura.sidebar_root);
-		sakura_select_scope_default();
-	}
-	gtk_tree_store_remove(sakura.sidebar_model, &iter);
-	sakura.sidebar_groups = g_list_remove(sakura.sidebar_groups, node);
-	sakura_sidebar_free_node(node);
-	sakura_sidebar_save_groups();
-}
-
-
-static struct sakura_sidebar_node *
-sakura_sidebar_find_group_by_id (const gchar *id)
-{
-	GList *group;
-
-	if (id == NULL)
-		return NULL;
-	for (group = sakura.sidebar_groups; group != NULL; group = group->next) {
-		struct sakura_sidebar_node *node = group->data;
-		if (g_strcmp0(node->id, id) == 0)
-			return node;
-	}
-	return NULL;
-}
-
-
-static void
-sakura_sidebar_collect_groups (GtkTreeModel *model, GtkTreeIter *parent,
-                               GPtrArray *ids, GPtrArray *parents, GPtrArray *titles)
-{
-	GtkTreeIter iter;
-	gboolean valid;
-
-	valid = parent == NULL
-		? gtk_tree_model_get_iter_first(model, &iter)
-		: gtk_tree_model_iter_children(model, &iter, parent);
-	while (valid) {
-		struct sakura_sidebar_node *node = NULL;
-		gtk_tree_model_get(model, &iter, SAKURA_SIDEBAR_COLUMN_NODE, &node, -1);
-		if (node != NULL && node->type == SAKURA_SIDEBAR_GROUP) {
-			if (node != sakura.sidebar_root) {
-				g_ptr_array_add(ids, g_strdup(node->id));
-				g_ptr_array_add(parents, g_strdup(node->parent != NULL ? node->parent->id : "root"));
-				g_ptr_array_add(titles, g_strdup(node->title));
-			}
-			sakura_sidebar_collect_groups(model, &iter, ids, parents, titles);
-		}
-		valid = gtk_tree_model_iter_next(model, &iter);
-	}
-}
-
-
-static void
-sakura_sidebar_sync_parents_for_iter (GtkTreeModel *model, GtkTreeIter *parent_iter,
-                                      struct sakura_sidebar_node *parent_node)
-{
-	GtkTreeIter iter;
-	gboolean valid;
-
-	valid = parent_iter == NULL
-		? gtk_tree_model_get_iter_first(model, &iter)
-		: gtk_tree_model_iter_children(model, &iter, parent_iter);
-	while (valid) {
-		struct sakura_sidebar_node *node = NULL;
-
-		gtk_tree_model_get(model, &iter, SAKURA_SIDEBAR_COLUMN_NODE, &node, -1);
-		if (node != NULL) {
-			/* The root is a model row, but must never become its own parent. */
-			node->parent = node == sakura.sidebar_root
-				? NULL
-				: (parent_node != NULL ? parent_node : sakura.sidebar_root);
-			if (node->type == SAKURA_SIDEBAR_GROUP)
-				sakura_sidebar_sync_parents_for_iter(model, &iter, node);
-		}
-		valid = gtk_tree_model_iter_next(model, &iter);
-	}
-}
-
-
-static void
-sakura_sidebar_sync_parents (void)
-{
-	if (sakura.sidebar_model != NULL)
-		sakura_sidebar_sync_parents_for_iter(GTK_TREE_MODEL(sakura.sidebar_model), NULL, NULL);
-}
-
-
-static void
-sakura_sidebar_save_groups (void)
-{
-	GPtrArray *ids, *parents, *titles;
-
-	sakura_session_accept_changes();
-	sakura_sidebar_sync_parents();
-
-	ids = g_ptr_array_new_with_free_func(g_free);
-	parents = g_ptr_array_new_with_free_func(g_free);
-	titles = g_ptr_array_new_with_free_func(g_free);
-	sakura_sidebar_collect_groups(GTK_TREE_MODEL(sakura.sidebar_model), NULL,
-	                              ids, parents, titles);
-
-	if (ids->len == 0) {
-		g_key_file_remove_key(sakura.cfg, cfg_group, "sidebar_group_ids", NULL);
-		g_key_file_remove_key(sakura.cfg, cfg_group, "sidebar_group_parents", NULL);
-		g_key_file_remove_key(sakura.cfg, cfg_group, "sidebar_group_titles", NULL);
-	} else {
-		g_key_file_set_string_list(sakura.cfg, cfg_group, "sidebar_group_ids",
-		                           (const gchar * const *)ids->pdata, ids->len);
-		g_key_file_set_string_list(sakura.cfg, cfg_group, "sidebar_group_parents",
-		                           (const gchar * const *)parents->pdata, parents->len);
-		g_key_file_set_string_list(sakura.cfg, cfg_group, "sidebar_group_titles",
-		                           (const gchar * const *)titles->pdata, titles->len);
-	}
-	sakura.config_modified = TRUE;
-	sakura_session_mark_dirty();
-	g_ptr_array_free(ids, TRUE);
-	g_ptr_array_free(parents, TRUE);
-	g_ptr_array_free(titles, TRUE);
-}
-
-
-static void
-sakura_sidebar_collect_terminals (GtkTreeModel *model, GtkTreeIter *parent,
-                                  GPtrArray *terminals)
-{
-	GtkTreeIter iter;
-	gboolean valid;
-
-	valid = parent == NULL
-		? gtk_tree_model_get_iter_first(model, &iter)
-		: gtk_tree_model_iter_children(model, &iter, parent);
-	while (valid) {
-		struct sakura_sidebar_node *node = NULL;
-		gtk_tree_model_get(model, &iter, SAKURA_SIDEBAR_COLUMN_NODE, &node, -1);
-		if (node != NULL && node->type == SAKURA_SIDEBAR_TERMINAL)
-			g_ptr_array_add(terminals, node);
-		else if (node != NULL && node->type == SAKURA_SIDEBAR_GROUP)
-			sakura_sidebar_collect_terminals(model, &iter, terminals);
-		valid = gtk_tree_model_iter_next(model, &iter);
-	}
-}
-
-
-static gboolean
-sakura_session_save_timeout_cb (gpointer data)
-{
-	sakura.session_save_source_id = 0;
-	sakura_session_flush();
-	return G_SOURCE_REMOVE;
-}
-
-
-static void
-sakura_session_accept_changes (void)
-{
-	/* A failed restore is protected until the user explicitly changes the
-	 * workspace. Automatic metadata updates must not overwrite the preserved
-	 * session while the fallback workspace is still on screen. */
-	sakura.session_restore_failed = FALSE;
-}
-
-
-/* Keep concurrent persistent instances from writing the same workspace. */
-static int
-sakura_session_lock_acquire (const char *sessionfile)
-{
-	gchar *lock_path;
-	int fd;
-
-	lock_path = g_strdup_printf("%s.lock", sessionfile);
-	fd = g_open(lock_path, O_CREAT | O_RDWR, 0600);
-	if (fd < 0) {
-		SAY("Could not open session lock %s: %s", lock_path, g_strerror(errno));
-		g_free(lock_path);
-		return -1;
-	}
-	if (fcntl(fd, F_SETFD, FD_CLOEXEC) < 0) {
-		SAY("Could not mark session lock close-on-exec: %s", g_strerror(errno));
-		close(fd);
-		g_free(lock_path);
-		return -1;
-	}
-
-	if (flock(fd, LOCK_EX | LOCK_NB) == 0) {
-		sakura.session_lock_fd = fd;
-		sakura.session_lock_path = lock_path;
-		return 1;
-	}
-
-	if (errno == EWOULDBLOCK || errno == EAGAIN) {
-		close(fd);
-		g_free(lock_path);
-		return 0;
-	}
-
-	SAY("Could not lock session %s: %s", sessionfile, g_strerror(errno));
-	close(fd);
-	g_free(lock_path);
-	return -1;
-}
-
-
-static gboolean
-sakura_session_confirm_new_instance (void)
-{
-	GtkWidget *dialog;
-	gint response;
-
-	dialog = gtk_message_dialog_new(NULL, GTK_DIALOG_MODAL,
-	                                GTK_MESSAGE_WARNING, GTK_BUTTONS_NONE,
-	                                "%s", _("This Sakura session is already open."));
-	gtk_window_set_title(GTK_WINDOW(dialog), _("Sakura session already open"));
-	gtk_message_dialog_format_secondary_text(
-		GTK_MESSAGE_DIALOG(dialog),
-		_("Choose Exit to keep using the existing session, or launch a new persistent instance with its own saved workspace."));
-	gtk_dialog_add_button(GTK_DIALOG(dialog), _("_Exit"), GTK_RESPONSE_CANCEL);
-	gtk_dialog_add_button(GTK_DIALOG(dialog), _("_Launch new instance"), GTK_RESPONSE_ACCEPT);
-	gtk_dialog_set_default_response(GTK_DIALOG(dialog), GTK_RESPONSE_CANCEL);
-	response = gtk_dialog_run(GTK_DIALOG(dialog));
-	gtk_widget_destroy(dialog);
-
-	return response == GTK_RESPONSE_ACCEPT;
-}
-
-
-static gboolean
-sakura_session_start_new_instance (void)
-{
-	gchar *base_sessionfile;
-	gint64 stamp;
-	guint attempt;
-
-	base_sessionfile = g_strdup(sakura.sessionfile);
-	stamp = g_get_real_time();
-	for (attempt = 0; attempt < 100; attempt++) {
-		gchar *candidate;
-		int lock_result;
-
-		candidate = g_strdup_printf("%s.instance-%" G_GINT64_FORMAT "-%u",
-		                            base_sessionfile, stamp, attempt);
-		if (g_file_test(candidate, G_FILE_TEST_EXISTS)) {
-			g_free(candidate);
-			continue;
-		}
-
-		lock_result = sakura_session_lock_acquire(candidate);
-		if (lock_result == 1) {
-			g_free(sakura.sessionfile);
-			sakura.sessionfile = candidate;
-			g_free(base_sessionfile);
-			return TRUE;
-		}
-		g_free(candidate);
-		if (lock_result < 0)
-			break;
-	}
-
-	g_free(base_sessionfile);
-	return FALSE;
-}
-
-
-static gboolean
-sakura_session_backup_existing (void)
-{
-	gchar *backup_file;
-	gchar *contents = NULL;
-	gsize length = 0;
-	GError *error = NULL;
-
-	if (sakura.sessionfile == NULL ||
-	    !g_file_test(sakura.sessionfile, G_FILE_TEST_IS_REGULAR))
-		return TRUE;
-
-	if (!g_file_get_contents(sakura.sessionfile, &contents, &length, &error)) {
-		SAY("Could not back up session file: %s",
-		    error != NULL ? error->message : _("unknown error"));
-		g_clear_error(&error);
-		return FALSE;
-	}
-
-	backup_file = g_strdup_printf("%s.bak", sakura.sessionfile);
-	if (!g_file_set_contents(backup_file, contents, length, &error)) {
-		SAY("Could not back up session file: %s",
-		    error != NULL ? error->message : _("unknown error"));
-		g_clear_error(&error);
-		g_free(backup_file);
-		g_free(contents);
-		return FALSE;
-	}
-	if (chmod(backup_file, 0600) != 0) {
-		SAY("Could not secure session backup: %s", g_strerror(errno));
-		g_free(backup_file);
-		g_free(contents);
-		return FALSE;
-	}
-
-	g_free(backup_file);
-	g_free(contents);
-	return TRUE;
-}
-
-
-static gboolean
-sakura_terminal_id_is_valid (const gchar *terminal_id)
-{
-	const gchar *cursor;
-
-	if (terminal_id == NULL || terminal_id[0] == '\0' || strlen(terminal_id) > 128)
-		return FALSE;
-	for (cursor = terminal_id; *cursor != '\0'; cursor++) {
-		if (!g_ascii_isalnum(*cursor) && *cursor != '-' && *cursor != '_' && *cursor != '.')
-			return FALSE;
-	}
-	return TRUE;
-}
-
-
-static gchar *
-sakura_generate_terminal_id (void)
-{
-	return g_strdup_printf("terminal-%d-%u", (int)getpid(), g_random_int());
-}
-
-
-static gchar *
-sakura_history_file_for_tab (const struct sakura_tab *sk_tab)
-{
-	if (sakura.history_dir == NULL || sk_tab == NULL || sk_tab->terminal_id == NULL)
-		return NULL;
-	return g_build_filename(sakura.history_dir, sk_tab->terminal_id, NULL);
-}
-
-
-static void
-sakura_prepare_history_file (struct sakura_tab *sk_tab)
-{
-	gchar *history_file;
-	int fd;
-
-	history_file = sakura_history_file_for_tab(sk_tab);
-	if (history_file == NULL)
-		return;
-
-	fd = g_open(history_file, O_WRONLY | O_CREAT | O_APPEND, 0600);
-	if (fd == -1) {
-		SAY("Could not create terminal history file %s: %s", history_file, g_strerror(errno));
-	} else {
-		close(fd);
-		if (chmod(history_file, 0600) != 0)
-			SAY("Could not secure terminal history file %s: %s", history_file, g_strerror(errno));
-	}
-	g_free(history_file);
-}
-
-
-static void
-sakura_prepare_bash_integration (void)
-{
-	static const gchar bash_rc[] =
-		"if [[ -z \"${SAKURA_HISTORY_PROMPT_ACTIVE:-}\" ]]; then\n"
-		"    SAKURA_HISTORY_PROMPT_ACTIVE=1\n"
-		"    if [[ -n \"${SAKURA_BASH_LOGIN:-}\" ]]; then\n"
-		"        [[ -r /etc/profile ]] && . /etc/profile\n"
-		"        if [[ -n \"${HOME:-}\" && -r \"$HOME/.bash_profile\" ]]; then\n"
-		"            . \"$HOME/.bash_profile\"\n"
-		"        elif [[ -n \"${HOME:-}\" && -r \"$HOME/.bash_login\" ]]; then\n"
-		"            . \"$HOME/.bash_login\"\n"
-		"        elif [[ -n \"${HOME:-}\" && -r \"$HOME/.profile\" ]]; then\n"
-		"            . \"$HOME/.profile\"\n"
-		"        fi\n"
-		"    elif [[ -n \"${HOME:-}\" && -r \"$HOME/.bashrc\" ]]; then\n"
-		"        . \"$HOME/.bashrc\"\n"
-		"    fi\n"
-		"    if [[ -n \"${SAKURA_HISTORY_FILE:-}\" && "
-		"-z \"${SAKURA_DISABLE_HISTORY_INTEGRATION:-}\" ]]; then\n"
-		"        HISTFILE=\"$SAKURA_HISTORY_FILE\"\n"
-		"        shopt -s histappend\n"
-		"        if [[ $(declare -p PROMPT_COMMAND 2>/dev/null) == "
-		"\"declare -a\"* ]]; then\n"
-		"            PROMPT_COMMAND=(history -a history -n \"${PROMPT_COMMAND[@]}\")\n"
-		"        else\n"
-		"            PROMPT_COMMAND=\"history -a; history -n${PROMPT_COMMAND:+;$PROMPT_COMMAND}\"\n"
-		"        fi\n"
-		"    fi\n"
-		"fi\n";
-	GError *error = NULL;
-
-	if (sakura.history_dir == NULL)
-		return;
-
-	sakura.bash_history_rc = g_build_filename(sakura.history_dir, "sakura-bashrc", NULL);
-	if (!g_file_set_contents(sakura.bash_history_rc, bash_rc, -1, &error) ||
-	    chmod(sakura.bash_history_rc, 0600) != 0) {
-		SAY("Could not prepare Bash history integration: %s",
-		    error != NULL ? error->message : g_strerror(errno));
-		if (error != NULL)
-			g_error_free(error);
-		g_clear_pointer(&sakura.bash_history_rc, g_free);
-	}
-}
-
-
-static gboolean
-sakura_shell_is_bash (void)
-{
-	gchar *basename;
-	gboolean is_bash;
-
-	if (sakura.argv[0] == NULL)
-		return FALSE;
-	basename = g_path_get_basename(sakura.argv[0]);
-	is_bash = g_strcmp0(basename, "bash") == 0;
-	g_free(basename);
-	return is_bash;
-}
-
-
-static gboolean
-sakura_bash_integration_enabled (void)
-{
-	return sakura.bash_history_rc != NULL && sakura_shell_is_bash() &&
-	       g_getenv("SAKURA_DISABLE_HISTORY_INTEGRATION") == NULL;
-}
-
-
-static void
-sakura_remove_history_file (struct sakura_tab *sk_tab)
-{
-	gchar *history_file;
-
-	if (sakura.session_shutting_down)
-		return;
-	history_file = sakura_history_file_for_tab(sk_tab);
-	if (history_file != NULL && g_remove(history_file) != 0 && errno != ENOENT)
-		SAY("Could not remove terminal history file %s: %s", history_file, g_strerror(errno));
-	g_free(history_file);
-}
-
-
-static gboolean
-sakura_session_version_supported (void)
-{
-	gint version;
-
-	if (sakura.session_cfg == NULL ||
-	    !g_key_file_has_key(sakura.session_cfg, "Session", "version", NULL))
-		return FALSE;
-
-	version = g_key_file_get_integer(sakura.session_cfg, "Session", "version", NULL);
-	return version == 1 || version == 2 || version == 3;
-}
-
-
-static void
-sakura_session_mark_dirty (void)
-{
-	sakura.session_dirty = TRUE;
-	if (sakura.sessionfile == NULL || option_new_window ||
-	    !sakura.session_ready || sakura.session_restoring || sakura.dont_save ||
-	    sakura.session_restore_failed || sakura.session_shutting_down)
-		return;
-
-	if (sakura.session_save_source_id == 0)
-		sakura.session_save_source_id = g_timeout_add(500, sakura_session_save_timeout_cb, NULL);
-}
-
-
-static void
-sakura_session_flush (void)
-{
-	if (sakura.session_save_source_id != 0) {
-		g_source_remove(sakura.session_save_source_id);
-		sakura.session_save_source_id = 0;
-	}
-	if (sakura.session_dirty)
-		sakura_session_write();
-}
-
-
-static gboolean
-sakura_session_write (void)
-{
-	GKeyFile *session;
-	GPtrArray *group_ids, *group_parents, *group_titles, *terminals;
-	GError *error = NULL;
-	gchar *data, *temporary_file;
-	gsize data_length;
-	gint selected_page, selected_terminal = -1;
-	guint i;
-	gboolean saved = FALSE;
-
-	if (sakura.sessionfile == NULL || option_new_window || sakura.dont_save || sakura.session_shutting_down ||
-	    sakura.session_restore_failed ||
-	    sakura.sidebar_model == NULL)
-		return FALSE;
-
-	sakura_sidebar_sync_parents();
-	session = g_key_file_new();
-	group_ids = g_ptr_array_new_with_free_func(g_free);
-	group_parents = g_ptr_array_new_with_free_func(g_free);
-	group_titles = g_ptr_array_new_with_free_func(g_free);
-	terminals = g_ptr_array_new();
-	sakura_sidebar_collect_groups(GTK_TREE_MODEL(sakura.sidebar_model), NULL,
-	                              group_ids, group_parents, group_titles);
-	sakura_sidebar_collect_terminals(GTK_TREE_MODEL(sakura.sidebar_model), NULL, terminals);
-
-	selected_page = gtk_notebook_get_current_page(GTK_NOTEBOOK(sakura.notebook));
-	if (selected_page >= 0) {
-		struct sakura_tab *selected_tab = sakura_get_sktab(sakura, selected_page);
-		for (i = 0; i < terminals->len; i++) {
-			struct sakura_sidebar_node *node = g_ptr_array_index(terminals, i);
-			if (node->tab == selected_tab) {
-				selected_terminal = (gint)i;
-				break;
-			}
-		}
-		if (selected_tab != NULL && selected_tab->terminal_id != NULL)
-			g_key_file_set_string(session, "Session", "selected_terminal_id",
-			                      selected_tab->terminal_id);
-	}
-
-	g_key_file_set_integer(session, "Session", "version", 3);
-	g_key_file_set_integer(session, "Session", "group_count", group_ids->len);
-	g_key_file_set_integer(session, "Session", "terminal_count", terminals->len);
-	g_key_file_set_integer(session, "Session", "selected_terminal", selected_terminal);
-	g_key_file_set_string(session, "Session", "active_group_id",
-	                      sakura.active_group_scope != NULL &&
-	                      sakura.active_group_scope->id != NULL
-	                      ? sakura.active_group_scope->id : "root");
-	g_key_file_set_boolean(session, "Session", "sidebar_visible", sakura.sidebar_visible);
-	g_key_file_set_integer(session, "Session", "sidebar_width",
-	                       sakura.sidebar_paned != NULL
-	                       ? gtk_paned_get_position(GTK_PANED(sakura.sidebar_paned))
-	                       : sakura.sidebar_width);
-
-	for (i = 0; i < group_ids->len; i++) {
-		gchar *section = g_strdup_printf("Group%u", i);
-		g_key_file_set_string(session, section, "id", g_ptr_array_index(group_ids, i));
-		g_key_file_set_string(session, section, "parent", g_ptr_array_index(group_parents, i));
-		g_key_file_set_string(session, section, "title", g_ptr_array_index(group_titles, i));
-		g_free(section);
-	}
-
-	for (i = 0; i < terminals->len; i++) {
-		struct sakura_sidebar_node *node = g_ptr_array_index(terminals, i);
-		struct sakura_tab *tab = node->tab;
-		gchar *section = g_strdup_printf("Terminal%u", i);
-		const gchar *title = gtk_label_get_text(GTK_LABEL(tab->label));
-
-		g_key_file_set_string(session, section, "parent",
-		                      node->parent != NULL ? node->parent->id : "root");
-		g_key_file_set_string(session, section, "cwd", tab->cwd != NULL ? tab->cwd : "");
-		g_key_file_set_string(session, section, "terminal_id",
-		                      tab->terminal_id != NULL ? tab->terminal_id : "");
-		g_key_file_set_string(session, section, "kind",
-		                      tab->kind == SAKURA_TAB_CODEX ? "codex" :
-		                      tab->kind == SAKURA_TAB_TOOL ? "tool" : "shell");
-		if (tab->kind == SAKURA_TAB_TOOL &&
-		    sakura_tool_id(tab->tool) != NULL)
-			g_key_file_set_string(session, section, "tool", sakura_tool_id(tab->tool));
-		if (tab->kind == SAKURA_TAB_TOOL && tab->tool_target != NULL &&
-		    tab->tool_target[0] != '\0')
-			g_key_file_set_string(session, section, "tool_target", tab->tool_target);
-		if (tab->kind == SAKURA_TAB_CODEX && tab->codex_session_id != NULL &&
-		    tab->codex_session_id[0] != '\0')
-			g_key_file_set_string(session, section, "codex_session_id", tab->codex_session_id);
-		if (tab->kind == SAKURA_TAB_CODEX && tab->codex_session_name != NULL &&
-		    tab->codex_session_name[0] != '\0')
-			g_key_file_set_string(session, section, "codex_session_name", tab->codex_session_name);
-		g_key_file_set_boolean(session, section, "title_set_by_user", tab->label_set_byuser);
-		if (tab->label_set_byuser)
-			g_key_file_set_string(session, section, "title", title != NULL ? title : "");
-		g_free(section);
-	}
-
-	data = g_key_file_to_data(session, &data_length, &error);
-	if (data == NULL) {
-		SAY("Could not serialize session: %s",
-		    error != NULL ? error->message : _("unknown error"));
-		g_clear_error(&error);
-	} else {
-		temporary_file = g_strdup_printf("%s.tmp.%d", sakura.sessionfile, (int)getpid());
-		if (!g_file_set_contents(temporary_file, data, data_length, &error) ||
-		    chmod(temporary_file, 0600) != 0 ||
-		    !sakura_session_backup_existing() ||
-		    g_rename(temporary_file, sakura.sessionfile) != 0) {
-			SAY("Could not save session: %s", error != NULL ? error->message : g_strerror(errno));
-			if (error != NULL)
-				g_error_free(error);
-			g_remove(temporary_file);
-		} else
-			saved = TRUE;
-		g_free(temporary_file);
-		g_free(data);
-	}
-
-	g_key_file_free(session);
-	g_ptr_array_free(group_ids, TRUE);
-	g_ptr_array_free(group_parents, TRUE);
-	g_ptr_array_free(group_titles, TRUE);
-	g_ptr_array_free(terminals, TRUE);
-	if (saved)
-		sakura.session_dirty = FALSE;
-	return saved;
-}
-
-
-static void
-sakura_session_load (void)
-{
-	GError *error = NULL;
-
-	if (sakura.sessionfile == NULL)
-		return;
-
-	sakura.session_cfg = g_key_file_new();
-	if (!g_key_file_load_from_file(sakura.session_cfg, sakura.sessionfile, 0, &error)) {
-		g_key_file_free(sakura.session_cfg);
-		sakura.session_cfg = NULL;
-		if (error != NULL)
-			g_error_free(error);
-	} else if (!option_new_session && !option_new_window &&
-	           sakura_session_version_supported()) {
-		if (g_key_file_has_key(sakura.session_cfg, "Session", "sidebar_visible", NULL))
-			sakura.sidebar_visible = g_key_file_get_boolean(sakura.session_cfg, "Session", "sidebar_visible", NULL);
-		if (g_key_file_has_key(sakura.session_cfg, "Session", "sidebar_width", NULL)) {
-			gint sidebar_width = g_key_file_get_integer(sakura.session_cfg, "Session", "sidebar_width", NULL);
-			if (sidebar_width >= 160 && sidebar_width <= 500)
-				sakura.sidebar_width = sidebar_width;
-		}
-	}
-}
-
-
-static gboolean
-sakura_session_restore (void)
-{
-	gint terminal_count, selected_terminal, restored = 0;
-	gchar *selected_terminal_id = NULL;
-	guint i;
-
-	if (sakura.session_cfg == NULL ||
-	    !sakura_session_version_supported() ||
-	    !g_key_file_has_key(sakura.session_cfg, "Session", "terminal_count", NULL))
-		return FALSE;
-
-	terminal_count = g_key_file_get_integer(sakura.session_cfg, "Session", "terminal_count", NULL);
-	if (terminal_count <= 0)
-		return FALSE;
-
-	selected_terminal = g_key_file_get_integer(sakura.session_cfg, "Session", "selected_terminal", NULL);
-	if (g_key_file_has_key(sakura.session_cfg, "Session", "selected_terminal_id", NULL))
-		selected_terminal_id = g_key_file_get_string(sakura.session_cfg, "Session",
-		                                             "selected_terminal_id", NULL);
-	for (i = 0; i < (guint)terminal_count; i++) {
-		gchar *section = g_strdup_printf("Terminal%u", i);
-		gchar *parent_id = g_key_file_get_string(sakura.session_cfg, section, "parent", NULL);
-		gchar *cwd = g_key_file_get_string(sakura.session_cfg, section, "cwd", NULL);
-		gchar *title = g_key_file_get_string(sakura.session_cfg, section, "title", NULL);
-		gchar *terminal_id = g_key_file_get_string(sakura.session_cfg, section, "terminal_id", NULL);
-		gchar *kind = g_key_file_get_string(sakura.session_cfg, section, "kind", NULL);
-		gchar *codex_session_id = g_key_file_get_string(sakura.session_cfg, section,
-		                                                  "codex_session_id", NULL);
-		gchar *codex_session_name = g_key_file_get_string(sakura.session_cfg, section,
-		                                                  "codex_session_name", NULL);
-		gchar *tool_id = g_key_file_get_string(sakura.session_cfg, section, "tool", NULL);
-		gchar *tool_target = g_key_file_get_string(sakura.session_cfg, section,
-		                                          "tool_target", NULL);
-		gboolean title_set = g_key_file_get_boolean(sakura.session_cfg, section,
-		                                             "title_set_by_user", NULL);
-		struct sakura_sidebar_node *parent = sakura_sidebar_find_group_by_id(parent_id);
-		SakuraTabKind tab_kind = SAKURA_TAB_SHELL;
-		SakuraToolKind tool_kind = SAKURA_TOOL_NONE;
-		if (g_strcmp0(kind, "codex") == 0 &&
-		    codex_session_id != NULL && codex_session_id[0] != '\0')
-			tab_kind = SAKURA_TAB_CODEX;
-		else if (g_strcmp0(kind, "gitui") == 0 || g_strcmp0(kind, "tool") == 0) {
-			tool_kind = g_strcmp0(kind, "gitui") == 0
-			          ? SAKURA_TOOL_GITUI : sakura_tool_from_id(tool_id);
-			if (sakura_tool_is_available(tool_kind))
-				tab_kind = SAKURA_TAB_TOOL;
-			else
-				tool_kind = SAKURA_TOOL_NONE;
-		}
-		title_set = title_set && title != NULL && title[0] != '\0';
-
-		if (cwd != NULL && (cwd[0] == '\0' || !g_file_test(cwd, G_FILE_TEST_IS_DIR))) {
-			g_free(cwd);
-			cwd = NULL;
-		}
-		sakura_add_tab_with_options(cwd, parent, title_set ? title : NULL, title_set,
-		                            tab_kind, tool_kind,
-		                            tab_kind == SAKURA_TAB_CODEX ? codex_session_id : NULL,
-		                            tab_kind == SAKURA_TAB_CODEX ? codex_session_name : NULL,
-		                            tab_kind == SAKURA_TAB_TOOL ? tool_target : NULL,
-		                            sakura_terminal_id_is_valid(terminal_id) ? terminal_id : NULL);
-		if (selected_terminal == (gint)i)
-			selected_terminal = restored;
-		restored++;
-
-		g_free(section);
-		g_free(parent_id);
-		g_free(cwd);
-		g_free(title);
-		g_free(terminal_id);
-		g_free(kind);
-		g_free(codex_session_id);
-		g_free(codex_session_name);
-		g_free(tool_id);
-		g_free(tool_target);
-	}
-
-	if (restored > 0) {
-		gint selected_page = sakura_find_tab_by_terminal_id(selected_terminal_id);
-		struct sakura_tab *selected_tab = NULL;
-		if (selected_page < 0 && selected_terminal >= 0 && selected_terminal < restored)
-			selected_page = selected_terminal;
-		if (selected_page >= 0)
-			selected_tab = sakura_get_sktab(sakura, selected_page);
-		if (selected_tab != NULL && sakura_tab_is_in_active_scope(selected_tab))
-			sakura_select_tab(selected_tab, FALSE);
-		else
-			sakura_select_scope_default();
-	}
-	g_free(selected_terminal_id);
-	if (restored == 0)
-		sakura_tab_bar_refresh();
-	return restored > 0;
-}
-
-
-static gboolean
-sakura_codex_status_from_state (const gchar *state, SakuraTabStatus *status,
-                                gboolean *attention)
-{
-	if (g_strcmp0(state, "idle") == 0) {
-		*status = SAKURA_TAB_STATUS_IDLE;
-		*attention = FALSE;
-	} else if (g_strcmp0(state, "running") == 0) {
-		*status = SAKURA_TAB_STATUS_RUNNING;
-		*attention = FALSE;
-	} else if (g_strcmp0(state, "needs-approval") == 0) {
-		*status = SAKURA_TAB_STATUS_NEEDS_APPROVAL;
-		*attention = TRUE;
-	} else if (g_strcmp0(state, "ready") == 0) {
-		*status = SAKURA_TAB_STATUS_READY;
-		*attention = TRUE;
-	} else if (g_strcmp0(state, "interrupted") == 0 ||
-	           g_strcmp0(state, "cancelled") == 0 ||
-	           g_strcmp0(state, "canceled") == 0) {
-		*status = SAKURA_TAB_STATUS_INTERRUPTED;
-		*attention = FALSE;
-	} else if (g_strcmp0(state, "error") == 0) {
-		*status = SAKURA_TAB_STATUS_ERROR;
-		*attention = TRUE;
-	} else {
-		return FALSE;
-	}
-
-	return TRUE;
-}
-
-
-static gboolean
-sakura_codex_tracking_poll_cb (gpointer data)
-{
-	GDir *dir;
-	const gchar *filename;
-	GError *error = NULL;
-	gboolean changed = FALSE;
-
-	if (sakura.codex_tracking_dir == NULL)
-		return G_SOURCE_CONTINUE;
-
-	dir = g_dir_open(sakura.codex_tracking_dir, 0, NULL);
-	if (dir == NULL)
-		return G_SOURCE_CONTINUE;
-
-	while ((filename = g_dir_read_name(dir)) != NULL) {
-		gchar *path, *contents, *session_id = NULL, *state = NULL;
-		GKeyFile *tracking;
-		gsize length;
-		gint page, pages;
-		struct sakura_tab *matched_tab = NULL;
-		SakuraTabStatus status;
-		gboolean attention;
-
-		if (filename[0] == '.')
-			continue;
-
-		path = g_build_filename(sakura.codex_tracking_dir, filename, NULL);
-		contents = NULL;
-		if (!g_file_get_contents(path, &contents, &length, &error)) {
-			if (error != NULL)
-				g_clear_error(&error);
-			g_free(path);
-			continue;
-		}
-		g_strstrip(contents);
-
-		if (contents[0] == '\0') {
-			g_free(contents);
-			g_free(path);
-			continue;
-		}
-
-		/* New hook versions write a small key file so the same transport can
-		 * carry both session discovery and progress state. Accept the old
-		 * session-ID-only format as well. */
-		tracking = g_key_file_new();
-		if (g_key_file_load_from_data(tracking, contents, length, G_KEY_FILE_NONE, NULL)) {
-			session_id = g_key_file_get_string(tracking, "tracking", "session_id", NULL);
-			state = g_key_file_get_string(tracking, "tracking", "state", NULL);
-		} else {
-			session_id = g_strdup(contents);
-		}
-		g_key_file_free(tracking);
-
-		if (session_id == NULL || session_id[0] == '\0') {
-			g_free(session_id);
-			g_free(state);
-			g_free(contents);
-			g_free(path);
-			continue;
-		}
-
-		pages = gtk_notebook_get_n_pages(GTK_NOTEBOOK(sakura.notebook));
-		for (page = 0; page < pages; page++) {
-			struct sakura_tab *sk_tab = sakura_get_sktab(sakura, page);
-
-			if (sk_tab->codex_tracking_token == NULL ||
-			    g_strcmp0(sk_tab->codex_tracking_token, filename) != 0)
-				continue;
-
-			if (sk_tab->kind != SAKURA_TAB_CODEX) {
-				sk_tab->kind = SAKURA_TAB_CODEX;
-				sakura_sidebar_update_tab(sk_tab);
-				changed = TRUE;
-			}
-			if (g_strcmp0(sk_tab->codex_session_id, session_id) != 0) {
-				g_free(sk_tab->codex_session_id);
-				sk_tab->codex_session_id = g_strdup(session_id);
-				changed = TRUE;
-			}
-			if (state != NULL && sakura_codex_status_from_state(state, &status, &attention)) {
-				/* A Stop hook normally reports a completed turn as ready. If the
-				 * user sent Ctrl-C, preserve the more useful interrupted state. */
-				if (status == SAKURA_TAB_STATUS_RUNNING) {
-					sk_tab->codex_interrupt_requested = FALSE;
-				} else if (status == SAKURA_TAB_STATUS_READY && sk_tab->codex_interrupt_requested) {
-					status = SAKURA_TAB_STATUS_INTERRUPTED;
-					attention = FALSE;
-					sk_tab->codex_interrupt_requested = FALSE;
-				}
-				sakura_tab_set_status(sk_tab, status, attention);
-			}
-			else if (state == NULL && sk_tab->status == SAKURA_TAB_STATUS_NONE)
-				sakura_tab_set_status(sk_tab, SAKURA_TAB_STATUS_IDLE, FALSE);
-			matched_tab = sk_tab;
-			g_remove(path);
-			break;
-		}
-		if (matched_tab != NULL)
-			sakura_codex_sync_name(matched_tab);
-
-		g_free(contents);
-		g_free(session_id);
-		g_free(state);
-		g_free(path);
-	}
-	g_dir_close(dir);
-
-	if (changed)
-		sakura_session_mark_dirty();
-
-	return G_SOURCE_CONTINUE;
-}
-
-
-static gboolean
-sakura_cwd_tracking_poll_cb (gpointer data)
-{
-	gint page, pages;
-
-	if (sakura.session_shutting_down) {
-		sakura.cwd_tracking_source_id = 0;
-		return G_SOURCE_REMOVE;
-	}
-	if (sakura.notebook == NULL)
-		return G_SOURCE_CONTINUE;
-
-	pages = gtk_notebook_get_n_pages(GTK_NOTEBOOK(sakura.notebook));
-	for (page = 0; page < pages; page++) {
-		struct sakura_tab *sk_tab = sakura_get_sktab(sakura, page);
-
-		if (sakura_update_tab_cwd(sk_tab))
-			sakura_sidebar_update_tab(sk_tab);
-	}
-
-	return G_SOURCE_CONTINUE;
-}
-
-
-static void
-sakura_sidebar_model_reordered_cb (GtkTreeModel *model, GtkTreePath *path,
-                                   GtkTreeIter *iter, gint *new_order, void *data)
-{
-	sakura_sidebar_save_groups();
-	sakura_tab_bar_refresh();
-	sakura_session_mark_dirty();
-}
-
-
-static void
-sakura_sidebar_toggle_cb (GtkWidget *widget, void *data)
-{
-	sakura.sidebar_visible = gtk_check_menu_item_get_active(GTK_CHECK_MENU_ITEM(widget));
-	if (sakura.sidebar != NULL)
-		gtk_widget_set_visible(sakura.sidebar, sakura.sidebar_visible);
-	sakura_set_config_boolean("sidebar_visible", sakura.sidebar_visible);
-	sakura_session_mark_dirty();
-}
-
-
-static void
-sakura_sidebar_paned_position_cb (GObject *object, GParamSpec *pspec, void *data)
-{
-	if (sakura.sidebar_paned != NULL && sakura.sidebar_visible) {
-		sakura.sidebar_width = gtk_paned_get_position(GTK_PANED(sakura.sidebar_paned));
-		sakura_set_config_integer("sidebar_width", sakura.sidebar_width);
-	}
-	sakura_session_mark_dirty();
-}
-
-
-static void
-sakura_sidebar_init (void)
-{
-	GtkWidget *sidebar_box, *toolbar, *title, *tools_button, *open_here_button,
-	          *new_terminal, *new_group;
-	GtkWidget *tools_menu, *tool_item;
-	GtkWidget *tab_shell, *scope_label, *tab_scrolled, *tab_bar, *tab_new;
-	GtkWidget *empty_state, *empty_label, *empty_new;
-	GtkWidget *scrolled;
-	GtkCellRenderer *icon_renderer, *status_renderer, *spinner_renderer, *text_renderer;
-	GtkTreeViewColumn *column;
-	gchar **group_ids, **group_parents, **group_titles;
-	gsize n_ids = 0, n_parents = 0, n_titles = 0;
-	gsize i, n_groups;
-	gboolean session_has_groups;
-
-	sakura.sidebar_model = gtk_tree_store_new(SAKURA_SIDEBAR_N_COLUMNS,
-	                                         G_TYPE_STRING, G_TYPE_STRING, G_TYPE_STRING,
-	                                         G_TYPE_STRING, G_TYPE_STRING, G_TYPE_BOOLEAN,
-	                                         G_TYPE_BOOLEAN,
-	                                         G_TYPE_UINT,
-	                                         G_TYPE_STRING,
-	                                         G_TYPE_POINTER);
-	sakura.sidebar_tree = gtk_tree_view_new_with_model(GTK_TREE_MODEL(sakura.sidebar_model));
-	sakura.sidebar_selection = gtk_tree_view_get_selection(GTK_TREE_VIEW(sakura.sidebar_tree));
-	gtk_tree_selection_set_mode(sakura.sidebar_selection, GTK_SELECTION_SINGLE);
-	gtk_tree_view_set_headers_visible(GTK_TREE_VIEW(sakura.sidebar_tree), FALSE);
-	gtk_tree_view_set_enable_tree_lines(GTK_TREE_VIEW(sakura.sidebar_tree), TRUE);
-	gtk_tree_view_set_activate_on_single_click(GTK_TREE_VIEW(sakura.sidebar_tree), TRUE);
-	gtk_tree_view_set_reorderable(GTK_TREE_VIEW(sakura.sidebar_tree), TRUE);
-	gtk_tree_view_set_tooltip_column(GTK_TREE_VIEW(sakura.sidebar_tree), SAKURA_SIDEBAR_COLUMN_TOOLTIP);
-	gtk_widget_set_name(sakura.sidebar_tree, "terminal-sidebar");
-
-	icon_renderer = gtk_cell_renderer_pixbuf_new();
-	status_renderer = gtk_cell_renderer_text_new();
-	g_object_set(status_renderer, "xalign", 0.5, "yalign", 0.5,
-	             "xpad", 0, "ypad", 0, NULL);
-	gtk_cell_renderer_set_fixed_size(status_renderer, 16, 16);
-	spinner_renderer = gtk_cell_renderer_spinner_new();
-	g_object_set(spinner_renderer, "xalign", 0.5, "yalign", 0.5,
-	             "xpad", 0, "ypad", 0, NULL);
-	gtk_cell_renderer_set_fixed_size(spinner_renderer, 16, 16);
-	text_renderer = gtk_cell_renderer_text_new();
-	g_object_set(text_renderer, "ellipsize", PANGO_ELLIPSIZE_END, NULL);
-	column = gtk_tree_view_column_new();
-	gtk_tree_view_column_set_spacing(column, 6);
-	gtk_tree_view_column_pack_start(column, icon_renderer, FALSE);
-	gtk_tree_view_column_add_attribute(column, icon_renderer, "icon-name", SAKURA_SIDEBAR_COLUMN_ICON);
-	gtk_tree_view_column_pack_start(column, status_renderer, FALSE);
-	gtk_tree_view_column_add_attribute(column, status_renderer, "markup", SAKURA_SIDEBAR_COLUMN_STATUS_MARKUP);
-	gtk_tree_view_column_add_attribute(column, status_renderer, "visible",
-	                                  SAKURA_SIDEBAR_COLUMN_STATUS_MARKER_VISIBLE);
-	gtk_tree_view_column_pack_start(column, spinner_renderer, FALSE);
-	gtk_tree_view_column_add_attribute(column, spinner_renderer, "active", SAKURA_SIDEBAR_COLUMN_STATUS_ACTIVE);
-	gtk_tree_view_column_add_attribute(column, spinner_renderer, "visible", SAKURA_SIDEBAR_COLUMN_STATUS_ACTIVE);
-	gtk_tree_view_column_add_attribute(column, spinner_renderer, "pulse", SAKURA_SIDEBAR_COLUMN_STATUS_PULSE);
-	gtk_tree_view_column_pack_start(column, text_renderer, TRUE);
-	gtk_tree_view_column_add_attribute(column, text_renderer, "markup", SAKURA_SIDEBAR_COLUMN_MARKUP);
-	gtk_tree_view_append_column(GTK_TREE_VIEW(sakura.sidebar_tree), column);
-
-	scrolled = gtk_scrolled_window_new(NULL, NULL);
-	gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(scrolled), GTK_POLICY_NEVER, GTK_POLICY_AUTOMATIC);
-	gtk_container_add(GTK_CONTAINER(scrolled), sakura.sidebar_tree);
-
-	toolbar = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 2);
-	title = gtk_label_new(_("Workspace"));
-	sakura.sidebar_title = title;
-	gtk_label_set_xalign(GTK_LABEL(title), 0.0);
-	gtk_widget_set_margin_start(title, 6);
-	gtk_widget_set_margin_end(title, 6);
-	gtk_box_pack_start(GTK_BOX(toolbar), title, TRUE, TRUE, 0);
-	tools_button = gtk_menu_button_new();
-	gtk_button_set_image(GTK_BUTTON(tools_button),
-	                     gtk_image_new_from_icon_name("applications-system", GTK_ICON_SIZE_MENU));
-	gtk_button_set_relief(GTK_BUTTON(tools_button), GTK_RELIEF_NONE);
-	gtk_widget_set_tooltip_text(tools_button, _("Tools"));
-	tools_menu = gtk_menu_new();
-	tool_item = gtk_menu_item_new_with_label(_("GitUI"));
-	g_signal_connect(tool_item, "activate", G_CALLBACK(sakura_new_tool_cb),
-	                 GINT_TO_POINTER(SAKURA_TOOL_GITUI));
-	gtk_menu_shell_append(GTK_MENU_SHELL(tools_menu), tool_item);
-	tool_item = gtk_menu_item_new_with_label(_("Git Cola"));
-	g_signal_connect(tool_item, "activate", G_CALLBACK(sakura_new_tool_cb),
-	                 GINT_TO_POINTER(SAKURA_TOOL_GIT_COLA));
-	gtk_menu_shell_append(GTK_MENU_SHELL(tools_menu), tool_item);
-	tool_item = gtk_menu_item_new_with_label(_("GitHub Dashboard"));
-	g_signal_connect(tool_item, "activate", G_CALLBACK(sakura_new_tool_cb),
-	                 GINT_TO_POINTER(SAKURA_TOOL_GH_DASH));
-	gtk_menu_shell_append(GTK_MENU_SHELL(tools_menu), tool_item);
-	tool_item = gtk_menu_item_new_with_label(_("Open pull request..."));
-	g_signal_connect(tool_item, "activate", G_CALLBACK(sakura_open_pr_cb), NULL);
-	gtk_menu_shell_append(GTK_MENU_SHELL(tools_menu), tool_item);
-	gtk_menu_button_set_popup(GTK_MENU_BUTTON(tools_button), tools_menu);
-	gtk_box_pack_start(GTK_BOX(toolbar), tools_button, FALSE, FALSE, 0);
-	open_here_button = gtk_menu_button_new();
-	gtk_button_set_image(GTK_BUTTON(open_here_button),
-	                     gtk_image_new_from_icon_name("folder-open", GTK_ICON_SIZE_MENU));
-	gtk_button_set_relief(GTK_BUTTON(open_here_button), GTK_RELIEF_NONE);
-	gtk_widget_set_tooltip_text(open_here_button, _("Open Here"));
-	gtk_menu_button_set_popup(GTK_MENU_BUTTON(open_here_button), sakura_open_here_menu_new());
-	gtk_box_pack_start(GTK_BOX(toolbar), open_here_button, FALSE, FALSE, 0);
-	new_terminal = gtk_button_new_from_icon_name("utilities-terminal", GTK_ICON_SIZE_MENU);
-	gtk_button_set_relief(GTK_BUTTON(new_terminal), GTK_RELIEF_NONE);
-	gtk_widget_set_tooltip_text(new_terminal, _("New terminal"));
-	gtk_box_pack_start(GTK_BOX(toolbar), new_terminal, FALSE, FALSE, 0);
-	new_group = gtk_button_new_from_icon_name("folder-new", GTK_ICON_SIZE_MENU);
-	gtk_button_set_relief(GTK_BUTTON(new_group), GTK_RELIEF_NONE);
-	gtk_widget_set_tooltip_text(new_group, _("New group"));
-	gtk_box_pack_start(GTK_BOX(toolbar), new_group, FALSE, FALSE, 0);
-
-	sidebar_box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
-	gtk_box_pack_start(GTK_BOX(sidebar_box), toolbar, FALSE, FALSE, 0);
-	gtk_box_pack_start(GTK_BOX(sidebar_box), scrolled, TRUE, TRUE, 0);
-	sakura.sidebar = sidebar_box;
-
-	sakura.sidebar_root = g_new0(struct sakura_sidebar_node, 1);
-	sakura.sidebar_root->type = SAKURA_SIDEBAR_GROUP;
-	sakura.sidebar_root->id = g_strdup("root");
-	sakura.sidebar_root->title = g_strdup(_("All terminals"));
-	sakura.sidebar_next_group_id = 1;
-	sakura.sidebar_groups = g_list_append(sakura.sidebar_groups, sakura.sidebar_root);
-	sakura_sidebar_insert_node(sakura.sidebar_root);
-
-	session_has_groups = !option_new_session && !option_new_window &&
-		sakura.session_cfg != NULL &&
-		sakura_session_version_supported() &&
-		g_key_file_has_key(sakura.session_cfg, "Session", "group_count", NULL);
-	if (session_has_groups) {
-		n_groups = g_key_file_get_integer(sakura.session_cfg, "Session", "group_count", NULL);
-		group_ids = g_new0(gchar *, n_groups + 1);
-		group_parents = g_new0(gchar *, n_groups + 1);
-		group_titles = g_new0(gchar *, n_groups + 1);
-		for (i = 0; i < n_groups; i++) {
-			gchar *section = g_strdup_printf("Group%u", (guint)i);
-			group_ids[i] = g_key_file_get_string(sakura.session_cfg, section, "id", NULL);
-			group_parents[i] = g_key_file_get_string(sakura.session_cfg, section, "parent", NULL);
-			group_titles[i] = g_key_file_get_string(sakura.session_cfg, section, "title", NULL);
-			g_free(section);
-		}
-	} else {
-		group_ids = g_key_file_get_string_list(sakura.cfg, cfg_group, "sidebar_group_ids", &n_ids, NULL);
-		group_parents = g_key_file_get_string_list(sakura.cfg, cfg_group, "sidebar_group_parents", &n_parents, NULL);
-		group_titles = g_key_file_get_string_list(sakura.cfg, cfg_group, "sidebar_group_titles", &n_titles, NULL);
-		n_groups = MIN(n_ids, MIN(n_parents, n_titles));
-	}
-	for (i = 0; i < n_groups; i++) {
-		struct sakura_sidebar_node *node, *parent;
-		gchar *end = NULL;
-		guint id_number;
-
-		parent = sakura_sidebar_find_group_by_id(group_parents[i]);
-		if (parent == NULL)
-			parent = sakura.sidebar_root;
-		node = g_new0(struct sakura_sidebar_node, 1);
-		node->type = SAKURA_SIDEBAR_GROUP;
-		node->id = g_strdup(group_ids[i]);
-		node->title = g_strdup(group_titles[i]);
-		node->parent = parent;
-		sakura.sidebar_groups = g_list_append(sakura.sidebar_groups, node);
-		sakura_sidebar_insert_node(node);
-
-		if (g_str_has_prefix(node->id, "group-")) {
-			id_number = (guint)g_ascii_strtoull(node->id + strlen("group-"), &end, 10);
-			if (end != node->id + strlen("group-") && id_number >= sakura.sidebar_next_group_id)
-				sakura.sidebar_next_group_id = id_number + 1;
-		}
-	}
-	g_strfreev(group_ids);
-	g_strfreev(group_parents);
-	g_strfreev(group_titles);
-
-	gtk_tree_view_expand_all(GTK_TREE_VIEW(sakura.sidebar_tree));
-
-	/* Keep the notebook as the live terminal host, but expose a scoped tab strip
-	 * above it. This lets group filtering change navigation without reparenting
-	 * or restarting any terminal process. */
-	tab_shell = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 4);
-	gtk_widget_set_name(tab_shell, "sakura-tab-bar");
-	scope_label = gtk_label_new("");
-	gtk_label_set_xalign(GTK_LABEL(scope_label), 0.0);
-	gtk_widget_set_margin_start(scope_label, 6);
-	gtk_widget_set_margin_end(scope_label, 4);
-	gtk_box_pack_start(GTK_BOX(tab_shell), scope_label, FALSE, FALSE, 0);
-	tab_scrolled = gtk_scrolled_window_new(NULL, NULL);
-	gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(tab_scrolled),
-	                               GTK_POLICY_AUTOMATIC, GTK_POLICY_NEVER);
-	gtk_scrolled_window_set_shadow_type(GTK_SCROLLED_WINDOW(tab_scrolled), GTK_SHADOW_NONE);
-	tab_bar = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 2);
-	gtk_container_add(GTK_CONTAINER(tab_scrolled), tab_bar);
-	gtk_box_pack_start(GTK_BOX(tab_shell), tab_scrolled, TRUE, TRUE, 0);
-	tab_new = gtk_button_new_from_icon_name("utilities-terminal", GTK_ICON_SIZE_MENU);
-	gtk_button_set_relief(GTK_BUTTON(tab_new), GTK_RELIEF_NONE);
-	gtk_widget_set_tooltip_text(tab_new, _("New terminal"));
-	gtk_box_pack_start(GTK_BOX(tab_shell), tab_new, FALSE, FALSE, 0);
-
-	empty_state = gtk_box_new(GTK_ORIENTATION_VERTICAL, 8);
-	gtk_widget_set_halign(empty_state, GTK_ALIGN_CENTER);
-	gtk_widget_set_valign(empty_state, GTK_ALIGN_CENTER);
-	empty_label = gtk_label_new(_("No terminals in this group"));
-	empty_new = gtk_button_new_with_label(_("New terminal"));
-	gtk_box_pack_start(GTK_BOX(empty_state), empty_label, FALSE, FALSE, 0);
-	gtk_box_pack_start(GTK_BOX(empty_state), empty_new, FALSE, FALSE, 0);
-
-	sakura.content_box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
-	sakura.tab_bar_shell = tab_shell;
-	sakura.tab_bar_scope_label = scope_label;
-	sakura.tab_bar_scrolled = tab_scrolled;
-	sakura.tab_bar = tab_bar;
-	sakura.tab_bar_new_button = tab_new;
-	sakura.tab_bar_empty = empty_state;
-	sakura.active_group_scope = sakura.sidebar_root;
-	gtk_box_pack_start(GTK_BOX(sakura.content_box), tab_shell, FALSE, FALSE, 0);
-	gtk_box_pack_start(GTK_BOX(sakura.content_box), sakura.notebook, TRUE, TRUE, 0);
-	gtk_box_pack_start(GTK_BOX(sakura.content_box), empty_state, TRUE, TRUE, 0);
-	gtk_widget_hide(empty_state);
-	gtk_notebook_set_show_tabs(GTK_NOTEBOOK(sakura.notebook), FALSE);
-
-	if (!option_new_session && !option_new_window && sakura.session_cfg != NULL &&
-	    sakura_session_version_supported() &&
-	    g_key_file_has_key(sakura.session_cfg, "Session", "active_group_id", NULL)) {
-		gchar *active_group_id = g_key_file_get_string(sakura.session_cfg, "Session",
-		                                                "active_group_id", NULL);
-		struct sakura_sidebar_node *saved_scope = sakura_sidebar_find_group_by_id(active_group_id);
-		if (saved_scope != NULL)
-			sakura.active_group_scope = saved_scope;
-		g_free(active_group_id);
-	}
-
-	g_signal_connect(new_terminal, "clicked", G_CALLBACK(sakura_new_tab_cb), NULL);
-	g_signal_connect(new_group, "clicked", G_CALLBACK(sakura_sidebar_new_group_cb), NULL);
-	g_signal_connect(tab_new, "clicked", G_CALLBACK(sakura_new_tab_cb), NULL);
-	g_signal_connect(empty_new, "clicked", G_CALLBACK(sakura_new_tab_cb), NULL);
-	g_signal_connect(sakura.sidebar_selection, "changed",
-	                 G_CALLBACK(sakura_sidebar_selection_changed_cb), NULL);
-	g_signal_connect(sakura.sidebar_model, "rows-reordered",
-	                 G_CALLBACK(sakura_sidebar_model_reordered_cb), NULL);
-	g_signal_connect(sakura.sidebar_tree, "button-press-event",
-	                 G_CALLBACK(sakura_sidebar_button_press_cb), NULL);
-	gtk_widget_add_events(sakura.sidebar, GDK_BUTTON_PRESS_MASK);
-	g_signal_connect(sakura.sidebar, "button-press-event",
-	                 G_CALLBACK(sakura_sidebar_button_press_cb), NULL);
-
-	sakura.sidebar_paned = gtk_paned_new(GTK_ORIENTATION_HORIZONTAL);
-	gtk_paned_pack1(GTK_PANED(sakura.sidebar_paned), sakura.sidebar, FALSE, FALSE);
-	gtk_paned_pack2(GTK_PANED(sakura.sidebar_paned), sakura.content_box, TRUE, FALSE);
-	gtk_paned_set_position(GTK_PANED(sakura.sidebar_paned), sakura.sidebar_width);
-	g_signal_connect(sakura.sidebar_paned, "notify::position",
-	                 G_CALLBACK(sakura_sidebar_paned_position_cb), NULL);
-	gtk_widget_show_all(sakura.sidebar_paned);
-	if (!sakura.sidebar_visible)
-		gtk_widget_hide(sakura.sidebar);
-	sakura_tab_bar_refresh();
-	sakura.sidebar_spinner_source_id = g_timeout_add(100,
-	                                                 sakura_sidebar_spinner_pulse_cb,
-	                                                 NULL);
-}
-
-
-static void
-sakura_set_window_title (const gchar *title)
-{
-	gtk_window_set_title(GTK_WINDOW(sakura.main_window), title);
-	if (sakura.header_bar != NULL) {
-		gtk_header_bar_set_title(GTK_HEADER_BAR(sakura.header_bar), title);
-	}
-}
-
-
-/* Callback for clicking in the tabs close buttons */
-static void
-sakura_closebutton_clicked_cb (GtkWidget *widget, void *data)
-{
-	GtkWidget *hbox = (GtkWidget *)data;
-	gint page;
-
-	page = gtk_notebook_page_num(GTK_NOTEBOOK(sakura.notebook), hbox);
-
-	sakura_close_tab(page);
-}
-
-
-/* Callback for clicking in the tabs labels */
-static gboolean
-sakura_label_clicked_cb (GtkWidget *widget, GdkEventButton *button_event, void *data)
-{
-	GtkWidget *hbox = (GtkWidget *)data;
-	struct sakura_tab *sk_tab;
-	gint page;
-
-	page = gtk_notebook_page_num(GTK_NOTEBOOK(sakura.notebook), hbox);
-	sk_tab = sakura_get_sktab(sakura, page);
-
-	/* Not interested in non button press events */
-	if (button_event->type != GDK_BUTTON_PRESS)
-		return FALSE;
-
-	/* Left button click. We HAVE to propagate the event, or things like tab moving won't work */
-	if (button_event->button == 1) {
-		gtk_widget_grab_focus(sk_tab->vte);
-		return FALSE;
-	}
-
-	/* Ignore right click and propagate the event */
-	if (button_event->button == 3)
-		return FALSE;
-
-	/* The middle button was clicked, so close the tab */
-	sakura_close_tab(page);
-
-	return TRUE;
-}
-
-
-/*****************/
-/* VTE callbacks */
-/*****************/
-
-
-static void
-sakura_set_text_selection_mode (struct sakura_tab *sk_tab, gboolean enabled)
-{
-	if (sk_tab == NULL || sk_tab->vte == NULL ||
-	    sk_tab->text_selection_mode == enabled)
-		return;
-
-	sk_tab->text_selection_mode = enabled;
-	/* VTE normally forwards mouse events to applications which enable mouse
-	 * reporting. During selection mode, keep the child alive but let VTE own
-	 * the pointer events so drag selection works in interactive TUIs. */
-	vte_terminal_set_input_enabled(VTE_TERMINAL(sk_tab->vte), !enabled);
-	if (enabled)
-		gtk_widget_grab_focus(sk_tab->vte);
-}
-
-
-static gboolean
-sakura_term_keypress_cb (GtkWidget *widget, GdkEventKey *event, gpointer data)
-{
-	struct sakura_tab *sk_tab = data;
-
-	/* Ctrl-C is the conventional terminal interrupt. Mark an active Codex
-	 * turn as interrupted immediately; the next hook event can replace this
-	 * optimistic state with the authoritative state from Codex. */
-	if (sk_tab != NULL && sk_tab->kind == SAKURA_TAB_CODEX &&
-	    sk_tab->status == SAKURA_TAB_STATUS_RUNNING &&
-	    event->keyval == GDK_KEY_c &&
-	    (event->state & (GDK_CONTROL_MASK | GDK_SHIFT_MASK)) == GDK_CONTROL_MASK) {
-		sk_tab->codex_interrupt_requested = TRUE;
-		sakura_tab_set_status(sk_tab, SAKURA_TAB_STATUS_INTERRUPTED, FALSE);
-	}
-
-	if (sk_tab != NULL && sk_tab->text_selection_mode &&
-	    event->keyval == GDK_KEY_Escape) {
-		sakura_set_text_selection_mode(sk_tab, FALSE);
-		return TRUE;
-	}
-	return FALSE;
-}
-
-
-/* Callback for button release on the vte terminal. Used for copy-on-selection to clipboard */
-static gboolean
-sakura_term_buttonreleased_cb (GtkWidget *widget, GdkEventButton *button_event, gpointer user_data)
-{
-
-	if (button_event->type != GDK_BUTTON_RELEASE)
-		return FALSE;
-
-	if (sakura.copy_on_select)
-		if (button_event->button == 1)
-			sakura_copy();
-
-	return FALSE;
-}
-
-
-static gboolean
-sakura_term_buttonpressed_cb (GtkWidget *widget, GdkEventButton *button_event, gpointer user_data)
-{
-	struct sakura_tab *sk_tab;
-	gint page, tag;
-
-	if (button_event->type != GDK_BUTTON_PRESS)
-		return FALSE;
-
-	/* Use the terminal which received the event.  The notebook's current page
-	 * can still refer to the old tab while a click is switching tabs. */
-	page = sakura_find_tab(VTE_TERMINAL(widget));
-	if (page < 0)
-		return FALSE;
-
-	sk_tab = sakura_get_sktab(sakura, page);
-	if (!sk_tab)
-		return FALSE;
-
-	/* Find out if cursor it's over a matched expression...*/
-	sakura.current_match = vte_terminal_match_check_event(VTE_TERMINAL(sk_tab->vte), (GdkEvent *) button_event, &tag);
-
-	/* Left button with Ctrl or the configured accelerator: open the URL if any */
-	if (button_event->button == 1 &&
-	    (((button_event->state & GDK_CONTROL_MASK) == GDK_CONTROL_MASK) ||
-	     ((button_event->state & sakura.open_url_accelerator) == sakura.open_url_accelerator)) &&
-	    sakura.current_match) {
-
-		sakura_open_url_cb(NULL, NULL);
-
-		return TRUE;
-	}
-
-	/* Paste when paste button is pressed */
-	if (sakura.copy_on_select) {
-		if (button_event->button == sakura.paste_button) {
-			sakura_paste_primary(); /* This is the expected X11 behaviour, to copy the PRIMARY clipboard with the middle click. 
-						   TODO: Maybe add an option to use the secondary one? */
-
-			/* Do not propagate. vte has his own copy-on-select and we'll end with duplicates pastes */
-			return TRUE;
-		}
-	}
-
-	/* Show the popup menu when menu button is pressed */
-	if (button_event->button == sakura.menu_button) {
-		GtkMenu *menu;
-
-		menu = GTK_MENU (user_data);
-		if (sakura.item_select_text != NULL) {
-			gtk_check_menu_item_set_active(
-				GTK_CHECK_MENU_ITEM(sakura.item_select_text),
-				sk_tab->text_selection_mode);
-			gtk_widget_set_sensitive(sakura.item_select_text, TRUE);
-		}
-
-		if (sakura.current_match) {
-			/* Show the extra options in the menu */
-
-			char *matches;
-			/* Is it a mail address? */
-			if (vte_terminal_event_check_regex_simple(VTE_TERMINAL(sk_tab->vte), (GdkEvent *) button_event,
-								  &sakura.mail_vteregexp, 1, 0, &matches)) {
-				gtk_widget_show(sakura.item_open_mail);
-				gtk_widget_hide(sakura.item_open_link);
-			} else {
-				gtk_widget_show(sakura.item_open_link);
-				gtk_widget_hide(sakura.item_open_mail);
-			}
-			gtk_widget_show(sakura.item_copy_link);
-			gtk_widget_show(sakura.open_link_separator);
-
-			g_free(matches);
-		} else {
-			/* Hide all the options */
-			gtk_widget_hide(sakura.item_open_mail);
-			gtk_widget_hide(sakura.item_open_link);
-			gtk_widget_hide(sakura.item_copy_link);
-			gtk_widget_hide(sakura.open_link_separator);
-		}
-
-		gtk_menu_popup_at_pointer(menu, (GdkEvent *) button_event);
-
-		return TRUE;
-	}
-
-	return FALSE;
-}
-
-
-static void
-sakura_beep_cb (GtkWidget *widget, void *data)
-{
-	gint page = sakura_find_tab(VTE_TERMINAL(widget));
-	struct sakura_tab *sk_tab = NULL;
-	if (page >= 0)
-		sk_tab = sakura_get_sktab(sakura, page);
-
-	/* A bell is the generic-terminal fallback for programs that do not expose
-	 * semantic progress events. */
-	if (sk_tab != NULL)
-		sakura_tab_set_status(sk_tab, SAKURA_TAB_STATUS_READY, TRUE);
-
-	/* Remove the urgency hint. This is necessary to signal the window manager  */
-	/* that a new urgent event happened when the urgent hint is set after this. */
-	/* TODO: this is already set in focus_in, so DO we really need it here? */
-	gtk_window_set_urgency_hint(GTK_WINDOW(sakura.main_window), FALSE);
-
-	/* If the window is active(focused), ignore and don't set the urgency hint */
-	if (!gtk_window_is_active(GTK_WINDOW(sakura.main_window))) {
-		if (sakura.urgent_bell) {
-			gtk_window_set_urgency_hint(GTK_WINDOW(sakura.main_window), TRUE);
-	}
-	}
-
-}
-
-
-static void
+void
 sakura_increase_font_cb (GtkWidget *widget, void *data)
 {
 	gint new_size;
@@ -4572,7 +850,7 @@ sakura_increase_font_cb (GtkWidget *widget, void *data)
 }
 
 
-static void
+void
 sakura_decrease_font_cb (GtkWidget *widget, void *data)
 {
 	gint new_size;
@@ -4587,71 +865,6 @@ sakura_decrease_font_cb (GtkWidget *widget, void *data)
 		sakura_set_size();
 		sakura_set_config_string("font", pango_font_description_to_string(sakura.font));
 	}
-}
-
-
-static void
-sakura_child_exited_cb (GtkWidget *widget, void *data)
-{
-	gint page, npages;
-	struct sakura_tab *sk_tab;
-
-	page = gtk_notebook_page_num(GTK_NOTEBOOK(sakura.notebook),
-				gtk_widget_get_parent(widget));
-	npages = gtk_notebook_get_n_pages(GTK_NOTEBOOK(sakura.notebook));
-	sk_tab = sakura_get_sktab(sakura, page);
-
-	/* Only write configuration to disk if it's the last tab */
-	if (npages==1) {
-		sakura_config_done();
-	}
-
-	if (option_hold==TRUE) {
-		SAY("hold option has been activated");
-		sakura_tab_set_status(sk_tab, SAKURA_TAB_STATUS_READY, TRUE);
-		return;
-	}
-
-	/* Child should be automatically reaped because we don't use G_SPAWN_DO_NOT_REAP_CHILD flag */
-	g_spawn_close_pid(sk_tab->pid);
-
-	sakura_del_tab(page);
-
-	npages = gtk_notebook_get_n_pages(GTK_NOTEBOOK(sakura.notebook));
-	if (npages == 0)
-		sakura_destroy();
-}
-
-
-static void
-sakura_eof_cb (GtkWidget *widget, void *data)
-{
-	SAY("Got EOF signal");
-}
-
-/* This handler is called when vte window title changes (i.e.: cwd changes),
- * and it is used to change window and notebook pages titles */
-static void
-sakura_title_changed_cb (GtkWidget *widget, void *data)
-{
-	struct sakura_tab *sk_tab;
-	const char *tabtitle;
-	gint modified_page;
-	VteTerminal *vte_term=(VteTerminal *)widget;
-
-	modified_page = sakura_find_tab(vte_term);
-	sk_tab = sakura_get_sktab(sakura, modified_page);
-
-	tabtitle = vte_terminal_get_window_title(VTE_TERMINAL(sk_tab->vte));
-	sakura_update_tab_metadata(sk_tab, tabtitle);
-
-	/* User set values overrides any other one */
-	if (!sk_tab->label_set_byuser && sk_tab->kind != SAKURA_TAB_TOOL) {
-		sakura_set_tab_label_text(tabtitle, modified_page);
-		if (!sakura.main_title && sk_tab == sakura.active_tab)
-			sakura_set_window_title(tabtitle);
-	}
-
 }
 
 
@@ -4672,7 +885,7 @@ sakura_delete_event_cb (GtkWidget *widget, void *data)
 		/* Check for each tab if there are running processes. Use tcgetpgrp to compare to the shell PGID */
 		for (i=0; i < npages; i++) {
 
-			sk_tab = sakura_get_sktab(sakura, i);
+			sk_tab = sakura_tab_at_page(i);
 			pty = vte_terminal_get_pty(VTE_TERMINAL(sk_tab->vte));
 			if (pty == NULL)
 				continue;
@@ -4738,77 +951,6 @@ sakura_font_dialog_cb (GtkWidget *widget, void *data)
 
 	gtk_widget_destroy(font_dialog);
 }
-
-
-static void
-sakura_set_name_dialog_cb (GtkWidget *widget, void *data)
-{
-	GtkWidget *input_dialog, *input_header;
-	GtkWidget *entry, *label;
-	GtkWidget *name_hbox; /* We need this for correct spacing */
-	gint response;
-	gint page;
-	struct sakura_tab *sk_tab;
-	const gchar *text;
-
-	sk_tab = data != NULL ? data : NULL;
-	page = sk_tab != NULL
-	     ? gtk_notebook_page_num(GTK_NOTEBOOK(sakura.notebook), sk_tab->hbox)
-	     : gtk_notebook_get_current_page(GTK_NOTEBOOK(sakura.notebook));
-	if (page < 0)
-		return;
-	if (sk_tab == NULL)
-		sk_tab = sakura_get_sktab(sakura, page);
-	if (sk_tab == NULL)
-		return;
-
-	input_dialog=gtk_dialog_new_with_buttons(_("Set tab name"),
-	                                         GTK_WINDOW(sakura.main_window),
-                                                 GTK_DIALOG_MODAL|GTK_DIALOG_USE_HEADER_BAR,
-	                                         _("_Cancel"), GTK_RESPONSE_CANCEL,
-	                                         _("_Apply"), GTK_RESPONSE_ACCEPT,
-	                                         NULL);
-
-	/* Configure the new gtk header bar*/
-	input_header = gtk_dialog_get_header_bar(GTK_DIALOG(input_dialog));
-	gtk_header_bar_set_show_close_button(GTK_HEADER_BAR(input_header), FALSE);
-
-	gtk_dialog_set_default_response(GTK_DIALOG(input_dialog), GTK_RESPONSE_ACCEPT);
-
-	/* Create dialog contents */
-	name_hbox=gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
-	entry=gtk_entry_new();
-	label=gtk_label_new(_("New text"));
-	/* The notebook tab label is a composite widget, so read the actual label
-	 * maintained by Sakura instead of asking GTK for plain tab-label text. */
-	text = gtk_label_get_text(GTK_LABEL(sk_tab->label));
-	if (text != NULL)
-		gtk_entry_set_text(GTK_ENTRY(entry), text);
-	gtk_entry_set_activates_default(GTK_ENTRY(entry), TRUE);
-	gtk_box_pack_start(GTK_BOX(name_hbox), label, TRUE, TRUE, 12);
-	gtk_box_pack_start(GTK_BOX(name_hbox), entry, TRUE, TRUE, 12);
-	gtk_box_pack_start(GTK_BOX(gtk_dialog_get_content_area(GTK_DIALOG(input_dialog))), name_hbox, FALSE, FALSE, 12);
-
-	/* Disable accept button until some text is entered */
-	g_signal_connect(G_OBJECT(entry), "changed", G_CALLBACK(sakura_setname_entry_changed_cb), input_dialog);
-	gtk_dialog_set_response_sensitive(GTK_DIALOG(input_dialog), GTK_RESPONSE_ACCEPT, FALSE);
-
-	gtk_widget_show_all(name_hbox);
-
-	response = gtk_dialog_run(GTK_DIALOG(input_dialog));
-
-	if (response == GTK_RESPONSE_ACCEPT) {
-		sakura_session_accept_changes();
-		sakura_set_tab_label_text(gtk_entry_get_text(GTK_ENTRY(entry)), page);
-		sakura_set_window_title(gtk_entry_get_text(GTK_ENTRY(entry)));
-		sk_tab->label_set_byuser=true; 
-		sakura_sidebar_update_tab(sk_tab);
-		sakura.main_title=NULL; /* Ignore the user-set window title if the user names the tab */
-	}
-
-	gtk_widget_destroy(input_dialog);
-}
-
 
 
 /* Callback for the color dialog signals. Used to UPDATE the contents of that dialog (passed as 'data') */
@@ -4889,7 +1031,7 @@ sakura_color_dialog_cb (GtkWidget *widget, void *data)
 
 
 	page = gtk_notebook_get_current_page(GTK_NOTEBOOK(sakura.notebook));
-	sk_tab = sakura_get_sktab(sakura, page);
+	sk_tab = sakura_tab_at_page(page);
 
 	color_dialog = gtk_dialog_new_with_buttons(_("Select colors"), GTK_WINDOW(sakura.main_window),
 	                                           GTK_DIALOG_MODAL|GTK_DIALOG_USE_HEADER_BAR,
@@ -5114,168 +1256,6 @@ sakura_set_title_dialog (GtkWidget *widget, void *data)
 
 
 static void
-sakura_copy_url_cb (GtkWidget *widget, void *data)
-{
-	GtkClipboard* clip;
-
-	clip = gtk_clipboard_get(GDK_SELECTION_CLIPBOARD);
-	gtk_clipboard_set_text(clip, sakura.current_match, -1 );
-	//clip = gtk_clipboard_get(GDK_SELECTION_PRIMARY);
-	//gtk_clipboard_set_text(clip, sakura.current_match, -1 );
-
-}
-
-
-static gboolean
-sakura_launch_uri (const gchar *uri)
-{
-	const gchar *browser;
-	GError *error = NULL;
-
-	if (!uri || !uri[0])
-		return FALSE;
-
-	/* BROWSER may be a command with arguments, not just a path. */
-	browser = g_getenv("BROWSER");
-	if (browser && browser[0]) {
-		gint argc = 0;
-		gchar **argv = NULL;
-
-		if (!g_shell_parse_argv(browser, &argc, &argv, &error)) {
-			sakura_error(_("Could not parse BROWSER: %s"), error->message);
-			g_clear_error(&error);
-			return FALSE;
-		}
-
-		argv = g_realloc(argv, sizeof(*argv) * (argc + 2));
-		argv[argc] = g_strdup(uri);
-		argv[argc + 1] = NULL;
-
-		if (!g_spawn_async(NULL, argv, NULL, G_SPAWN_SEARCH_PATH,
-		                   NULL, NULL, NULL, &error)) {
-			sakura_error(_("Could not open link with %s: %s"),
-			             argv[0], error->message);
-			g_clear_error(&error);
-			g_strfreev(argv);
-			return FALSE;
-		}
-
-		g_strfreev(argv);
-		return TRUE;
-	}
-
-	/* Let the desktop choose the user's default handler for the URI. */
-	if (!g_app_info_launch_default_for_uri(uri, NULL, &error)) {
-		sakura_error(_("Could not open link: %s"), error->message);
-		g_clear_error(&error);
-		return FALSE;
-	}
-
-	return TRUE;
-}
-
-#ifdef HAVE_WEBKITGTK
-static void
-sakura_browser_update_navigation (struct sakura_tab *sk_tab)
-{
-	WebKitWebView *view;
-
-	if (sk_tab == NULL || sk_tab->browser == NULL)
-		return;
-
-	view = WEBKIT_WEB_VIEW(sk_tab->browser);
-	gtk_widget_set_sensitive(sk_tab->browser_back,
-	                         webkit_web_view_can_go_back(view));
-	gtk_widget_set_sensitive(sk_tab->browser_forward,
-	                         webkit_web_view_can_go_forward(view));
-}
-
-
-static void
-sakura_browser_back_cb (GtkWidget *widget, void *data)
-{
-	struct sakura_tab *sk_tab = data;
-	WebKitWebView *view;
-
-	if (sk_tab == NULL || sk_tab->browser == NULL)
-		return;
-	view = WEBKIT_WEB_VIEW(sk_tab->browser);
-	if (webkit_web_view_can_go_back(view))
-		webkit_web_view_go_back(view);
-}
-
-
-static void
-sakura_browser_forward_cb (GtkWidget *widget, void *data)
-{
-	struct sakura_tab *sk_tab = data;
-	WebKitWebView *view;
-
-	if (sk_tab == NULL || sk_tab->browser == NULL)
-		return;
-	view = WEBKIT_WEB_VIEW(sk_tab->browser);
-	if (webkit_web_view_can_go_forward(view))
-		webkit_web_view_go_forward(view);
-}
-
-
-static void
-sakura_browser_reload_cb (GtkWidget *widget, void *data)
-{
-	struct sakura_tab *sk_tab = data;
-
-	if (sk_tab != NULL && sk_tab->browser != NULL)
-		webkit_web_view_reload(WEBKIT_WEB_VIEW(sk_tab->browser));
-}
-
-
-static void
-sakura_browser_external_cb (GtkWidget *widget, void *data)
-{
-	struct sakura_tab *sk_tab = data;
-	const gchar *uri;
-
-	if (sk_tab == NULL || sk_tab->browser == NULL)
-		return;
-	uri = webkit_web_view_get_uri(WEBKIT_WEB_VIEW(sk_tab->browser));
-	if (uri != NULL)
-		sakura_launch_uri(uri);
-}
-
-
-static void
-sakura_browser_navigation_changed_cb (GObject *object, GParamSpec *pspec, void *data)
-{
-	sakura_browser_update_navigation(data);
-}
-#endif
-
-
-static void
-sakura_open_url_cb (GtkWidget *widget, void *data)
-{
-	SAY("Opening %s", sakura.current_match);
-	sakura_launch_uri(sakura.current_match);
-}
-
-
-static void
-sakura_open_mail_cb (GtkWidget *widget, void *data)
-{
-	GError *error = NULL;
-	gchar *program = NULL;
-
-	if ( (program = g_find_program_in_path("xdg-email")) ) {
-		gchar * argv[] = { program, sakura.current_match, NULL };
-		if (!g_spawn_async(".", argv, NULL, G_SPAWN_SEARCH_PATH, NULL, NULL, NULL, &error)) {
-			sakura_error("Couldn't exec \"%s %s\": %s", program, sakura.current_match, error->message);
-		}
-		g_free(program);
-	}
-}
-
-
-static void
 sakura_show_tab_bar_cb (GtkWidget *widget, void *data)
 {
 	char *setting_string = (char *)data;
@@ -5380,7 +1360,7 @@ sakura_audible_bell_cb (GtkWidget *widget, void *data)
 	struct sakura_tab *sk_tab;
 
 	page = gtk_notebook_get_current_page(GTK_NOTEBOOK(sakura.notebook));
-	sk_tab = sakura_get_sktab(sakura, page);
+	sk_tab = sakura_tab_at_page(page);
 
 	if (gtk_check_menu_item_get_active(GTK_CHECK_MENU_ITEM(widget))) {
 		vte_terminal_set_audible_bell (VTE_TERMINAL(sk_tab->vte), TRUE);
@@ -5399,7 +1379,7 @@ sakura_blinking_cursor_cb (GtkWidget *widget, void *data)
 	struct sakura_tab *sk_tab;
 
 	page = gtk_notebook_get_current_page(GTK_NOTEBOOK(sakura.notebook));
-	sk_tab = sakura_get_sktab(sakura, page);
+	sk_tab = sakura_tab_at_page(page);
 
 	if (gtk_check_menu_item_get_active(GTK_CHECK_MENU_ITEM(widget))) {
 		vte_terminal_set_cursor_blink_mode (VTE_TERMINAL(sk_tab->vte), VTE_CURSOR_BLINK_ON);
@@ -5432,7 +1412,7 @@ sakura_set_cursor_cb (GtkWidget *widget, void *data)
 		}
 
 		for (i = (n_pages - 1); i >= 0; i--) {
-			sk_tab = sakura_get_sktab(sakura, i);
+			sk_tab = sakura_tab_at_page(i);
 			vte_terminal_set_cursor_shape(VTE_TERMINAL(sk_tab->vte), sakura.cursor_type);
 		}
 
@@ -5441,51 +1421,7 @@ sakura_set_cursor_cb (GtkWidget *widget, void *data)
 }
 
 
-static void
-sakura_setname_entry_changed_cb (GtkWidget *widget, void *data)
-{
-	GtkDialog *title_dialog=(GtkDialog *)data;
-
-	if (strcmp(gtk_entry_get_text(GTK_ENTRY(widget)), "")==0) {
-		gtk_dialog_set_response_sensitive(GTK_DIALOG(title_dialog), GTK_RESPONSE_ACCEPT, FALSE);
-	} else {
-		gtk_dialog_set_response_sensitive(GTK_DIALOG(title_dialog), GTK_RESPONSE_ACCEPT, TRUE);
-	}
-}
-
-
-/* Parameters are never used */
-static void
-sakura_copy_cb (GtkWidget *widget, void *data)
-{
-	sakura_copy();
-}
-
-
-/* Parameters are never used */
-static void
-sakura_paste_cb (GtkWidget *widget, void *data)
-{
-	sakura_paste();
-}
-
-
-static void
-sakura_select_text_cb (GtkWidget *widget, void *data)
-{
-	gint page;
-	struct sakura_tab *sk_tab;
-
-	page = gtk_notebook_get_current_page(GTK_NOTEBOOK(sakura.notebook));
-	if (page < 0)
-		return;
-	sk_tab = sakura_get_sktab(sakura, page);
-	sakura_set_text_selection_mode(sk_tab,
-		gtk_check_menu_item_get_active(GTK_CHECK_MENU_ITEM(widget)));
-}
-
-
-static void
+void
 sakura_new_tab_cb (GtkWidget *widget, void *data)
 {
 	sakura_session_accept_changes();
@@ -5493,727 +1429,7 @@ sakura_new_tab_cb (GtkWidget *widget, void *data)
 }
 
 
-static void
-sakura_new_codex_cb (GtkWidget *widget, void *data)
-{
-	sakura_session_accept_changes();
-	sakura_add_tab_with_options(NULL, NULL, NULL, FALSE, SAKURA_TAB_CODEX,
-	                            SAKURA_TOOL_NONE, NULL, NULL, NULL, NULL);
-}
-
-
-static gchar *
-sakura_current_tab_cwd (void)
-{
-	gint page;
-	struct sakura_tab *sk_tab;
-	gchar *cwd = NULL;
-
-	page = gtk_notebook_get_current_page(GTK_NOTEBOOK(sakura.notebook));
-	if (page >= 0) {
-		sk_tab = sakura_get_sktab(sakura, page);
-		cwd = sakura_get_term_cwd_osc7(sk_tab);
-		if (cwd == NULL && sk_tab->cwd != NULL)
-			cwd = g_strdup(sk_tab->cwd);
-		if (cwd == NULL)
-			cwd = sakura_get_term_cwd(sk_tab);
-	}
-	return cwd != NULL ? cwd : g_get_current_dir();
-}
-
-
-static void
-sakura_open_here_cb (GtkWidget *widget, void *data)
-{
-	SakuraOpenHereKind kind = GPOINTER_TO_INT(data);
-	const gchar *configured_editor;
-	const gchar *editor_candidates[] = {
-		"code", "codium", "zed", "subl", "gnome-text-editor",
-		"gedit", "xed", "pluma", "mousepad", "kate", NULL
-	};
-	gchar *cwd = NULL;
-	gchar **argv = NULL;
-	gchar *program = NULL;
-	GError *error = NULL;
-	gint argc = 0;
-	gboolean directory_argument = FALSE;
-	guint i;
-
-	cwd = sakura_current_tab_cwd();
-	if (cwd == NULL || !g_file_test(cwd, G_FILE_TEST_IS_DIR)) {
-		sakura_error(_("Could not determine the current directory."));
-		g_free(cwd);
-		return;
-	}
-
-	if (kind == SAKURA_OPEN_HERE_FILE_MANAGER) {
-		program = g_find_program_in_path("gio");
-		if (program != NULL) {
-			argv = g_new0(gchar *, 4);
-			argv[0] = program;
-			argv[1] = g_strdup("open");
-			argv[2] = g_strdup(cwd);
-		} else {
-			program = g_find_program_in_path("xdg-open");
-			if (program != NULL) {
-				argv = g_new0(gchar *, 3);
-				argv[0] = program;
-				argv[1] = g_strdup(cwd);
-			}
-		}
-		if (argv == NULL) {
-			sakura_error(_("Could not find a file manager opener (gio or xdg-open)."));
-			g_free(cwd);
-			return;
-		}
-	} else {
-		configured_editor = sakura.editor_command;
-		if (configured_editor == NULL || configured_editor[0] == '\0')
-			configured_editor = g_getenv("SAKURA_EDITOR");
-
-		if (configured_editor != NULL && configured_editor[0] != '\0') {
-			if (!g_shell_parse_argv(configured_editor, &argc, &argv, &error) ||
-			    argc == 0) {
-				sakura_error(_("Could not parse the configured editor command: %s"),
-				             error != NULL ? error->message : _("empty command"));
-				g_clear_error(&error);
-				g_strfreev(argv);
-				g_free(cwd);
-				return;
-			}
-			for (i = 0; i < (guint)argc; i++) {
-				if (g_strcmp0(argv[i], "{directory}") == 0) {
-					g_free(argv[i]);
-					argv[i] = g_strdup(cwd);
-					directory_argument = TRUE;
-				}
-			}
-			if (!directory_argument) {
-				argv = g_realloc(argv, sizeof(gchar *) * ((gsize)argc + 2));
-				argv[argc] = g_strdup(cwd);
-				argv[argc + 1] = NULL;
-			}
-		} else {
-			for (i = 0; editor_candidates[i] != NULL; i++) {
-				program = g_find_program_in_path(editor_candidates[i]);
-				if (program != NULL)
-					break;
-			}
-			if (program == NULL) {
-				sakura_error(_("No graphical editor was found. Set editor_command in Sakura's config or SAKURA_EDITOR."));
-				g_free(cwd);
-				return;
-			}
-			argv = g_new0(gchar *, 3);
-			argv[0] = program;
-			argv[1] = g_strdup(cwd);
-		}
-	}
-
-	if (!g_spawn_async(cwd, argv, NULL, G_SPAWN_SEARCH_PATH,
-	                   NULL, NULL, NULL, &error)) {
-		sakura_error(_("Could not open %s: %s"),
-		             kind == SAKURA_OPEN_HERE_FILE_MANAGER
-		             ? _("the file manager") : _("the editor"),
-		             error != NULL ? error->message : _("unknown error"));
-		g_clear_error(&error);
-	}
-
-	g_strfreev(argv);
-	g_free(cwd);
-}
-
-
-static GtkWidget *
-sakura_open_here_menu_new (void)
-{
-	GtkWidget *menu, *item;
-
-	menu = gtk_menu_new();
-	item = gtk_menu_item_new_with_label(_("File Manager"));
-	g_signal_connect(item, "activate", G_CALLBACK(sakura_open_here_cb),
-	                 GINT_TO_POINTER(SAKURA_OPEN_HERE_FILE_MANAGER));
-	gtk_menu_shell_append(GTK_MENU_SHELL(menu), item);
-	item = gtk_menu_item_new_with_label(_("Editor"));
-	g_signal_connect(item, "activate", G_CALLBACK(sakura_open_here_cb),
-	                 GINT_TO_POINTER(SAKURA_OPEN_HERE_EDITOR));
-	gtk_menu_shell_append(GTK_MENU_SHELL(menu), item);
-	return menu;
-}
-
-
-static void
-sakura_new_tool_cb (GtkWidget *widget, void *data)
-{
-	SakuraToolKind tool = GPOINTER_TO_INT(data);
-	gchar *cwd = NULL, *tool_cwd = NULL;
-	gchar *standard_output = NULL, *standard_error = NULL;
-	gchar *git_argv[6];
-	GError *error = NULL;
-	gint status = 0;
-	struct sakura_tab *existing;
-
-	if (tool == SAKURA_TOOL_NONE)
-		return;
-	if (!sakura_tool_is_available(tool)) {
-		if (tool == SAKURA_TOOL_GH_DASH)
-			sakura_error(_("GitHub Dashboard is not installed. Run: gh extension install dlvhdr/gh-dash"));
-		else if (tool == SAKURA_TOOL_GIT_COLA)
-			sakura_error(_("Git Cola is not installed. Install the git-cola package and try again."));
-		else
-			sakura_error(_("GitUI is not installed. Install it and try again."));
-		return;
-	}
-
-	cwd = sakura_current_tab_cwd();
-	tool_cwd = cwd;
-	if (sakura_tool_requires_git_repository(tool)) {
-		git_argv[0] = (gchar *)"git";
-		git_argv[1] = (gchar *)"-C";
-		git_argv[2] = cwd;
-		git_argv[3] = (gchar *)"rev-parse";
-		git_argv[4] = (gchar *)"--show-toplevel";
-		git_argv[5] = NULL;
-		if (!g_spawn_sync(NULL, git_argv, NULL, G_SPAWN_SEARCH_PATH,
-		                  NULL, NULL, &standard_output, &standard_error,
-		                  &status, &error) || status != 0) {
-			sakura_error(_("The current directory is not inside a Git repository."));
-			g_clear_error(&error);
-			g_free(standard_output);
-			g_free(standard_error);
-			g_free(cwd);
-			return;
-		}
-
-		if (standard_output == NULL) {
-			sakura_error(_("Could not determine the Git repository root."));
-			g_free(standard_error);
-			g_free(cwd);
-			return;
-		}
-		g_strstrip(standard_output);
-		if (standard_output[0] == '\0' ||
-		    !g_file_test(standard_output, G_FILE_TEST_IS_DIR)) {
-			sakura_error(_("Could not determine the Git repository root."));
-			g_free(standard_output);
-			g_free(standard_error);
-			g_free(cwd);
-			return;
-		}
-		tool_cwd = g_strdup(standard_output);
-	}
-
-	existing = sakura_find_tool_tab(tool, tool_cwd);
-	if (existing != NULL) {
-		sakura_select_tab(existing, TRUE);
-		sakura_tab_clear_attention(existing);
-		if (tool_cwd != cwd)
-			g_free(tool_cwd);
-		g_free(standard_output);
-		g_free(standard_error);
-		g_free(cwd);
-		return;
-	}
-
-	sakura_session_accept_changes();
-	sakura_add_tab_with_options(tool_cwd, NULL, NULL, FALSE,
-	                            SAKURA_TAB_TOOL, tool, NULL, NULL, NULL, NULL);
-
-	if (tool_cwd != cwd)
-		g_free(tool_cwd);
-	g_free(standard_output);
-	g_free(standard_error);
-	g_free(cwd);
-}
-
-
-static gboolean
-sakura_pull_request_url_is_valid (const gchar *url)
-{
-	const gchar *host_start, *host_end, *path, *pull, *number;
-	gsize host_length;
-
-	if (url == NULL || !g_str_has_prefix(url, "https://"))
-		return FALSE;
-	for (const gchar *cursor = url; *cursor != '\0'; cursor++) {
-		if (g_ascii_isspace(*cursor))
-			return FALSE;
-	}
-
-	host_start = url + strlen("https://");
-	host_end = strpbrk(host_start, "/?#");
-	if (host_end == NULL || host_end == host_start)
-		return FALSE;
-	host_length = host_end - host_start;
-	if (!((host_length == strlen("github.com") &&
-	       g_ascii_strncasecmp(host_start, "github.com", host_length) == 0) ||
-	      (host_length == strlen("www.github.com") &&
-	       g_ascii_strncasecmp(host_start, "www.github.com", host_length) == 0)))
-		return FALSE;
-
-	if (*host_end != '/')
-		return FALSE;
-	path = host_end;
-	pull = strstr(path, "/pull/");
-	if (pull == NULL || pull == path)
-		return FALSE;
-
-	number = pull + strlen("/pull/");
-	if (!g_ascii_isdigit(*number))
-		return FALSE;
-	while (g_ascii_isdigit(*number))
-		number++;
-
-	return *number == '\0' || *number == '/' || *number == '?' || *number == '#';
-}
-
-
-static void
-sakura_open_pr_cb (GtkWidget *widget, void *data)
-{
-	GtkWidget *dialog, *entry;
-	struct sakura_tab *existing;
-	gchar *url, *cwd;
-
-	dialog = gtk_dialog_new_with_buttons(
-		_("Open pull request"), GTK_WINDOW(sakura.main_window),
-		GTK_DIALOG_MODAL | GTK_DIALOG_USE_HEADER_BAR,
-		_("_Cancel"), GTK_RESPONSE_CANCEL,
-		_("_Open"), GTK_RESPONSE_ACCEPT,
-		NULL);
-	entry = gtk_entry_new();
-	gtk_entry_set_placeholder_text(GTK_ENTRY(entry),
-	                              _("https://github.com/owner/repo/pull/123"));
-	gtk_entry_set_activates_default(GTK_ENTRY(entry), TRUE);
-	gtk_box_pack_start(GTK_BOX(gtk_dialog_get_content_area(GTK_DIALOG(dialog))),
-	                   entry, FALSE, FALSE, 12);
-	gtk_dialog_set_default_response(GTK_DIALOG(dialog), GTK_RESPONSE_ACCEPT);
-	gtk_widget_show_all(gtk_dialog_get_content_area(GTK_DIALOG(dialog)));
-
-	if (gtk_dialog_run(GTK_DIALOG(dialog)) != GTK_RESPONSE_ACCEPT) {
-		gtk_widget_destroy(dialog);
-		return;
-	}
-
-	url = g_strdup(gtk_entry_get_text(GTK_ENTRY(entry)));
-	g_strstrip(url);
-	gtk_widget_destroy(dialog);
-
-	if (!sakura_pull_request_url_is_valid(url)) {
-		sakura_error(_("Enter a valid HTTPS GitHub pull request URL."));
-		g_free(url);
-		return;
-	}
-	if (!sakura_tool_is_available(SAKURA_TOOL_GH_PR)) {
-		sakura_error(_("GitHub CLI is not installed. Install gh and try again."));
-		g_free(url);
-		return;
-	}
-
-	existing = sakura_find_tool_target_tab(SAKURA_TOOL_GH_PR, url);
-	if (existing != NULL) {
-		sakura_select_tab(existing, TRUE);
-		sakura_tab_clear_attention(existing);
-		g_free(url);
-		return;
-	}
-
-	cwd = sakura_current_tab_cwd();
-	sakura_session_accept_changes();
-	sakura_add_tab_with_options(cwd, NULL, NULL, FALSE,
-	                            SAKURA_TAB_TOOL, SAKURA_TOOL_GH_PR,
-	                            NULL, NULL, url, NULL);
-	g_free(cwd);
-	g_free(url);
-}
-
-
-static void
-sakura_resume_codex_cb (GtkWidget *widget, void *data)
-{
-	GtkWidget *dialog, *entry;
-	const gchar *session;
-
-	dialog = gtk_dialog_new_with_buttons(_("Resume session"),
-	                                     GTK_WINDOW(sakura.main_window),
-	                                     GTK_DIALOG_MODAL | GTK_DIALOG_USE_HEADER_BAR,
-	                                     _("_Cancel"), GTK_RESPONSE_CANCEL,
-	                                     _("_Resume"), GTK_RESPONSE_ACCEPT,
-	                                     NULL);
-	entry = gtk_entry_new();
-	gtk_entry_set_placeholder_text(GTK_ENTRY(entry), _("Session ID or name"));
-	gtk_entry_set_activates_default(GTK_ENTRY(entry), TRUE);
-	gtk_box_pack_start(GTK_BOX(gtk_dialog_get_content_area(GTK_DIALOG(dialog))),
-	                   entry, FALSE, FALSE, 12);
-	gtk_dialog_set_default_response(GTK_DIALOG(dialog), GTK_RESPONSE_ACCEPT);
-	gtk_widget_show_all(gtk_dialog_get_content_area(GTK_DIALOG(dialog)));
-
-	if (gtk_dialog_run(GTK_DIALOG(dialog)) == GTK_RESPONSE_ACCEPT) {
-		session = gtk_entry_get_text(GTK_ENTRY(entry));
-		if (session[0] != '\0') {
-			sakura_session_accept_changes();
-			sakura_add_tab_with_options(NULL, NULL, NULL, FALSE,
-			                            SAKURA_TAB_CODEX, SAKURA_TOOL_NONE,
-			                            session, NULL, NULL, NULL);
-		}
-	}
-	gtk_widget_destroy(dialog);
-}
-
-
-static void
-sakura_attach_codex_cb (GtkWidget *widget, void *data)
-{
-	GtkWidget *dialog, *entry;
-	gint page;
-	struct sakura_tab *sk_tab;
-	gchar *session;
-
-	page = gtk_notebook_get_current_page(GTK_NOTEBOOK(sakura.notebook));
-	if (page < 0)
-		return;
-	sk_tab = sakura_get_sktab(sakura, page);
-
-	dialog = gtk_dialog_new_with_buttons(_("Attach Codex session"),
-	                                     GTK_WINDOW(sakura.main_window),
-	                                     GTK_DIALOG_MODAL | GTK_DIALOG_USE_HEADER_BAR,
-	                                     _("_Cancel"), GTK_RESPONSE_CANCEL,
-	                                     _("_Attach"), GTK_RESPONSE_ACCEPT,
-	                                     NULL);
-	entry = gtk_entry_new();
-	gtk_entry_set_placeholder_text(GTK_ENTRY(entry), _("Session ID or name"));
-	if (sk_tab->codex_session_id != NULL)
-		gtk_entry_set_text(GTK_ENTRY(entry), sk_tab->codex_session_id);
-	gtk_entry_set_activates_default(GTK_ENTRY(entry), TRUE);
-	gtk_box_pack_start(GTK_BOX(gtk_dialog_get_content_area(GTK_DIALOG(dialog))),
-	                   entry, FALSE, FALSE, 12);
-	gtk_dialog_set_default_response(GTK_DIALOG(dialog), GTK_RESPONSE_ACCEPT);
-	gtk_widget_show_all(gtk_dialog_get_content_area(GTK_DIALOG(dialog)));
-
-	if (gtk_dialog_run(GTK_DIALOG(dialog)) == GTK_RESPONSE_ACCEPT) {
-		session = g_strdup(gtk_entry_get_text(GTK_ENTRY(entry)));
-		g_strstrip(session);
-		if (session[0] != '\0') {
-			sakura_session_accept_changes();
-			g_free(sk_tab->codex_session_id);
-			sk_tab->codex_session_id = session;
-			g_free(sk_tab->codex_session_name);
-			sk_tab->codex_session_name = sakura_codex_session_id_is_uuid(session)
-			                             ? NULL : g_strdup(session);
-			sk_tab->kind = SAKURA_TAB_CODEX;
-			sakura_sidebar_update_tab(sk_tab);
-			sakura_codex_sync_name(sk_tab);
-			sakura_session_mark_dirty();
-			sakura_session_flush();
-		} else {
-			g_free(session);
-		}
-	}
-	gtk_widget_destroy(dialog);
-}
-
-
-static void
-sakura_refresh_codex_name_cb (GtkWidget *widget, void *data)
-{
-	gint page;
-	struct sakura_tab *sk_tab;
-
-	page = gtk_notebook_get_current_page(GTK_NOTEBOOK(sakura.notebook));
-	if (page < 0)
-		return;
-	sk_tab = sakura_get_sktab(sakura, page);
-	sakura_codex_sync_name(sk_tab);
-}
-
-
-static void
-sakura_rename_codex_session_cb (GtkWidget *widget, void *data)
-{
-	GtkWidget *dialog, *entry;
-	gint page, response;
-	struct sakura_tab *sk_tab;
-	const gchar *current_name;
-	gchar *name;
-
-	sk_tab = data;
-	page = sk_tab != NULL
-		? gtk_notebook_page_num(GTK_NOTEBOOK(sakura.notebook), sk_tab->hbox)
-		: gtk_notebook_get_current_page(GTK_NOTEBOOK(sakura.notebook));
-	if (page < 0)
-		return;
-	if (sk_tab == NULL)
-		sk_tab = sakura_get_sktab(sakura, page);
-	if (sk_tab == NULL || sk_tab->kind != SAKURA_TAB_CODEX ||
-	    sk_tab->codex_session_id == NULL || sk_tab->codex_session_id[0] == '\0') {
-		sakura_error(_("The current tab is not attached to a Codex session."));
-		return;
-	}
-
-	dialog = gtk_dialog_new_with_buttons(
-		_("Rename Codex session"), GTK_WINDOW(sakura.main_window),
-		GTK_DIALOG_MODAL | GTK_DIALOG_USE_HEADER_BAR,
-		_("_Cancel"), GTK_RESPONSE_CANCEL,
-		_("_Rename"), GTK_RESPONSE_ACCEPT,
-		NULL);
-	entry = gtk_entry_new();
-	current_name = sk_tab->codex_session_name != NULL &&
-	               sk_tab->codex_session_name[0] != '\0'
-	               ? sk_tab->codex_session_name : "";
-	gtk_entry_set_text(GTK_ENTRY(entry), current_name);
-	gtk_entry_set_placeholder_text(GTK_ENTRY(entry), _("Session name"));
-	gtk_entry_set_activates_default(GTK_ENTRY(entry), TRUE);
-	gtk_box_pack_start(GTK_BOX(gtk_dialog_get_content_area(GTK_DIALOG(dialog))),
-	                   entry, FALSE, FALSE, 12);
-	gtk_dialog_set_default_response(GTK_DIALOG(dialog), GTK_RESPONSE_ACCEPT);
-	gtk_dialog_set_response_sensitive(GTK_DIALOG(dialog), GTK_RESPONSE_ACCEPT,
-	                                  current_name[0] != '\0');
-	g_signal_connect(G_OBJECT(entry), "changed",
-	                 G_CALLBACK(sakura_setname_entry_changed_cb), dialog);
-	gtk_widget_show_all(gtk_dialog_get_content_area(GTK_DIALOG(dialog)));
-	gtk_widget_grab_focus(entry);
-	gtk_editable_select_region(GTK_EDITABLE(entry), 0, -1);
-
-	response = gtk_dialog_run(GTK_DIALOG(dialog));
-	if (response == GTK_RESPONSE_ACCEPT) {
-		name = g_strdup(gtk_entry_get_text(GTK_ENTRY(entry)));
-		g_strstrip(name);
-		if (name[0] != '\0') {
-			sakura_session_accept_changes();
-			sakura_codex_set_name_async(sk_tab, name);
-		}
-		g_free(name);
-	}
-	gtk_widget_destroy(dialog);
-}
-
-
-static void
-sakura_codex_name_update_free (struct sakura_codex_name_update *update)
-{
-	if (update == NULL)
-		return;
-	g_free(update->tracking_token);
-	g_free(update->session_id);
-	g_free(update->name);
-	g_free(update);
-}
-
-
-static void
-sakura_codex_set_name_done (GObject *source_object,
-	                         GAsyncResult *result,
-	                         gpointer data)
-{
-	GSubprocess *process = G_SUBPROCESS(source_object);
-	struct sakura_codex_name_update *update = data;
-	struct sakura_tab *sk_tab;
-	gchar *standard_output = NULL;
-	gchar *standard_error = NULL;
-	GError *error = NULL;
-	const gchar *detail = NULL;
-	gboolean completed;
-
-	completed = g_subprocess_communicate_utf8_finish(
-		process, result, &standard_output, &standard_error, &error);
-	sk_tab = sakura_find_codex_tab_by_tracking_token(update->tracking_token);
-
-	if (!completed || !g_subprocess_get_successful(process)) {
-		if (error != NULL)
-			detail = error->message;
-		else if (standard_error != NULL && standard_error[0] != '\0')
-			detail = standard_error;
-		else
-			detail = _("Codex rejected the rename request");
-		if (!sakura.session_shutting_down)
-			sakura_error(_("Could not rename Codex session: %s"), detail);
-	} else if (sk_tab != NULL && sk_tab->kind == SAKURA_TAB_CODEX &&
-	           g_strcmp0(sk_tab->codex_session_id, update->session_id) == 0) {
-		g_free(sk_tab->codex_session_name);
-		sk_tab->codex_session_name = g_strdup(update->name);
-		if (!sk_tab->label_set_byuser)
-			sakura_sidebar_update_tab(sk_tab);
-		sakura_session_mark_dirty();
-	}
-
-	g_clear_error(&error);
-	g_free(standard_output);
-	g_free(standard_error);
-	sakura_codex_name_update_free(update);
-	g_object_unref(process);
-}
-
-
-static void
-sakura_codex_set_name_async (struct sakura_tab *sk_tab, const gchar *name)
-{
-	GSubprocess *process;
-	GError *error = NULL;
-	struct sakura_codex_name_update *update;
-	gchar *helper;
-	const gchar *argv[5];
-
-	if (sk_tab == NULL || name == NULL || name[0] == '\0' ||
-	    sk_tab->kind != SAKURA_TAB_CODEX ||
-	    sk_tab->codex_session_id == NULL ||
-	    sk_tab->codex_session_id[0] == '\0' || sakura.session_shutting_down)
-		return;
-
-	helper = sakura_find_codex_name_helper();
-	if (helper == NULL) {
-		sakura_error(_("The Codex session helper is not installed."));
-		return;
-	}
-	argv[0] = helper;
-	argv[1] = "--set-name";
-	argv[2] = sk_tab->codex_session_id;
-	argv[3] = name;
-	argv[4] = NULL;
-	process = g_subprocess_newv(argv,
-	                            G_SUBPROCESS_FLAGS_STDOUT_PIPE |
-	                            G_SUBPROCESS_FLAGS_STDERR_PIPE,
-	                            &error);
-	g_free(helper);
-	if (process == NULL) {
-		sakura_error(_("Could not start the Codex session helper: %s"),
-		             error != NULL ? error->message : _("unknown error"));
-		g_clear_error(&error);
-		return;
-	}
-
-	update = g_new0(struct sakura_codex_name_update, 1);
-	update->tracking_token = g_strdup(sk_tab->codex_tracking_token);
-	update->session_id = g_strdup(sk_tab->codex_session_id);
-	update->name = g_strdup(name);
-	g_subprocess_communicate_utf8_async(process, NULL, NULL,
-	                                   sakura_codex_set_name_done, update);
-}
-
-
-static gboolean
-sakura_process_has_environment (GPid pid, const gchar *name, const gchar *value)
-{
-	gchar *environment, *needle, *path;
-	gsize length, needle_length, offset;
-	gboolean found = FALSE;
-
-	if (pid <= 0 || name == NULL || value == NULL)
-		return FALSE;
-
-	path = g_strdup_printf("/proc/%d/environ", (gint)pid);
-	if (!g_file_get_contents(path, &environment, &length, NULL)) {
-		g_free(path);
-		return FALSE;
-	}
-	g_free(path);
-
-	needle = g_strdup_printf("%s=%s", name, value);
-	needle_length = strlen(needle);
-	for (offset = 0; offset + needle_length <= length; offset++) {
-		if ((offset == 0 || environment[offset - 1] == '\0') &&
-		    memcmp(environment + offset, needle, needle_length) == 0 &&
-		    (offset + needle_length == length ||
-		     environment[offset + needle_length] == '\0')) {
-			found = TRUE;
-			break;
-		}
-	}
-
-	g_free(needle);
-	g_free(environment);
-	return found;
-}
-
-
-static void
-sakura_codex_tracking_status_cb (GtkWidget *widget, void *data)
-{
-	GtkWidget *message;
-	struct sakura_tab *sk_tab = NULL;
-	gchar *hook_path, *hook_config, *text;
-	gsize hook_config_length;
-	gint page;
-	gboolean environment_ok = FALSE;
-	gboolean hook_configured = FALSE;
-
-	page = gtk_notebook_get_current_page(GTK_NOTEBOOK(sakura.notebook));
-	if (page >= 0) {
-		sk_tab = sakura_get_sktab(sakura, page);
-		environment_ok = sakura_process_has_environment(
-			sk_tab->pid, "SAKURA_CODEX_TAB_TOKEN", sk_tab->codex_tracking_token);
-	}
-
-	hook_path = g_build_filename(g_get_home_dir(), ".codex", "hooks.json", NULL);
-	hook_config = NULL;
-	if (g_file_get_contents(hook_path, &hook_config, &hook_config_length, NULL))
-		hook_configured = strstr(hook_config, CODEX_HOOK_MARKER) != NULL;
-	text = g_strdup_printf(
-		_("Codex tracking status:\n\n"
-		"Hook entry: %s\n"
-		"Tracking directory: %s\n"
-		"Current tab environment: %s\n"
-		"Current tab kind: %s\n"
-		"Current Codex session: %s\n"
-		"Current Codex name: %s"),
-		hook_configured ? _("present") : _("missing"),
-		sakura.codex_tracking_dir != NULL ? sakura.codex_tracking_dir : _("disabled"),
-		sk_tab != NULL && environment_ok ? _("present") : _("missing (reopen this tab)"),
-		sk_tab != NULL && sk_tab->kind == SAKURA_TAB_CODEX ? _("Codex") : _("shell"),
-		sk_tab != NULL && sk_tab->codex_session_id != NULL &&
-		sk_tab->codex_session_id[0] != '\0' ? sk_tab->codex_session_id : _("not received"),
-		sk_tab != NULL && sk_tab->codex_session_name != NULL &&
-		sk_tab->codex_session_name[0] != '\0' ? sk_tab->codex_session_name : _("not available"));
-
-	message = gtk_message_dialog_new(GTK_WINDOW(sakura.main_window),
-	                                GTK_DIALOG_DESTROY_WITH_PARENT,
-	                                GTK_MESSAGE_INFO, GTK_BUTTONS_OK,
-	                                "%s", text);
-	gtk_dialog_run(GTK_DIALOG(message));
-	gtk_widget_destroy(message);
-	g_free(text);
-	g_free(hook_config);
-	g_free(hook_path);
-}
-
-
-static void
-sakura_install_codex_hook_cb (GtkWidget *widget, void *data)
-{
-	gchar *hook, *standard_error = NULL;
-	GError *error = NULL;
-	gint status;
-
-	hook = g_find_program_in_path("sakura-codex-session-hook");
-	if (hook == NULL) {
-		sakura_error(_("The Codex hook is not installed. Run scripts/sakura-codex-session-hook --install from the Sakura source tree first."));
-		return;
-	}
-	g_free(hook);
-
-	if (!g_spawn_command_line_sync("sakura-codex-session-hook --install",
-	                               NULL, &standard_error, &status, &error) || status != 0) {
-		sakura_error(_("Could not install the Codex session hook: %s"),
-		             error != NULL ? error->message :
-		             (standard_error != NULL ? standard_error : _("unknown error")));
-		if (error != NULL)
-			g_error_free(error);
-		g_free(standard_error);
-		return;
-	}
-	g_free(standard_error);
-
-	{
-		GtkWidget *message = gtk_message_dialog_new(GTK_WINDOW(sakura.main_window),
-		                                           GTK_DIALOG_DESTROY_WITH_PARENT,
-		                                           GTK_MESSAGE_INFO, GTK_BUTTONS_OK,
-		                                           _("Codex session tracking is enabled."));
-		gtk_dialog_run(GTK_DIALOG(message));
-		gtk_widget_destroy(message);
-	}
-}
-
-
-static void
+void
 sakura_close_tab_cb (GtkWidget *widget, void *data)
 {
 	struct sakura_tab *sk_tab = data;
@@ -6503,7 +1719,8 @@ sakura_init()
 	char* configdir = NULL;
 	int i;
 
-	term_data_id = g_quark_from_static_string("sakura_term");
+	sakura.tabs = g_ptr_array_new();
+	sakura.session_new_window = option_new_window;
 
 	/*** Config file initialization ***/
 
@@ -6931,7 +2148,7 @@ sakura_init()
 	/* Optional only, no need to set it if not found */
 	sakura.shell_path = g_key_file_get_string(sakura.cfg, cfg_group, "shell_path", NULL);
 	sakura.editor_command = g_key_file_get_string(sakura.cfg, cfg_group, "editor_command", NULL);
-	
+
 	/* Default terminal. Only in config file */
 	sakura.term = g_key_file_get_value(sakura.cfg, cfg_group, "term", NULL);
 	sakura.session_lock_fd = -1;
@@ -6941,11 +2158,11 @@ sakura_init()
 
 		sakura.sessionfile = g_strdup_printf("%s.session", sakura.configfile);
 		if (!option_new_window) {
-			lock_result = sakura_session_lock_acquire(sakura.sessionfile);
+			lock_result = sakura_session_lock_acquire(&sakura, sakura.sessionfile);
 			if (lock_result == 0) {
-				if (!sakura_session_confirm_new_instance())
+				if (!sakura_session_confirm_new_instance(&sakura))
 					exit(EXIT_SUCCESS);
-				if (!sakura_session_start_new_instance()) {
+				if (!sakura_session_start_new_instance(&sakura)) {
 					fprintf(stderr, _("Could not create a separate persistent session.\n"));
 					exit(EXIT_FAILURE);
 				}
@@ -6962,9 +2179,9 @@ sakura_init()
 			SAY("Could not create terminal history directory: %s", g_strerror(errno));
 		else if (chmod(sakura.history_dir, 0700) != 0)
 			SAY("Could not secure terminal history directory: %s", g_strerror(errno));
-		sakura_prepare_bash_integration();
+		sakura_session_prepare_bash_integration(&sakura);
 		if (!option_new_window)
-			sakura_session_load();
+			sakura_session_load_file(&sakura, !option_new_session && !option_new_window);
 		sakura.codex_tracking_source_id = g_timeout_add(500,
 		                                                 sakura_codex_tracking_poll_cb,
 		                                                 NULL);
@@ -6989,11 +2206,13 @@ sakura_init()
 	gtk_window_set_titlebar(GTK_WINDOW(sakura.main_window), sakura.header_bar);
 	gtk_widget_show(sakura.header_bar);
 
-	sakura.fade_window = gtk_window_new(GTK_WINDOW_POPUP);
-	gtk_widget_set_name(sakura.fade_window, "fade_window");
-	gtk_window_set_position(GTK_WINDOW(sakura.fade_window), GTK_WIN_POS_NONE);
-	gtk_widget_set_opacity(sakura.fade_window, FADE_WINDOW_OPACITY);
-	gtk_window_set_transient_for(GTK_WINDOW(sakura.fade_window), GTK_WINDOW(sakura.main_window));
+	if (sakura.use_fading) {
+		sakura.fade_window = gtk_window_new(GTK_WINDOW_POPUP);
+		gtk_widget_set_name(sakura.fade_window, "fade_window");
+		gtk_window_set_position(GTK_WINDOW(sakura.fade_window), GTK_WIN_POS_NONE);
+		gtk_widget_set_opacity(sakura.fade_window, FADE_WINDOW_OPACITY);
+		gtk_window_set_transient_for(GTK_WINDOW(sakura.fade_window), GTK_WINDOW(sakura.main_window));
+	}
 
 	/* Add CSS styles for main and fade window*/
 	GtkCssProvider *provider = gtk_css_provider_new();
@@ -7002,29 +2221,31 @@ sakura_init()
 	gtk_style_context_add_provider_for_screen(screen, GTK_STYLE_PROVIDER (provider), GTK_STYLE_PROVIDER_PRIORITY_APPLICATION);
 	g_object_unref(provider);
 
-	provider = gtk_css_provider_new();
-	screen = gtk_widget_get_screen(GTK_WIDGET(sakura.fade_window));
-	gtk_css_provider_load_from_data(provider, FADE_WINDOW_CSS, -1, NULL);
-	gtk_style_context_add_provider_for_screen(screen, GTK_STYLE_PROVIDER (provider), GTK_STYLE_PROVIDER_PRIORITY_APPLICATION);
-	g_object_unref(provider);
+	if (sakura.fade_window != NULL) {
+		provider = gtk_css_provider_new();
+		screen = gtk_widget_get_screen(GTK_WIDGET(sakura.fade_window));
+		gtk_css_provider_load_from_data(provider, FADE_WINDOW_CSS, -1, NULL);
+		gtk_style_context_add_provider_for_screen(screen, GTK_STYLE_PROVIDER (provider), GTK_STYLE_PROVIDER_PRIORITY_APPLICATION);
+		g_object_unref(provider);
+	}
 
 	/* Create notebook and set style */
 	sakura.notebook = gtk_notebook_new();
 	gtk_notebook_set_scrollable((GtkNotebook*)sakura.notebook, sakura.scrollable_tabs);
 	sakura_register_codex_icon();
-	sakura_sidebar_init();
+	sakura_sidebar_init(!option_new_session && !option_new_window);
 	sakura.cwd_tracking_source_id = g_timeout_add(500, sakura_cwd_tracking_poll_cb, NULL);
 
 	/* Adding mask, for handle scroll events */
 	gtk_widget_add_events(sakura.notebook, GDK_SCROLL_MASK);
-	
+
 	/* Figure out if we have rgba capabilities. Without this transparency won't work as expected */
 	screen = gtk_widget_get_screen (GTK_WIDGET (sakura.main_window));
 	GdkVisual *visual = gdk_screen_get_rgba_visual (screen);
 	if (visual != NULL && gdk_screen_is_composited (screen)) {
 		gtk_widget_set_visual (GTK_WIDGET (sakura.main_window), visual);
 	}
-	
+
 	/*** Command line options initialization ***/
 
 	/* Set argv for forked childs. Real argv vector starts at argv[1] because we're
@@ -7091,7 +2312,7 @@ sakura_init()
 	if (option_fullscreen) {
 		sakura_fullscreen_cb(NULL, NULL); /* FIXME: Move to sakura_set_size?? */
 	}
-	
+
 	sakura.resized = FALSE;
 	sakura.externally_modified = false;
 	sakura.first_run=true;
@@ -7120,6 +2341,44 @@ sakura_init()
 	g_signal_connect(G_OBJECT(sakura.main_window), "focus-out-event", G_CALLBACK(sakura_focus_out_cb), NULL);
 	g_signal_connect(G_OBJECT(sakura.main_window), "focus-in-event", G_CALLBACK(sakura_focus_in_cb), NULL);
 	g_signal_connect(G_OBJECT(sakura.main_window), "show", G_CALLBACK(sakura_show_event_cb), NULL);
+}
+
+
+void
+sakura_codex_tracking_menu_update (GtkWidget *item)
+{
+	SakuraCodexTrackingState state;
+
+	if (item == NULL)
+		return;
+
+	state = sakura_codex_tracking_state();
+	switch (state) {
+	case SAKURA_CODEX_TRACKING_ENABLED:
+		gtk_menu_item_set_label(GTK_MENU_ITEM(item),
+		                        _("Codex session tracking enabled"));
+		gtk_widget_set_sensitive(item, FALSE);
+		break;
+	case SAKURA_CODEX_TRACKING_PARTIAL:
+		gtk_menu_item_set_label(GTK_MENU_ITEM(item),
+		                        _("Repair Codex session tracking"));
+		gtk_widget_set_sensitive(item, TRUE);
+		break;
+	case SAKURA_CODEX_TRACKING_MISSING:
+	default:
+		gtk_menu_item_set_label(GTK_MENU_ITEM(item),
+		                        _("Enable Codex session tracking"));
+		gtk_widget_set_sensitive(item, TRUE);
+		break;
+	}
+}
+
+
+static void
+sakura_codex_tracking_menu_show_cb (GtkWidget *widget, void *data)
+{
+	(void)widget;
+	sakura_codex_tracking_menu_update(GTK_WIDGET(data));
 }
 
 
@@ -7360,6 +2619,9 @@ sakura_init_popup()
 	g_signal_connect(G_OBJECT(item_refresh_codex_name), "activate", G_CALLBACK(sakura_refresh_codex_name_cb), NULL);
 	g_signal_connect(G_OBJECT(item_codex_status), "activate", G_CALLBACK(sakura_codex_tracking_status_cb), NULL);
 	g_signal_connect(G_OBJECT(item_install_codex), "activate", G_CALLBACK(sakura_install_codex_hook_cb), NULL);
+	g_signal_connect(G_OBJECT(options_menu), "show",
+	                 G_CALLBACK(sakura_codex_tracking_menu_show_cb), item_install_codex);
+	sakura_codex_tracking_menu_update(item_install_codex);
 	g_signal_connect(G_OBJECT(item_set_name), "activate", G_CALLBACK(sakura_set_name_dialog_cb), NULL);
 	g_signal_connect(G_OBJECT(item_close_tab), "activate", G_CALLBACK(sakura_close_tab_cb), NULL);
 	g_signal_connect(G_OBJECT(item_select_font), "activate", G_CALLBACK(sakura_font_dialog_cb), NULL);
@@ -7395,10 +2657,15 @@ sakura_init_popup()
 }
 
 
-static void
+void
 sakura_destroy()
 {
 	GList *group;
+	SakuraTab *tab;
+	guint index;
+
+	if (sakura.session_shutting_down)
+		return;
 
 	/* A hook can be detected just before the window closes. Process any
 	 * pending tracking record and flush the debounced save before tearing down
@@ -7429,9 +2696,19 @@ sakura_destroy()
 	}
 	sakura_sidebar_cancel_pending_selection();
 
-	/* Delete all existing tabs */
-	while (gtk_notebook_get_n_pages(GTK_NOTEBOOK(sakura.notebook)) >= 1) {
-		sakura_del_tab(-1);
+	/* The destroy signal runs after GTK has begun tearing down the main
+	 * window. Do not call notebook/VTE widget APIs here: their native windows
+	 * may already be gone. Release the application-owned records directly and
+	 * let GTK finish destroying the widget tree. */
+	if (sakura.tabs != NULL) {
+		for (index = 0; index < sakura.tabs->len; index++) {
+			tab = g_ptr_array_index(sakura.tabs, index);
+			if (tab != NULL) {
+				sakura_remove_history_file(tab);
+				sakura_tab_free(tab);
+			}
+		}
+		g_ptr_array_set_size(sakura.tabs, 0);
 	}
 	for (group = sakura.sidebar_groups; group != NULL; group = group->next)
 		sakura_sidebar_free_node(group->data);
@@ -7443,6 +2720,8 @@ sakura_destroy()
 	g_key_file_free(sakura.cfg);
 	if (sakura.session_cfg != NULL)
 		g_key_file_free(sakura.session_cfg);
+	sakura_session_snapshot_free(sakura.session_snapshot);
+	sakura.session_snapshot = NULL;
 
 	pango_font_description_free(sakura.font);
 
@@ -7455,122 +2734,9 @@ sakura_destroy()
 	g_free(sakura.history_dir);
 	g_free(sakura.bash_history_rc);
 	g_free(sakura.editor_command);
+	g_clear_pointer(&sakura.tabs, g_ptr_array_unref);
 
 	gtk_main_quit();
-}
-
-
-static void
-sakura_search_dialog ()
-{
-	GtkWidget *title_dialog, *title_header;
-	GtkWidget *entry, *label;
-	GtkWidget *title_hbox;
-	gint response;
-
-	title_dialog=gtk_dialog_new_with_buttons(_("Search"),
-	                                         GTK_WINDOW(sakura.main_window),
-	                                         GTK_DIALOG_MODAL|GTK_DIALOG_USE_HEADER_BAR,
-	                                         _("_Cancel"), GTK_RESPONSE_CANCEL,
-	                                         _("_Apply"), GTK_RESPONSE_ACCEPT,
-	                                          NULL);
-
-	/* Configure the new gtk header bar*/
-	title_header = gtk_dialog_get_header_bar(GTK_DIALOG(title_dialog));
-	gtk_header_bar_set_show_close_button(GTK_HEADER_BAR(title_header), FALSE);
-	gtk_dialog_set_default_response(GTK_DIALOG(title_dialog), GTK_RESPONSE_ACCEPT);
-
-	entry = gtk_entry_new();
-	label = gtk_label_new(_("Search"));
-	title_hbox = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
-	gtk_entry_set_activates_default(GTK_ENTRY(entry), TRUE);
-	gtk_box_pack_start(GTK_BOX(title_hbox), label, TRUE, TRUE, 12);
-	gtk_box_pack_start(GTK_BOX(title_hbox), entry, TRUE, TRUE, 12);
-	gtk_box_pack_start(GTK_BOX(gtk_dialog_get_content_area(GTK_DIALOG(title_dialog))), title_hbox, FALSE, FALSE, 12);
-
-	/* Disable accept button until some text is entered */
-	g_signal_connect(G_OBJECT(entry), "changed", G_CALLBACK(sakura_setname_entry_changed_cb), title_dialog);
-	gtk_dialog_set_response_sensitive(GTK_DIALOG(title_dialog), GTK_RESPONSE_ACCEPT, FALSE);
-
-	gtk_widget_show_all(title_hbox);
-
-	response = gtk_dialog_run(GTK_DIALOG(title_dialog));
-	if (response == GTK_RESPONSE_ACCEPT) {
-		sakura_search(gtk_entry_get_text(GTK_ENTRY(entry)), 0);
-	}
-	gtk_widget_destroy(title_dialog);
-}
-
-
-void
-sakura_search (const char *pattern, bool reverse)
-{
-	GError *error=NULL;
-	VteRegex *regex;
-	gint page;
-	struct sakura_tab *sk_tab;
-
-	page = gtk_notebook_get_current_page(GTK_NOTEBOOK(sakura.notebook));
-	sk_tab = sakura_get_sktab(sakura, page);
-
-	vte_terminal_search_set_wrap_around(VTE_TERMINAL(sk_tab->vte), TRUE);
-
-	regex=vte_regex_new_for_search(pattern, (gssize) strlen(pattern), PCRE2_MULTILINE|PCRE2_CASELESS, &error);
-	if (!regex) { /* Ubuntu-fucking-morons (17.10/18.04/18.10) package a broken VTE without PCRE2, and search fails */
-		      /* For more info about their moronity please look at https://github.com/gnunn1/tilix/issues/916   */
-		sakura_error(error->message);
-		g_error_free(error);
-	} else {
-		vte_terminal_search_set_regex(VTE_TERMINAL(sk_tab->vte), regex, 0);
-
-		if (!vte_terminal_search_find_next(VTE_TERMINAL(sk_tab->vte))) {
-			vte_terminal_unselect_all(VTE_TERMINAL(sk_tab->vte));
-			vte_terminal_search_find_next(VTE_TERMINAL(sk_tab->vte));
-		}
-
-		if (regex) vte_regex_unref(regex);
-	}
-}
-
-
-static void
-sakura_copy ()
-{
-	gint page;
-	struct sakura_tab *sk_tab;
-
-	page = gtk_notebook_get_current_page(GTK_NOTEBOOK(sakura.notebook));
-	sk_tab = sakura_get_sktab(sakura, page);
-
-	if (vte_terminal_get_has_selection(VTE_TERMINAL(sk_tab->vte))) {
-		vte_terminal_copy_clipboard_format(VTE_TERMINAL(sk_tab->vte), VTE_FORMAT_TEXT);
-	}
-}
-
-
-static void
-sakura_paste ()
-{
-	gint page;
-	struct sakura_tab *sk_tab;
-
-	page = gtk_notebook_get_current_page(GTK_NOTEBOOK(sakura.notebook));
-	sk_tab = sakura_get_sktab(sakura, page);
-
-	vte_terminal_paste_clipboard(VTE_TERMINAL(sk_tab->vte));
-}
-
-
-static void
-sakura_paste_primary ()
-{
-	gint page;
-	struct sakura_tab *sk_tab;
-
-	page = gtk_notebook_get_current_page(GTK_NOTEBOOK(sakura.notebook));
-	sk_tab = sakura_get_sktab(sakura, page);
-
-	vte_terminal_paste_primary(VTE_TERMINAL(sk_tab->vte));
 }
 
 
@@ -7583,7 +2749,7 @@ sakura_show_scrollbar (void)
 
 	n_pages = gtk_notebook_get_n_pages(GTK_NOTEBOOK(sakura.notebook));
 	page = gtk_notebook_get_current_page(GTK_NOTEBOOK(sakura.notebook));
-	sk_tab = sakura_get_sktab(sakura, page);
+	sk_tab = sakura_tab_at_page(page);
 
 	if (!g_key_file_get_boolean(sakura.cfg, cfg_group, "scrollbar", NULL)) {
 		sakura.show_scrollbar = true;
@@ -7595,7 +2761,7 @@ sakura_show_scrollbar (void)
 
 	/* Toggle/Untoggle the scrollbar for all tabs */
 	for (i = (n_pages - 1); i >= 0; i--) {
-		sk_tab = sakura_get_sktab(sakura, i);
+		sk_tab = sakura_tab_at_page(i);
 		if (!sakura.show_scrollbar)
 			gtk_widget_hide(sk_tab->scrollbar);
 		else
@@ -7605,17 +2771,20 @@ sakura_show_scrollbar (void)
 }
 
 
-static void
+void
 sakura_set_size (void)
 {
 	struct sakura_tab *sk_tab;
+	struct sakura_tab *scroll_tab;
 	gint pad_x, pad_y;
 	gint char_width, char_height;
 	gint min_width, natural_width;
 	gint page;
 
 
-	sk_tab = sakura_get_sktab(sakura, 0);
+	sk_tab = sakura_tab_at_page(0);
+	if (sk_tab == NULL || sk_tab->vte == NULL)
+		return;
 	/* Mayhaps an user resize happened. Check if row and columns have changed */
 	if (sakura.resized) {
 		sakura.columns = vte_terminal_get_column_count(VTE_TERMINAL(sk_tab->vte));
@@ -7653,9 +2822,11 @@ sakura_set_size (void)
 	}
 
 	page = gtk_notebook_get_current_page(GTK_NOTEBOOK(sakura.notebook));
-	sk_tab = sakura_get_sktab(sakura, page);
+	scroll_tab = page >= 0 ? sakura_tab_at_page(page) : NULL;
+	if (scroll_tab == NULL)
+		scroll_tab = sk_tab;
 
-	gtk_widget_get_preferred_width(sk_tab->scrollbar, &min_width, &natural_width);
+	gtk_widget_get_preferred_width(scroll_tab->scrollbar, &min_width, &natural_width);
 	//SAY("SCROLLBAR min width %d natural width %d", min_width, natural_width);
 	if (sakura.show_scrollbar) {
 		sakura.width += min_width;
@@ -7668,7 +2839,7 @@ sakura_set_size (void)
 }
 
 
-static void
+void
 sakura_set_font()
 {
 	gint n_pages;
@@ -7679,7 +2850,7 @@ sakura_set_font()
 
 	/* Set the font for all tabs */
 	for (i = (n_pages - 1); i >= 0; i--) {
-		sk_tab = sakura_get_sktab(sakura, i);
+		sk_tab = sakura_tab_at_page(i);
 		vte_terminal_set_font(VTE_TERMINAL(sk_tab->vte), sakura.font);
 		vte_terminal_set_cell_height_scale(VTE_TERMINAL(sk_tab->vte), sakura.line_height);
 	}
@@ -7696,7 +2867,7 @@ sakura_set_colorset (int cs)
 		return;
 
 	page = gtk_notebook_get_current_page(GTK_NOTEBOOK(sakura.notebook));
-	sk_tab = sakura_get_sktab(sakura, page);
+	sk_tab = sakura_tab_at_page(page);
 	sk_tab->colorset = cs;
 
 	sakura_set_config_integer("last_colorset", sk_tab->colorset+1);
@@ -7706,15 +2877,19 @@ sakura_set_colorset (int cs)
 
 
 /* Set the terminal colors for all notebook tabs */
-static void
+void
 sakura_set_colors ()
 {
 	int i;
 	int n_pages = gtk_notebook_get_n_pages(GTK_NOTEBOOK(sakura.notebook));
 	struct sakura_tab *sk_tab;
+	gdouble window_opacity = 1.0;
 
 	for (i = (n_pages - 1); i >= 0; i--) {
-		sk_tab = sakura_get_sktab(sakura, i);
+		sk_tab = sakura_tab_at_page(i);
+		if (sk_tab == NULL)
+			continue;
+		window_opacity = sakura.backcolors[sk_tab->colorset].alpha;
 
 		/* Set fore, back, cursor color and palette for the terminal's colorset */
 		vte_terminal_set_colors(VTE_TERMINAL(sk_tab->vte),
@@ -7731,148 +2906,7 @@ sakura_set_colors ()
 	}
 
 	/* Main window opacity must be set. Otherwise vte widget will remain opaque */
-	gtk_widget_set_opacity(sakura.main_window, sakura.backcolors[sk_tab->colorset].alpha);
-}
-
-
-static void
-sakura_move_tab(gint direction)
-{
-	gint page, n_pages;
-	GtkWidget *child;
-
-	page = gtk_notebook_get_current_page(GTK_NOTEBOOK(sakura.notebook));
-	n_pages = gtk_notebook_get_n_pages(GTK_NOTEBOOK(sakura.notebook));
-	child = gtk_notebook_get_nth_page(GTK_NOTEBOOK(sakura.notebook), page);
-
-	if (direction == FORWARD) {
-		if (page != n_pages-1)
-			gtk_notebook_reorder_child(GTK_NOTEBOOK(sakura.notebook), child, page+1);
-	} else {
-		if (page != 0)
-			gtk_notebook_reorder_child(GTK_NOTEBOOK(sakura.notebook), child, page-1);
-	}
-	sakura_tab_bar_refresh();
-}
-
-
-/* Find the notebook page for the vte terminal passed as a parameter */
-static gint
-sakura_find_tab(VteTerminal *vte_term)
-{
-	gint matched_page, page, n_pages;
-	struct sakura_tab *sk_tab;
-
-	n_pages = gtk_notebook_get_n_pages(GTK_NOTEBOOK(sakura.notebook));
-
-	matched_page = -1;
-	page = 0;
-
-	do {
-		sk_tab = sakura_get_sktab(sakura, page);
-		if ((VteTerminal *)sk_tab->vte == vte_term) {
-			matched_page=page;
-		}
-		page++;
-	} while (page < n_pages);
-
-	return (matched_page);
-}
-
-
-static gint
-sakura_find_tab_by_terminal_id (const gchar *terminal_id)
-{
-	gint page, pages;
-
-	if (terminal_id == NULL || terminal_id[0] == '\0' || sakura.notebook == NULL)
-		return -1;
-
-	pages = gtk_notebook_get_n_pages(GTK_NOTEBOOK(sakura.notebook));
-	for (page = 0; page < pages; page++) {
-		struct sakura_tab *sk_tab = sakura_get_sktab(sakura, page);
-		if (sk_tab != NULL && g_strcmp0(sk_tab->terminal_id, terminal_id) == 0)
-			return page;
-	}
-	return -1;
-}
-
-
-static void
-sakura_set_tab_label_text(const gchar *title, gint page)
-{
-	struct sakura_tab *sk_tab;
-	gchar *chopped_title;
-	gchar *default_label_text;
-
-	sk_tab = sakura_get_sktab(sakura, page);
-
-	if ((title != NULL) && (g_strcmp0(title, "") != 0)) {
-		/* Chop to max size */
-		chopped_title = g_strndup(title, TAB_MAX_SIZE);
-		/* Honor the minimum tab label size */
-		while (strlen(chopped_title)< TAB_MIN_SIZE) {
-			char *old_ptr = chopped_title;
-			chopped_title = g_strconcat(chopped_title, " ", NULL);
-			free(old_ptr);
-		}
-		gtk_label_set_text(GTK_LABEL(sk_tab->label), chopped_title);
-		free(chopped_title);
-	} else { /* Use the default values */
-		default_label_text = g_strdup_printf(_("Terminal %d"), page);
-		gtk_label_set_text(GTK_LABEL(sk_tab->label), default_label_text);
-		free(default_label_text);
-	}
-	sakura_sidebar_update_tab(sk_tab);
-}
-
-
-/* Callback for vte_terminal_spawn_async */
-void
-sakura_spawn_callback (VteTerminal *vte, GPid pid, GError *error, gpointer user_data)
-{
-	struct sakura_tab *sk_tab = (struct sakura_tab *) user_data;
-
-	if (pid == -1) { /* Fork has failed */
-		SAY("Error: %s", error->message);
-		sakura_tab_set_status(sk_tab, SAKURA_TAB_STATUS_ERROR, TRUE);
-	} else {
-		sk_tab->pid=pid;
-	}
-}
-
-
-static void
-sakura_spawn_shell (struct sakura_tab *sk_tab, const gchar *cwd, gchar **env)
-{
-	gchar *bash_argv[6];
-	char **argv = sakura.argv;
-
-	if (sakura_bash_integration_enabled()) {
-		bash_argv[0] = sakura.argv[0];
-		if (option_login) {
-			/* Reproduce login-shell startup inside the generated rc file. This
-			 * lets Bash accept --rcfile while retaining /etc/profile and the
-			 * user's normal login profile order. */
-			bash_argv[1] = sakura.argv[0];
-			bash_argv[2] = (gchar *)"--noprofile";
-			bash_argv[3] = (gchar *)"--rcfile";
-			bash_argv[4] = sakura.bash_history_rc;
-			bash_argv[5] = NULL;
-		} else {
-			bash_argv[1] = sakura.argv[1];
-			bash_argv[2] = (gchar *)"--rcfile";
-			bash_argv[3] = sakura.bash_history_rc;
-			bash_argv[4] = NULL;
-		}
-		argv = bash_argv;
-	}
-
-	vte_terminal_spawn_async(VTE_TERMINAL(sk_tab->vte), VTE_PTY_NO_HELPER, cwd,
-	                         argv, env,
-	                         G_SPAWN_SEARCH_PATH | G_SPAWN_FILE_AND_ARGV_ZERO,
-	                         NULL, NULL, NULL, -1, NULL,
-	                         sakura_spawn_callback, sk_tab);
+	gtk_widget_set_opacity(sakura.main_window, window_opacity);
 }
 
 
@@ -7884,558 +2918,9 @@ sakura_add_tab (void)
 }
 
 
-static void
-sakura_spawn_codex (struct sakura_tab *sk_tab, const gchar *cwd, gchar **env)
-{
-	gchar *argv[8] = { (gchar *)"codex",
-	                   (gchar *)"--dangerously-bypass-approvals-and-sandbox",
-	                   (gchar *)"--enable", (gchar *)"hooks",
-	                   NULL, NULL, NULL, NULL };
 
-	if (sk_tab->codex_session_id != NULL && sk_tab->codex_session_id[0] != '\0') {
-		argv[4] = (gchar *)"resume";
-		argv[5] = sk_tab->codex_session_id;
-	}
-	vte_terminal_spawn_async(VTE_TERMINAL(sk_tab->vte), VTE_PTY_NO_HELPER, cwd,
-	                         argv, env, G_SPAWN_SEARCH_PATH, NULL, NULL, NULL,
-	                         -1, NULL, sakura_spawn_callback, sk_tab);
-}
 
-
-static void
-sakura_spawn_tool (struct sakura_tab *sk_tab, const gchar *cwd, gchar **env)
-{
-	gchar *argv[] = { NULL, NULL, NULL, NULL, NULL, NULL };
-	gchar *executable;
-	const gchar *pr_command =
-		"gh pr view \"$1\"; "
-		"printf '\\n[Pull request view finished. Press Ctrl-D to close.]\\n'; "
-		"exec \"${SHELL:-sh}\"";
-
-#ifdef HAVE_WEBKITGTK
-	if (sk_tab->tool == SAKURA_TOOL_GH_PR) {
-		GtkWidget *browser_box;
-		GtkWidget *toolbar;
-		GtkWidget *reload_button;
-		GtkWidget *external_button;
-		WebKitWebView *view;
-
-		if (sk_tab->tool_target == NULL || sk_tab->tool_target[0] == '\0') {
-			sakura_tab_set_status(sk_tab, SAKURA_TAB_STATUS_ERROR, TRUE);
-			return;
-		}
-
-		browser_box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
-		toolbar = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 2);
-		sk_tab->browser_back = gtk_button_new_from_icon_name("go-previous-symbolic",
-		                                                    GTK_ICON_SIZE_MENU);
-		gtk_button_set_relief(GTK_BUTTON(sk_tab->browser_back), GTK_RELIEF_NONE);
-		gtk_widget_set_tooltip_text(sk_tab->browser_back, _("Back"));
-		sk_tab->browser_forward = gtk_button_new_from_icon_name("go-next-symbolic",
-		                                                       GTK_ICON_SIZE_MENU);
-		gtk_button_set_relief(GTK_BUTTON(sk_tab->browser_forward), GTK_RELIEF_NONE);
-		gtk_widget_set_tooltip_text(sk_tab->browser_forward, _("Forward"));
-		reload_button = gtk_button_new_from_icon_name("view-refresh-symbolic",
-		                                             GTK_ICON_SIZE_MENU);
-		gtk_button_set_relief(GTK_BUTTON(reload_button), GTK_RELIEF_NONE);
-		gtk_widget_set_tooltip_text(reload_button, _("Reload"));
-		external_button = gtk_button_new_from_icon_name("external-link-symbolic",
-		                                               GTK_ICON_SIZE_MENU);
-		gtk_button_set_relief(GTK_BUTTON(external_button), GTK_RELIEF_NONE);
-		gtk_widget_set_tooltip_text(external_button, _("Open in external browser"));
-
-		gtk_box_pack_start(GTK_BOX(toolbar), sk_tab->browser_back, FALSE, FALSE, 0);
-		gtk_box_pack_start(GTK_BOX(toolbar), sk_tab->browser_forward, FALSE, FALSE, 0);
-		gtk_box_pack_start(GTK_BOX(toolbar), reload_button, FALSE, FALSE, 0);
-		gtk_box_pack_end(GTK_BOX(toolbar), external_button, FALSE, FALSE, 0);
-
-		view = WEBKIT_WEB_VIEW(webkit_web_view_new());
-		sk_tab->browser = GTK_WIDGET(view);
-		gtk_widget_set_can_focus(sk_tab->browser, TRUE);
-		gtk_widget_hide(sk_tab->vte);
-		gtk_widget_hide(sk_tab->scrollbar);
-		gtk_box_pack_start(GTK_BOX(browser_box), toolbar, FALSE, FALSE, 0);
-		gtk_box_pack_start(GTK_BOX(browser_box), sk_tab->browser, TRUE, TRUE, 0);
-		gtk_box_pack_start(GTK_BOX(sk_tab->hbox), browser_box, TRUE, TRUE, 0);
-
-		g_signal_connect(sk_tab->browser_back, "clicked",
-		                 G_CALLBACK(sakura_browser_back_cb), sk_tab);
-		g_signal_connect(sk_tab->browser_forward, "clicked",
-		                 G_CALLBACK(sakura_browser_forward_cb), sk_tab);
-		g_signal_connect(reload_button, "clicked",
-		                 G_CALLBACK(sakura_browser_reload_cb), sk_tab);
-		g_signal_connect(external_button, "clicked",
-		                 G_CALLBACK(sakura_browser_external_cb), sk_tab);
-		g_signal_connect(view, "notify::can-go-back",
-		                 G_CALLBACK(sakura_browser_navigation_changed_cb), sk_tab);
-		g_signal_connect(view, "notify::can-go-forward",
-		                 G_CALLBACK(sakura_browser_navigation_changed_cb), sk_tab);
-
-		gtk_widget_show_all(browser_box);
-		sakura_browser_update_navigation(sk_tab);
-		webkit_web_view_load_uri(view, sk_tab->tool_target);
-		return;
-	}
-#endif
-
-	if (sk_tab->tool == SAKURA_TOOL_GH_PR)
-		executable = g_find_program_in_path("sh");
-	else
-		executable = sakura_find_tool_executable(sk_tab->tool);
-	if (executable == NULL) {
-		sakura_tab_set_status(sk_tab, SAKURA_TAB_STATUS_ERROR, TRUE);
-		return;
-	}
-	argv[0] = executable;
-	if (sk_tab->tool == SAKURA_TOOL_GH_DASH) {
-		argv[1] = (gchar *)"dash";
-	} else if (sk_tab->tool == SAKURA_TOOL_GH_PR) {
-		if (sk_tab->tool_target == NULL || sk_tab->tool_target[0] == '\0') {
-			g_free(executable);
-			sakura_tab_set_status(sk_tab, SAKURA_TAB_STATUS_ERROR, TRUE);
-			return;
-		}
-		argv[1] = (gchar *)"-c";
-		argv[2] = (gchar *)pr_command;
-		argv[3] = (gchar *)"sakura-gh-pr";
-		argv[4] = sk_tab->tool_target;
-	}
-
-	vte_terminal_spawn_async(VTE_TERMINAL(sk_tab->vte), VTE_PTY_NO_HELPER, cwd,
-	                         argv, env, G_SPAWN_SEARCH_PATH, NULL, NULL, NULL,
-	                         -1, NULL, sakura_spawn_callback, sk_tab);
-	g_free(executable);
-}
-
-
-struct sakura_codex_name_query {
-	gchar *tracking_token;
-	gchar *session_id;
-	gchar *request_line;
-	guint request_id;
-	gsize request_offset;
-};
-
-static gboolean
-sakura_codex_session_id_is_uuid (const gchar *value)
-{
-	gsize i;
-
-	if (value == NULL || strlen(value) != 36)
-		return FALSE;
-	for (i = 0; i < 36; i++) {
-		if (i == 8 || i == 13 || i == 18 || i == 23) {
-			if (value[i] != '-')
-				return FALSE;
-		} else if (!g_ascii_isxdigit(value[i])) {
-			return FALSE;
-		}
-	}
-	return TRUE;
-}
-
-
-static struct sakura_tab *
-sakura_find_codex_tab_by_tracking_token (const gchar *tracking_token)
-{
-	gint page, pages;
-
-	if (tracking_token == NULL || sakura.notebook == NULL)
-		return NULL;
-
-	pages = gtk_notebook_get_n_pages(GTK_NOTEBOOK(sakura.notebook));
-	for (page = 0; page < pages; page++) {
-		struct sakura_tab *sk_tab = sakura_get_sktab(sakura, page);
-		if (g_strcmp0(sk_tab->codex_tracking_token, tracking_token) == 0)
-			return sk_tab;
-	}
-	return NULL;
-}
-
-
-static gboolean
-sakura_codex_name_retry_cb (gpointer data)
-{
-	const gchar *tracking_token = data;
-	struct sakura_tab *sk_tab;
-
-	sk_tab = sakura_find_codex_tab_by_tracking_token(tracking_token);
-	if (sk_tab != NULL) {
-		sk_tab->codex_name_retry_source_id = 0;
-		sakura_codex_sync_name(sk_tab);
-	}
-
-	return G_SOURCE_REMOVE;
-}
-
-
-static void
-sakura_codex_schedule_name_retry (struct sakura_tab *sk_tab)
-{
-	if (sk_tab == NULL || sk_tab->codex_tracking_token == NULL ||
-	    sk_tab->codex_name_retry_source_id != 0 ||
-	    sk_tab->codex_name_retry_count >= 3 || sakura.session_shutting_down)
-		return;
-
-	sk_tab->codex_name_retry_count++;
-	sk_tab->codex_name_retry_source_id = g_timeout_add_full(
-		G_PRIORITY_DEFAULT, 1000, sakura_codex_name_retry_cb,
-		g_strdup(sk_tab->codex_tracking_token), g_free);
-}
-
-
-static gchar *
-sakura_find_codex_name_helper (void)
-{
-	gchar *helper;
-
-	helper = g_find_program_in_path("sakura-codex-session-name");
-	if (helper != NULL)
-		return helper;
-
-	helper = g_build_filename(SAKURA_SOURCE_SCRIPT_DIR,
-	                           "sakura-codex-session-name", NULL);
-	if (g_file_test(helper, G_FILE_TEST_IS_REGULAR))
-		return helper;
-
-	g_free(helper);
-	return NULL;
-}
-
-
-static void
-sakura_codex_name_query_free (struct sakura_codex_name_query *query)
-{
-	g_free(query->tracking_token);
-	g_free(query->session_id);
-	g_free(query->request_line);
-	g_free(query);
-}
-
-
-static void
-sakura_codex_name_query_complete (struct sakura_codex_name_query *query,
-	                               const gchar *name,
-	                               const gchar *error_message)
-{
-	struct sakura_tab *sk_tab;
-	gchar *clean_name = NULL;
-	gboolean stale_query = FALSE;
-
-	sk_tab = sakura_find_codex_tab_by_tracking_token(query->tracking_token);
-	if (sk_tab == NULL)
-		return;
-
-	sk_tab->codex_name_query_active = FALSE;
-	if (sakura.session_shutting_down)
-		return;
-
-	if (sk_tab->kind == SAKURA_TAB_CODEX &&
-	    g_strcmp0(sk_tab->codex_session_id, query->session_id) == 0) {
-		if (error_message != NULL) {
-			SAY("Could not read Codex session name: %s", error_message);
-			sakura_codex_schedule_name_retry(sk_tab);
-			return;
-		}
-
-		clean_name = g_strdup(name != NULL ? name : "");
-		g_strstrip(clean_name);
-		if (clean_name[0] != '\0')
-			sk_tab->codex_name_retry_count = 0;
-		if (g_strcmp0(sk_tab->codex_session_name, clean_name) != 0) {
-			g_free(sk_tab->codex_session_name);
-			sk_tab->codex_session_name = clean_name[0] != '\0' ? g_strdup(clean_name) : NULL;
-			if (!sk_tab->label_set_byuser)
-				sakura_sidebar_update_tab(sk_tab);
-			sakura_session_mark_dirty();
-		}
-		if (clean_name[0] == '\0')
-			sakura_codex_schedule_name_retry(sk_tab);
-		g_free(clean_name);
-		return;
-	}
-
-	stale_query = sk_tab->kind == SAKURA_TAB_CODEX &&
-	              g_strcmp0(sk_tab->codex_session_id, query->session_id) != 0;
-	if (stale_query)
-		sakura_codex_sync_name(sk_tab);
-}
-
-
-static void
-sakura_codex_name_helper_clear (gboolean terminate)
-{
-	if (sakura.codex_name_helper_process != NULL && terminate)
-		g_subprocess_force_exit(sakura.codex_name_helper_process);
-	g_clear_object(&sakura.codex_name_helper_input);
-	g_clear_object(&sakura.codex_name_helper_output);
-	g_clear_object(&sakura.codex_name_helper_process);
-}
-
-
-static void
-sakura_codex_name_helper_wait_done (GObject *source_object,
-	                                  GAsyncResult *result, gpointer data)
-{
-	GSubprocess *process = G_SUBPROCESS(source_object);
-	GError *error = NULL;
-
-	(void)data;
-	if (!g_subprocess_wait_finish(process, result, &error))
-		g_clear_error(&error);
-
-	/* The helper may have been replaced while the old process was being
-	 * reaped. Never clear the state belonging to the replacement process. */
-	if (sakura.codex_name_helper_process == process) {
-		g_clear_object(&sakura.codex_name_helper_input);
-		g_clear_object(&sakura.codex_name_helper_output);
-		g_clear_object(&sakura.codex_name_helper_process);
-	}
-}
-
-
-static gboolean
-sakura_codex_name_helper_start (GError **error)
-{
-	GSubprocess *process;
-	GInputStream *stdout_pipe;
-	gchar *helper;
-	const gchar *argv[3];
-
-	if (sakura.codex_name_helper_process != NULL)
-		return TRUE;
-
-	helper = sakura_find_codex_name_helper();
-	if (helper == NULL) {
-		g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_NOT_FOUND,
-		                    "sakura-codex-session-name was not found");
-		return FALSE;
-	}
-	argv[0] = helper;
-	argv[1] = "--server";
-	argv[2] = NULL;
-	process = g_subprocess_newv(argv,
-	                            G_SUBPROCESS_FLAGS_STDIN_PIPE |
-	                            G_SUBPROCESS_FLAGS_STDOUT_PIPE |
-	                            G_SUBPROCESS_FLAGS_STDERR_SILENCE,
-	                            error);
-	g_free(helper);
-	if (process == NULL)
-		return FALSE;
-
-	stdout_pipe = g_subprocess_get_stdout_pipe(process);
-	sakura.codex_name_helper_process = process;
-	sakura.codex_name_helper_input =
-		g_object_ref(g_subprocess_get_stdin_pipe(process));
-	sakura.codex_name_helper_output = g_data_input_stream_new(stdout_pipe);
-	g_subprocess_wait_async(process, NULL, sakura_codex_name_helper_wait_done, NULL);
-	return TRUE;
-}
-
-
-static void sakura_codex_name_helper_dispatch (void);
-
-
-static void
-sakura_codex_name_helper_request_failed (struct sakura_codex_name_query *query,
-	                                       const gchar *error_message)
-{
-	if (sakura.codex_name_query_in_flight != query)
-		return;
-	sakura.codex_name_query_in_flight = NULL;
-	sakura_codex_name_helper_clear(TRUE);
-	sakura_codex_name_query_complete(query, NULL, error_message);
-	sakura_codex_name_query_free(query);
-	sakura_codex_name_helper_dispatch();
-}
-
-
-static void
-sakura_codex_name_helper_read_done (GObject *source_object,
-	                                  GAsyncResult *result,
-	                                  gpointer data)
-{
-	GDataInputStream *stream = G_DATA_INPUT_STREAM(source_object);
-	struct sakura_codex_name_query *query = data;
-	GError *error = NULL;
-	gchar *line = NULL;
-	gchar **fields = NULL;
-	gchar *decoded = NULL;
-	guchar *decoded_bytes = NULL;
-	gsize decoded_length = 0;
-	gchar *end = NULL;
-	guint64 request_id;
-	gboolean valid_response = FALSE;
-
-	line = g_data_input_stream_read_line_finish(stream, result, NULL, &error);
-	if (error != NULL) {
-		sakura_codex_name_helper_request_failed(query, error->message);
-		g_error_free(error);
-		return;
-	}
-	if (line == NULL) {
-		sakura_codex_name_helper_request_failed(query, "Codex session name helper exited");
-		return;
-	}
-
-	fields = g_strsplit(line, "\t", 3);
-	request_id = fields[0] != NULL ? g_ascii_strtoull(fields[0], &end, 10) : 0;
-	valid_response = fields[0] != NULL && fields[1] != NULL && fields[2] != NULL &&
-	                end != fields[0] && *end == '\0' &&
-	                request_id == query->request_id;
-	if (!valid_response) {
-		sakura_codex_name_helper_request_failed(query, "invalid response from Codex session name helper");
-		g_strfreev(fields);
-		g_free(line);
-		return;
-	}
-
-	decoded_bytes = g_base64_decode(fields[2], &decoded_length);
-	if (decoded_length == 0)
-		decoded = g_strdup("");
-	else if (decoded_bytes != NULL)
-		decoded = g_strndup((gchar *)decoded_bytes, decoded_length);
-	if (decoded == NULL) {
-		sakura_codex_name_helper_request_failed(query, "invalid encoded response from Codex session name helper");
-		g_strfreev(fields);
-		g_free(line);
-		return;
-	}
-
-	sakura.codex_name_query_in_flight = NULL;
-	if (g_strcmp0(fields[1], "ok") == 0)
-		sakura_codex_name_query_complete(query, decoded, NULL);
-	else
-		sakura_codex_name_query_complete(query, NULL, decoded);
-	sakura_codex_name_query_free(query);
-	sakura_codex_name_helper_dispatch();
-
-	g_free(decoded_bytes);
-	g_free(decoded);
-	g_strfreev(fields);
-	g_free(line);
-}
-
-
-static void
-sakura_codex_name_helper_write_done (GObject *source_object,
-	                                   GAsyncResult *result,
-	                                   gpointer data)
-{
-	GOutputStream *stream = G_OUTPUT_STREAM(source_object);
-	struct sakura_codex_name_query *query = data;
-	GError *error = NULL;
-	gssize bytes_written;
-
-	bytes_written = g_output_stream_write_finish(stream, result, &error);
-	if (bytes_written <= 0) {
-		if (error == NULL)
-			g_set_error_literal(&error, G_IO_ERROR, G_IO_ERROR_FAILED,
-			                    "Codex session name helper closed its input");
-		sakura_codex_name_helper_request_failed(query, error->message);
-		g_error_free(error);
-		return;
-	}
-	query->request_offset += (gsize)bytes_written;
-	if (query->request_offset < strlen(query->request_line)) {
-		g_output_stream_write_async(stream,
-		                            query->request_line + query->request_offset,
-		                            strlen(query->request_line) - query->request_offset,
-		                            G_PRIORITY_DEFAULT, NULL,
-		                            sakura_codex_name_helper_write_done, query);
-		return;
-	}
-	if (sakura.codex_name_query_in_flight != query ||
-	    sakura.codex_name_helper_output == NULL || sakura.session_shutting_down)
-		return;
-	g_data_input_stream_read_line_async(sakura.codex_name_helper_output,
-	                                    G_PRIORITY_DEFAULT, NULL,
-	                                    sakura_codex_name_helper_read_done, query);
-}
-
-
-static void
-sakura_codex_name_helper_dispatch (void)
-{
-	struct sakura_codex_name_query *query;
-	GError *error = NULL;
-	gchar *encoded_session_id;
-
-	if (sakura.session_shutting_down || sakura.codex_name_query_in_flight != NULL ||
-	    sakura.codex_name_query_queue == NULL ||
-	    g_queue_is_empty(sakura.codex_name_query_queue))
-		return;
-
-	query = g_queue_pop_head(sakura.codex_name_query_queue);
-	if (!sakura_codex_name_helper_start(&error)) {
-		SAY("Could not start Codex session name helper: %s",
-		    error != NULL ? error->message : "unknown error");
-		sakura_codex_name_query_complete(query, NULL,
-		                                 error != NULL ? error->message : "helper start failed");
-		sakura_codex_name_query_free(query);
-		g_clear_error(&error);
-		sakura_codex_name_helper_dispatch();
-		return;
-	}
-
-	if (++sakura.codex_name_helper_request_id == 0)
-		sakura.codex_name_helper_request_id = 1;
-	query->request_id = sakura.codex_name_helper_request_id;
-	encoded_session_id = g_base64_encode((const guchar *)query->session_id,
-	                                     strlen(query->session_id));
-	query->request_line = g_strdup_printf("%u\t%s\n", query->request_id,
-	                                      encoded_session_id);
-	query->request_offset = 0;
-	g_free(encoded_session_id);
-	sakura.codex_name_query_in_flight = query;
-	g_output_stream_write_async(sakura.codex_name_helper_input,
-	                            query->request_line, strlen(query->request_line),
-	                            G_PRIORITY_DEFAULT, NULL,
-	                            sakura_codex_name_helper_write_done, query);
-}
-
-
-static void
-sakura_codex_name_helper_shutdown (void)
-{
-	struct sakura_codex_name_query *query;
-
-	sakura_codex_name_helper_clear(TRUE);
-	query = sakura.codex_name_query_in_flight;
-	sakura.codex_name_query_in_flight = NULL;
-	if (query != NULL)
-		sakura_codex_name_query_free(query);
-	if (sakura.codex_name_query_queue != NULL) {
-		while ((query = g_queue_pop_head(sakura.codex_name_query_queue)) != NULL)
-			sakura_codex_name_query_free(query);
-		g_queue_free(sakura.codex_name_query_queue);
-		sakura.codex_name_query_queue = NULL;
-	}
-}
-
-
-static void
-sakura_codex_sync_name (struct sakura_tab *sk_tab)
-{
-	struct sakura_codex_name_query *query;
-
-	if (sk_tab == NULL || sk_tab->kind != SAKURA_TAB_CODEX ||
-	    sk_tab->codex_session_id == NULL || sk_tab->codex_session_id[0] == '\0' ||
-	    sk_tab->codex_name_query_active || sakura.session_shutting_down)
-		return;
-
-	if (sakura.codex_name_query_queue == NULL)
-		sakura.codex_name_query_queue = g_queue_new();
-	query = g_new0(struct sakura_codex_name_query, 1);
-	query->tracking_token = g_strdup(sk_tab->codex_tracking_token);
-	query->session_id = g_strdup(sk_tab->codex_session_id);
-	sk_tab->codex_name_query_active = TRUE;
-	g_queue_push_tail(sakura.codex_name_query_queue, query);
-	sakura_codex_name_helper_dispatch();
-}
-
-
-static void
+void
 sakura_add_tab_with_options (const gchar *restore_cwd,
                               struct sakura_sidebar_node *restore_parent,
                               const gchar *restore_title,
@@ -8447,447 +2932,23 @@ sakura_add_tab_with_options (const gchar *restore_cwd,
                               const gchar *restore_tool_target,
                               const gchar *restore_terminal_id)
 {
-	struct sakura_tab *sk_tab;
-	GtkWidget *tab_title_hbox; GtkWidget *close_button; /* We could put them inside struct sakura_tab, but it is not necessary */
-	GtkWidget *tab_label_box;
-	GtkWidget *event_box;
-	gint index, page, npages;
-	gchar *cwd = NULL; gchar *default_label_text = NULL;
-	struct sakura_sidebar_node *sidebar_parent;
+	SakuraTabLaunchConfig launch_config = {
+		option_execute,
+		option_xterm_args,
+		option_login,
+		option_hold,
+		sakura.first_run
+	};
 
-	sk_tab = g_new0(struct sakura_tab, 1);
-	sk_tab->terminal_id = sakura_terminal_id_is_valid(restore_terminal_id)
-	                    ? g_strdup(restore_terminal_id)
-	                    : sakura_generate_terminal_id();
-	sk_tab->kind = restore_kind;
-	sk_tab->tool = restore_kind == SAKURA_TAB_TOOL ? restore_tool : SAKURA_TOOL_NONE;
-	sk_tab->tool_target = restore_kind == SAKURA_TAB_TOOL
-	                   ? g_strdup(restore_tool_target) : NULL;
-	/* A restored Codex tab has no persisted status yet. Start from a known
-	 * neutral state until the tracking hook reports its current state. */
-	sk_tab->status = restore_kind == SAKURA_TAB_CODEX
-	               ? SAKURA_TAB_STATUS_IDLE : SAKURA_TAB_STATUS_NONE;
-	sk_tab->codex_session_id = g_strdup(restore_codex_session_id);
-	sk_tab->codex_session_name = g_strdup(restore_codex_session_name);
-	if (sk_tab->codex_session_name == NULL &&
-	    restore_kind == SAKURA_TAB_CODEX &&
-	    restore_codex_session_id != NULL &&
-	    !sakura_codex_session_id_is_uuid(restore_codex_session_id))
-		sk_tab->codex_session_name = g_strdup(restore_codex_session_id);
-	sk_tab->codex_tracking_token = g_strdup_printf("%d-%u", (int)getpid(),
-	                                              g_random_int());
-	sidebar_parent = restore_parent != NULL ? restore_parent :
-	                 sakura_sidebar_default_parent();
-
-	/* Create the tab label */
-	sk_tab->label = gtk_label_new(NULL);
-	gtk_label_set_ellipsize(GTK_LABEL(sk_tab->label), PANGO_ELLIPSIZE_END);
-	sk_tab->spinner = gtk_spinner_new();
-	gtk_widget_set_no_show_all(sk_tab->spinner, TRUE);
-	gtk_widget_set_size_request(sk_tab->spinner, 16, 16);
-	gtk_widget_set_valign(sk_tab->spinner, GTK_ALIGN_CENTER);
-	gtk_widget_set_tooltip_text(sk_tab->spinner, _("Working"));
-
-	/* Create hbox for our label & button */
-	tab_title_hbox = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 2);
-	gtk_widget_set_hexpand(tab_title_hbox, TRUE);
-
-	/* Label widgets has no window associated, so we need an event box to catch click events */
-	event_box = gtk_event_box_new();
-	tab_label_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 2);
-	gtk_box_pack_start(GTK_BOX(tab_label_box), sk_tab->spinner, FALSE, FALSE, 0);
-	gtk_box_pack_start(GTK_BOX(tab_label_box), sk_tab->label, TRUE, TRUE, 0);
-	gtk_container_add(GTK_CONTAINER(event_box), tab_label_box);
-	gtk_widget_set_events(event_box, GDK_BUTTON_PRESS_MASK);
-
-	/* Expand&fill the event_box to get click events all along the tab */
-	gtk_box_pack_start(GTK_BOX(tab_title_hbox), event_box, TRUE, TRUE, 0);
-
-	/* If the tab close button is enabled, create and add it to the tab */
-	if (sakura.show_closebutton) {
-		close_button = gtk_button_new();
-		/* Adding scroll-event to button, to propagate it to notebook (fix for scroll event when pointer is above the button) */
-		gtk_widget_add_events(close_button, GDK_SCROLL_MASK);
-
-		gtk_widget_set_name(close_button, "closebutton");
-		gtk_button_set_relief(GTK_BUTTON(close_button), GTK_RELIEF_NONE);
-
-		GtkWidget *image = gtk_image_new_from_icon_name("window-close", GTK_ICON_SIZE_MENU);
-		gtk_container_add (GTK_CONTAINER (close_button), image);
-		gtk_box_pack_start(GTK_BOX(tab_title_hbox), close_button, FALSE, FALSE, 0);
-	}
-
-	gtk_widget_show_all(tab_title_hbox);
-
-	/* Create new vte terminal, scrollbar, and pack it */
-	sk_tab->vte = vte_terminal_new();
-	sk_tab->scrollbar = gtk_scrollbar_new(GTK_ORIENTATION_VERTICAL, gtk_scrollable_get_vadjustment(GTK_SCROLLABLE(sk_tab->vte)));
-	sk_tab->hbox = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
-	gtk_box_pack_start(GTK_BOX(sk_tab->hbox), sk_tab->vte, TRUE, TRUE, 0);
-	gtk_box_pack_start(GTK_BOX(sk_tab->hbox), sk_tab->scrollbar, FALSE, FALSE, 0);
-
-	sk_tab->colorset = sakura.last_colorset-1;
-
-	/* -1 if there is no pages yet */
-	page = gtk_notebook_get_current_page(GTK_NOTEBOOK(sakura.notebook));
-
-	/* Use the restored directory when reopening a workspace. Otherwise use the
-	 * previous terminal (if there is one) cwd and colorset. */
-	if (restore_cwd != NULL && restore_cwd[0] != '\0') {
-		cwd = g_strdup(restore_cwd);
-	} else if (page >= 0) {
-		struct sakura_tab *prev_term;
-		prev_term = sakura_get_sktab(sakura, page);
-		/* If OSC7 method doesn't work, use the old one as fallback */
-		if ((cwd = sakura_get_term_cwd_osc7(prev_term)) == NULL) {
-			cwd = sakura_get_term_cwd(prev_term);
-		}
-
-		sk_tab->colorset = prev_term->colorset;
-	}
-
-	if (!cwd)
-		cwd = g_get_current_dir();
-
-	if (!sakura.new_tab_after_current) {
-		if ((index=gtk_notebook_append_page(GTK_NOTEBOOK(sakura.notebook), sk_tab->hbox, tab_title_hbox))==-1) {
-			sakura_error("Cannot create a new tab");
-			exit(1);
-		}
-	} else {
-		if ((index=gtk_notebook_insert_page(GTK_NOTEBOOK(sakura.notebook), sk_tab->hbox, tab_title_hbox, page+1))==-1) {
-			sakura_error("Cannot create a new tab");
-			exit(1);
-		}
-	}
-
-	gtk_notebook_set_tab_reorderable(GTK_NOTEBOOK(sakura.notebook), sk_tab->hbox, TRUE);
-
-	sakura_set_sktab(sakura, index, sk_tab );
-	if (gtk_notebook_get_current_page(GTK_NOTEBOOK(sakura.notebook)) == index)
-		sakura.active_tab = sk_tab;
-
-	/* vte signals */
-	g_signal_connect(G_OBJECT(sk_tab->vte), "bell", G_CALLBACK(sakura_beep_cb), NULL);
-	g_signal_connect(G_OBJECT(sk_tab->vte), "increase-font-size", G_CALLBACK(sakura_increase_font_cb), NULL);
-	g_signal_connect(G_OBJECT(sk_tab->vte), "decrease-font-size", G_CALLBACK(sakura_decrease_font_cb), NULL);
-	sk_tab->exit_handler_id = g_signal_connect(G_OBJECT(sk_tab->vte), "child-exited", G_CALLBACK(sakura_child_exited_cb), NULL);
-	g_signal_connect(G_OBJECT(sk_tab->vte), "eof", G_CALLBACK(sakura_eof_cb), NULL);
-	g_signal_connect(G_OBJECT(sk_tab->vte), "window-title-changed", G_CALLBACK(sakura_title_changed_cb), NULL);
-	g_signal_connect(G_OBJECT(sk_tab->vte), "button-press-event", G_CALLBACK(sakura_term_buttonpressed_cb), sakura.menu);
-	g_signal_connect_swapped(G_OBJECT(sk_tab->vte), "button-release-event", G_CALLBACK(sakura_term_buttonreleased_cb), sakura.menu);
-	g_signal_connect(G_OBJECT(sk_tab->vte), "key-press-event", G_CALLBACK(sakura_term_keypress_cb), sk_tab);
-
-	/* Label & button signals */
-	/* We need the hbox to know which label/button was clicked */
-	g_signal_connect(G_OBJECT(event_box), "button_press_event", G_CALLBACK(sakura_label_clicked_cb), sk_tab->hbox);
-	if (sakura.show_closebutton) {
-		g_signal_connect(G_OBJECT(close_button), "clicked", G_CALLBACK(sakura_closebutton_clicked_cb), sk_tab->hbox);
-	}
-	sakura_prepare_history_file(sk_tab);
-
-	/* Allow the user to use a different TERM value */
-	char *command_env[8];
-	guint command_env_length = 0;
-	if (sakura.term != NULL) {
-		command_env[command_env_length++] = g_strdup_printf ("TERM=%s", sakura.term);
-	} else {
-		command_env[command_env_length++] = g_strdup_printf ("TERM=xterm-256color");
-	}
-	if (sakura.history_dir != NULL) {
-		gchar *history_file = sakura_history_file_for_tab(sk_tab);
-		command_env[command_env_length++] = g_strdup_printf("HISTFILE=%s", history_file);
-		command_env[command_env_length++] = g_strdup_printf("SAKURA_HISTORY_FILE=%s", history_file);
-		g_free(history_file);
-	}
-	if (sakura_bash_integration_enabled() && option_login)
-		command_env[command_env_length++] = g_strdup("SAKURA_BASH_LOGIN=1");
-	if (sakura.codex_tracking_dir != NULL) {
-		command_env[command_env_length++] = g_strdup_printf("SAKURA_CODEX_TRACKING_DIR=%s",
-		                                                     sakura.codex_tracking_dir);
-		command_env[command_env_length++] = g_strdup_printf("SAKURA_CODEX_TAB_TOKEN=%s",
-		                                                     sk_tab->codex_tracking_token);
-	}
-	command_env[command_env_length] = NULL;
-
-	/******* First tab **********/
-	npages = gtk_notebook_get_n_pages(GTK_NOTEBOOK(sakura.notebook));
-	if (npages == 1) {
-		gtk_notebook_set_show_border(GTK_NOTEBOOK(sakura.notebook), FALSE);
-
-		/* Set geometry hints when the first tab is created */
-		GdkGeometry sk_hints;
-
-		sk_hints.base_width = vte_terminal_get_char_width(VTE_TERMINAL(sk_tab->vte));
-		sk_hints.base_height = vte_terminal_get_char_height(VTE_TERMINAL(sk_tab->vte));
-		sk_hints.min_width = vte_terminal_get_char_width(VTE_TERMINAL(sk_tab->vte)) * DEFAULT_MIN_WIDTH_CHARS;
-		sk_hints.min_height = vte_terminal_get_char_height(VTE_TERMINAL(sk_tab->vte)) * DEFAULT_MIN_HEIGHT_CHARS;
-		sk_hints.width_inc = vte_terminal_get_char_width(VTE_TERMINAL(sk_tab->vte));
-		sk_hints.height_inc = vte_terminal_get_char_height(VTE_TERMINAL(sk_tab->vte));
-
-		gtk_window_set_geometry_hints(GTK_WINDOW(sakura.main_window), GTK_WIDGET (sk_tab->vte), &sk_hints,
-		                              GDK_HINT_RESIZE_INC | GDK_HINT_MIN_SIZE | GDK_HINT_BASE_SIZE);
-
-		sakura_set_font();
-		sakura_set_colors();
-		/* Set size before showing the widgets but after setting the font */
-		sakura_set_size();
-
-		/* Notebook signals. Per notebook signals only need to be defined once, so we put them here */
-		g_signal_connect(sakura.notebook, "scroll-event", G_CALLBACK(sakura_notebook_scroll_cb), NULL);
-		g_signal_connect(G_OBJECT(sakura.notebook), "switch-page", G_CALLBACK(sakura_switch_page_cb), NULL);
-		g_signal_connect(G_OBJECT(sakura.notebook), "page-removed", G_CALLBACK(sakura_page_removed_cb), NULL);
-		g_signal_connect(G_OBJECT(sakura.notebook), "focus-in-event", G_CALLBACK(sakura_notebook_focus_cb), NULL);
-
-		gtk_widget_show_all(sakura.notebook);
-		if (!sakura.show_scrollbar) {
-			gtk_widget_hide(sk_tab->scrollbar);
-		}
-
-		gtk_widget_show(sakura.main_window);
-
-		sakura_set_colors();
-#ifdef GDK_WINDOWING_X11
-		/* Set WINDOWID env variable */
-		GdkDisplay *display = gdk_display_get_default();
-
-		if (GDK_IS_X11_DISPLAY (display)) {
-			GdkWindow *gwin = gtk_widget_get_window (sakura.main_window);
-			if (gwin != NULL) {
-				guint winid = gdk_x11_window_get_xid (gwin);
-				gchar *winidstr = g_strdup_printf ("%d", winid);
-				g_setenv ("WINDOWID", winidstr, FALSE);
-				g_free (winidstr);
-			}
-		}
-#endif
-
-		int command_argc = 0; char **command_argv = NULL;
-
-		/* Execute command for the fist tab if we have one */
-		if (restore_kind == SAKURA_TAB_CODEX) {
-			sakura_spawn_codex(sk_tab, cwd, command_env);
-			command_argc = 1;
-		} else if (restore_kind == SAKURA_TAB_TOOL) {
-			sakura_spawn_tool(sk_tab, cwd, command_env);
-			command_argc = 1;
-		} else if (option_execute||option_xterm_execute) {
-			char *path;
-
-			sakura_build_command(&command_argc, &command_argv);
-
-			/* If the command is valid, run it */
-			if (command_argc > 0) {
-				path = g_find_program_in_path(command_argv[0]);
-
-				if (!path) {
-					sakura_error("%s command not found", command_argv[0]);
-					command_argc = 0;
-				}
-				vte_terminal_spawn_async(VTE_TERMINAL(sk_tab->vte), VTE_PTY_NO_HELPER, NULL, command_argv, command_env,
-						       	         G_SPAWN_SEARCH_PATH, NULL, NULL, NULL, -1, NULL, sakura_spawn_callback, sk_tab);
-
-				free(path);
-				g_strfreev(command_argv);
-			}
-		} 
-
-		/* Fork shell if there is no execute option or if the command is not valid */
-		if (restore_kind != SAKURA_TAB_CODEX && restore_kind != SAKURA_TAB_TOOL &&
-		    ((!option_execute && !option_xterm_execute) || (command_argc==0))) {
-			if (option_hold == TRUE) {
-				sakura_error("Hold option given without any command");
-				option_hold = FALSE;
-			}
-			sakura_spawn_shell(sk_tab, cwd, command_env);
-		}
-
-	/********** Not the first tab ************/
-	} else {
-		sakura_set_font();
-		sakura_set_colors();
-		gtk_widget_show_all(sk_tab->hbox);
-		if (!sakura.show_scrollbar) {
-			gtk_widget_hide(sk_tab->scrollbar);
-		}
-
-		if (npages == 2 && sakura.show_tab_bar != SHOW_TAB_BAR_NEVER) {
-			sakura_tab_bar_refresh();
-			sakura_set_size();
-		}
-		/* Call set_current page after showing the widget: gtk ignores this
-		 * function in the window is not visible *sigh*. Gtk documentation
-		 * says this is for "historical" reasons. Me arse */
-		gtk_notebook_set_current_page(GTK_NOTEBOOK(sakura.notebook), index);
-
-		int command_argc = 0; char **command_argv = NULL;
-
-		/* Execute command (only in the first run) for additional tabs if we have one */
-		if (restore_kind == SAKURA_TAB_CODEX) {
-			sakura_spawn_codex(sk_tab, cwd, command_env);
-			command_argc = 1;
-		} else if (restore_kind == SAKURA_TAB_TOOL) {
-			sakura_spawn_tool(sk_tab, cwd, command_env);
-			command_argc = 1;
-		} else if ((option_execute||option_xterm_execute) && sakura.first_run) {
-			char *path;
-
-			sakura_build_command(&command_argc, &command_argv);
-
-			/* If the command is valid, run it */
-			if (command_argc > 0) {
-				path = g_find_program_in_path(command_argv[0]);
-
-				if (!path) {
-					sakura_error("%s command not found", command_argv[0]);
-					command_argc = 0;
-				}
-				vte_terminal_spawn_async(VTE_TERMINAL(sk_tab->vte), VTE_PTY_NO_HELPER, NULL, command_argv, command_env,
-						       	         G_SPAWN_SEARCH_PATH, NULL, NULL, NULL, -1, NULL, sakura_spawn_callback, sk_tab);
-
-				free(path);
-				g_strfreev(command_argv);
-			}
-		}
-
-		/* Fork shell if there is no execute option or if the command is not valid */
-		if (restore_kind != SAKURA_TAB_CODEX && restore_kind != SAKURA_TAB_TOOL &&
-		    ((!option_execute && !option_xterm_execute) || (command_argc==0))) {
-			if (option_hold == TRUE) {
-				sakura_error("Hold option given without any command");
-				option_hold = FALSE;
-			}
-			sakura_spawn_shell(sk_tab, cwd, command_env);
-		}
-	}
-
-	g_free(sk_tab->cwd);
-	sk_tab->cwd = g_strdup(cwd);
-	sakura_update_tab_metadata(sk_tab,
-	                           vte_terminal_get_window_title(VTE_TERMINAL(sk_tab->vte)));
-	free(cwd);
-
-	/* Applying the restored title or tab title pattern from config
-	 * (https://answers.launchpad.net/sakura/+question/267951) */
-	if (restore_title_set) {
-		default_label_text = (gchar *)restore_title;
-		sk_tab->label_set_byuser = true;
-	} else if (sakura.tab_default_title != NULL) {
-		default_label_text = sakura.tab_default_title;
-		sk_tab->label_set_byuser = true;
-	} else if (restore_kind == SAKURA_TAB_TOOL) {
-		default_label_text = (gchar *)sakura_tool_label(restore_tool);
-		sk_tab->label_set_byuser = false;
-	} else {
-		sk_tab->label_set_byuser=false;
-	}
-
-	/* Set the default title text (NULL is valid) */
-	page = gtk_notebook_get_current_page(GTK_NOTEBOOK(sakura.notebook));
-	sakura_set_tab_label_text(default_label_text, page);
-	sakura_sidebar_add_terminal(sk_tab, sidebar_parent);
-	if (sk_tab->kind == SAKURA_TAB_CODEX)
-		sakura_codex_sync_name(sk_tab);
-	sakura_session_mark_dirty();
-	for (guint env_index = 0; command_env[env_index] != NULL; env_index++)
-		g_free(command_env[env_index]);
-
-	/* Init vte terminal */
-	vte_terminal_set_scrollback_lines(VTE_TERMINAL(sk_tab->vte), sakura.scroll_lines);
-	vte_terminal_match_add_regex(VTE_TERMINAL(sk_tab->vte), sakura.http_vteregexp, PCRE2_CASELESS);
-	vte_terminal_match_add_regex(VTE_TERMINAL(sk_tab->vte), sakura.mail_vteregexp, PCRE2_CASELESS);
-	vte_terminal_set_mouse_autohide(VTE_TERMINAL(sk_tab->vte), TRUE);
-	vte_terminal_set_backspace_binding(VTE_TERMINAL(sk_tab->vte), VTE_ERASE_ASCII_DELETE);
-	vte_terminal_set_word_char_exceptions(VTE_TERMINAL(sk_tab->vte), sakura.word_chars);
-	vte_terminal_set_audible_bell (VTE_TERMINAL(sk_tab->vte), sakura.audible_bell ? TRUE : FALSE);
-	vte_terminal_set_cursor_blink_mode (VTE_TERMINAL(sk_tab->vte), sakura.blinking_cursor ? VTE_CURSOR_BLINK_ON : VTE_CURSOR_BLINK_OFF);
-	vte_terminal_set_cursor_shape (VTE_TERMINAL(sk_tab->vte), sakura.cursor_type);
-
-}
-
-
-/* Do all the work necessary before & after deleting the tab passed as a parameter */
-static void
-sakura_close_tab (gint page)
-{
-	gint npages, response; pid_t pgid;
-	VtePty *pty;
-	struct sakura_tab *sk_tab;
-	GtkWidget *dialog;
-
-	sakura_session_accept_changes();
-
-	npages = gtk_notebook_get_n_pages(GTK_NOTEBOOK(sakura.notebook));
-	sk_tab = sakura_get_sktab(sakura, page);
-
-	/* Only write configuration to disk if it's the last tab */
-	if (npages == 1) {
-		sakura_config_done();
-	}
-
-	/* Check if there are running processes for this tab. Use tcgetpgrp to compare to the shell PGID */
-	pty = vte_terminal_get_pty(VTE_TERMINAL(sk_tab->vte));
-	pgid = pty != NULL ? tcgetpgrp(vte_pty_get_fd(pty)) : -1;
-
-	if ( (pgid != -1) && (pgid != sk_tab->pid) && (!sakura.less_questions) ) {
-		dialog=gtk_message_dialog_new(GTK_WINDOW(sakura.main_window), GTK_DIALOG_MODAL,
-                                              GTK_MESSAGE_QUESTION, GTK_BUTTONS_YES_NO,
-                                              _("There is a running process in this terminal.\n\nDo you really want to close it?"));
-		response=gtk_dialog_run(GTK_DIALOG(dialog));
-		gtk_widget_destroy(dialog);
-
-		if (response==GTK_RESPONSE_YES)
-			sakura_del_tab(page);
-
-	} else /* No processes */
-		sakura_del_tab(page);
-
-	/* And destroy sakura if it's the last tab */
-	if (npages == 1)
-		sakura_destroy();
+	sakura_tab_add_with_options(restore_cwd, restore_parent, restore_title,
+	                            restore_title_set, restore_kind, restore_tool,
+	                            restore_codex_session_id, restore_codex_session_name,
+	                            restore_tool_target, restore_terminal_id,
+	                            &launch_config);
 }
 
 
 /* Delete the notebook tab passed as a parameter */
-static void
-sakura_del_tab(gint page)
-{
-	struct sakura_tab *sk_tab;
-	gboolean removed_active;
-
-	sk_tab = sakura_get_sktab(sakura, page);
-	removed_active = sakura.active_tab == sk_tab;
-	if (removed_active)
-		sakura.active_tab = NULL;
-
-	/* Do the first tab checks BEFORE deleting the tab, to ensure correct
-	 * sizes are calculated when the tab is deleted */
-	sakura_sidebar_remove_tab(sk_tab);
-	sakura_remove_history_file(sk_tab);
-	gtk_widget_hide(sk_tab->hbox);
-	g_signal_handler_disconnect (sk_tab->vte, sk_tab->exit_handler_id);
-	g_free(sk_tab->cwd);
-	g_free(sk_tab->host);
-	g_free(sk_tab->raw_title);
-	g_free(sk_tab->terminal_id);
-	g_free(sk_tab->tool_target);
-	g_free(sk_tab->codex_session_id);
-	g_free(sk_tab->codex_session_name);
-	g_free(sk_tab->codex_tracking_token);
-	gtk_notebook_remove_page(GTK_NOTEBOOK(sakura.notebook), page);
-	sakura_tab_bar_refresh();
-	if (gtk_notebook_get_n_pages(GTK_NOTEBOOK(sakura.notebook)) > 0)
-		sakura_set_size();
-	sakura_sidebar_update_attention_count();
-
-	if (removed_active)
-		sakura_select_scope_default();
-	else
-		sakura_tab_bar_refresh();
-	sakura_session_mark_dirty();
-	sakura_session_flush();
-}
-
 
 /* New window -- launch a new instance */
 static void
@@ -8917,8 +2978,8 @@ sakura_new_window()
 #endif
 
 	/* remove command arguments so that the new window will be in interactive mode */
-	char** dst;
-	char** src;
+	char** dst = spawn_argv + 1;
+	char** src = sakura.orig_argv != NULL ? sakura.orig_argv + 1 : NULL;
 	if(sakura.orig_argc) for(dst = spawn_argv + 1, src = sakura.orig_argv + 1; *src; ++dst, ++src) {
 		if(!strcmp(*src, "-e") || !strcmp(*src, "--xterm-execute")) {
 			break;
@@ -8965,7 +3026,7 @@ sakura_new_window()
 
 
 /* Save configuration */
-static void
+void
 sakura_config_done()
 {
 	GError *gerror = NULL;
@@ -9029,7 +3090,7 @@ sakura_config_done()
 /* Misc. functions */
 /*******************/
 
-static void
+void
 sakura_error(const char *format, ...)
 {
 	GtkWidget *dialog;
@@ -9047,70 +3108,6 @@ sakura_error(const char *format, ...)
 	gtk_dialog_run (GTK_DIALOG (dialog));
 	gtk_widget_destroy (dialog);
 	g_free(buff);
-}
-
-
-static void
-sakura_build_command(int *command_argc, char ***command_argv)
-{
-	GError *gerror = NULL;
-
-	if (option_execute) {
-		/* -x option: only one argument */
-		if (!g_shell_parse_argv(option_execute, command_argc, command_argv, &gerror)) {
-			switch (gerror->code) {
-			case G_SHELL_ERROR_EMPTY_STRING:
-				sakura_error("Empty exec string");
-				exit(1);
-				break;
-			case G_SHELL_ERROR_BAD_QUOTING:
-				sakura_error("Cannot parse command line arguments: mangled quoting");
-				exit(1);
-				break;
-			case G_SHELL_ERROR_FAILED:
-				sakura_error("Error in exec option command line arguments");
-				exit(1);
-			}
-			g_error_free(gerror);
-		}
-	} else {
-		/* -e option: last in the command line, takes all extra arguments */
-		if (option_xterm_args) {
-
-			guint size=0, i=0; gchar **quoted_args=NULL;
-
-			do { size++; } while (option_xterm_args[size]); /* Get option_xterm_args size */
-
-			/* Quote all arguments to be able to use parameters with spaces like filenames */
-			quoted_args = g_malloc(sizeof(char *) * (size+1));
-			while (option_xterm_args[i]) {
-				quoted_args[i] = g_shell_quote(option_xterm_args[i]); i++;
-			} 
-			quoted_args[i]=NULL;
-
-			/* Join all arguments and parse them to create argc&argv */
-			gchar *command_joined= command_joined = g_strjoinv(" ", quoted_args);
-			if (!g_shell_parse_argv(command_joined, command_argc, command_argv, &gerror)) {
-				switch (gerror->code) {
-				case G_SHELL_ERROR_EMPTY_STRING:
-					sakura_error("Empty exec string");
-					exit(1);
-					break;
-				case G_SHELL_ERROR_BAD_QUOTING:
-					sakura_error("Cannot parse command line arguments: mangled quoting");
-					exit(1);
-				case G_SHELL_ERROR_FAILED:
-					sakura_error("Error in exec option command line arguments");
-					exit(1);
-				}
-			}
-
-			if (gerror != NULL)
-				g_error_free(gerror);
-			g_free(command_joined);
-			g_strfreev(quoted_args);
-		}
-	}
 }
 
 
@@ -9145,129 +3142,6 @@ sakura_get_keybind(const gchar *key)
 
 	/* Always use uppercase value as keyval */
 	return gdk_keyval_to_upper(retval);
-}
-
-
-/* Legacy function to use as fallback if our shell doesn't emit OSC7.
- * Retrieves the CWD of the specified sk_tab page.Original borrowed 
- * from gnome-terminal. Adapted by Hong Jen Yee and David Gómez */
-static char *
-sakura_get_term_cwd(struct sakura_tab* sk_tab)
-{
-	char *cwd = NULL;
-
-	if (sk_tab->pid >= 0) {
-		char *file, *buf;
-		struct stat sb;
-		int len;
-
-		file = g_strdup_printf ("/proc/%d/cwd", sk_tab->pid);
-
-		if (g_stat(file, &sb) == -1) {
-			g_free(file);
-			return cwd;
-		}
-
-		buf = g_malloc(sb.st_size + 1);
-
-		if (buf == NULL) {
-			g_free(file);
-			return cwd;
-		}
-
-		len = readlink(file, buf, sb.st_size + 1);
-
-		if (len > 0 && buf[0] == '/') {
-			buf[len] = '\0';
-			cwd = g_strdup(buf);
-		}
-
-		g_free(buf);
-		g_free(file);
-	}
-
-	return cwd;
-}
-
-
-static gboolean
-sakura_update_tab_cwd (struct sakura_tab *sk_tab)
-{
-	const gchar *directory_uri;
-	gchar *cwd;
-
-	if (sk_tab == NULL)
-		return FALSE;
-
-	/* OSC 7 is authoritative when the shell or remote session provides it. */
-	directory_uri = vte_terminal_get_current_directory_uri(VTE_TERMINAL(sk_tab->vte));
-	cwd = directory_uri != NULL ? g_filename_from_uri(directory_uri, NULL, NULL) : NULL;
-	if (cwd == NULL || cwd[0] != '/') {
-		g_free(cwd);
-		cwd = sakura_get_term_cwd(sk_tab);
-	}
-
-	if (cwd == NULL || g_strcmp0(sk_tab->cwd, cwd) == 0) {
-		g_free(cwd);
-		return FALSE;
-	}
-
-	g_free(sk_tab->cwd);
-	sk_tab->cwd = cwd;
-	return TRUE;
-}
-
-
-static char *
-sakura_get_term_cwd_osc7(struct sakura_tab* sk_tab)
-{
-	gchar *cwd = NULL; gchar *osc7_hostname = NULL; 
-	const char *osc7_uri = NULL; const char *hostname = NULL;
-
-	osc7_uri = vte_terminal_get_current_directory_uri(VTE_TERMINAL(sk_tab->vte));
-
-	if (osc7_uri) {
-		cwd = g_filename_from_uri(osc7_uri, &osc7_hostname, NULL);
-		/* Check if the hostname matchs. If not, return NULL */
-		hostname = g_get_host_name();
-		if ((strcmp(osc7_hostname, hostname) != 0) || (strcmp(osc7_hostname, "localhost") == 0)) cwd = NULL;
-	}
-
-	return cwd;
-}
-
-
-static void
-sakura_update_tab_metadata (struct sakura_tab *sk_tab, const gchar *raw_title)
-{
-	const gchar *directory_uri;
-	const gchar *local_host;
-	gchar *uri_host = NULL;
-	gchar *uri_cwd = NULL;
-
-	if (sk_tab == NULL)
-		return;
-
-	g_free(sk_tab->raw_title);
-	sk_tab->raw_title = g_strdup(raw_title != NULL ? raw_title : "");
-	g_free(sk_tab->host);
-	sk_tab->host = NULL;
-
-	directory_uri = vte_terminal_get_current_directory_uri(VTE_TERMINAL(sk_tab->vte));
-	if (directory_uri != NULL)
-		uri_cwd = g_filename_from_uri(directory_uri, &uri_host, NULL);
-
-	local_host = g_get_host_name();
-	if (uri_host != NULL && uri_host[0] != '\0' &&
-	    g_ascii_strcasecmp(uri_host, "localhost") != 0 &&
-	    g_ascii_strcasecmp(uri_host, local_host) != 0)
-		sk_tab->host = g_strdup(uri_host);
-
-	sakura_update_tab_cwd(sk_tab);
-
-	g_free(uri_cwd);
-	g_free(uri_host);
-	sakura_sidebar_update_tab(sk_tab);
 }
 
 
@@ -9406,7 +3280,7 @@ main(int argc, char **argv)
 	} else if (option_new_session || option_new_window || option_ntabs > 1) {
 		for (i=0; i<option_ntabs; i++)
 			sakura_add_tab();
-	} else if (!sakura_session_restore()) {
+	} else if (!sakura_workspace_restore_snapshot(sakura.session_snapshot)) {
 		if (sakura.sessionfile != NULL &&
 		    g_file_test(sakura.sessionfile, G_FILE_TEST_IS_REGULAR)) {
 			preserve_failed_session = TRUE;

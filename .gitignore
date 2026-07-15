@@ -10,3 +10,5 @@ install_manifest.txt
 src/sakura
 sakura.1
 tests/__pycache__/
+scripts/__pycache__/
+*.pyc

@@ -1,0 +1,201 @@
+#include <glib.h>
+
+#include "src/sakura-private.h"
+
+static void
+test_tool_ids_round_trip(void)
+{
+	static const SakuraToolKind tools[] = {
+		SAKURA_TOOL_GITUI,
+		SAKURA_TOOL_GH_DASH,
+		SAKURA_TOOL_GH_PR,
+		SAKURA_TOOL_GIT_COLA
+	};
+	guint index;
+
+	for (index = 0; index < G_N_ELEMENTS(tools); index++) {
+		const gchar *id = sakura_tool_id(tools[index]);
+
+		g_assert_nonnull(id);
+		g_assert_cmpint(sakura_tool_from_id(id), ==, tools[index]);
+		g_assert_nonnull(sakura_tool_label(tools[index]));
+		g_assert_nonnull(sakura_tool_executable(tools[index]));
+		g_assert_nonnull(sakura_tool_icon_name(tools[index]));
+	}
+}
+
+
+static void
+test_tool_ids_reject_unknown_values(void)
+{
+	g_assert_cmpint(sakura_tool_from_id(NULL), ==, SAKURA_TOOL_NONE);
+	g_assert_cmpint(sakura_tool_from_id("unknown-tool"), ==, SAKURA_TOOL_NONE);
+	g_assert_null(sakura_tool_id(SAKURA_TOOL_NONE));
+	g_assert_null(sakura_tool_executable(SAKURA_TOOL_NONE));
+}
+
+
+static void
+test_tool_scope(void)
+{
+	g_assert_true(sakura_tool_requires_git_repository(SAKURA_TOOL_GITUI));
+	g_assert_true(sakura_tool_requires_git_repository(SAKURA_TOOL_GIT_COLA));
+	g_assert_false(sakura_tool_requires_git_repository(SAKURA_TOOL_GH_DASH));
+	g_assert_false(sakura_tool_requires_git_repository(SAKURA_TOOL_GH_PR));
+}
+
+
+static void
+test_session_snapshot_round_trip(void)
+{
+	SakuraSessionSnapshot *source = sakura_session_snapshot_new();
+	SakuraSessionSnapshot *loaded = sakura_session_snapshot_new();
+	SakuraSessionGroupRecord *group = g_new0(SakuraSessionGroupRecord, 1);
+	SakuraSessionTabRecord *tab = g_new0(SakuraSessionTabRecord, 1);
+	GKeyFile *key_file = g_key_file_new();
+	GError *error = NULL;
+
+	group->id = g_strdup("group-a");
+	group->parent_id = g_strdup("root");
+	group->title = g_strdup("Alpha");
+	g_ptr_array_add(source->groups, group);
+
+	tab->parent_id = g_strdup("group-a");
+	tab->cwd = g_strdup("/tmp");
+	tab->title = g_strdup("Working");
+	tab->terminal_id = g_strdup("terminal-1");
+	tab->tool_id = g_strdup("gitui");
+	tab->kind = SAKURA_TAB_TOOL;
+	tab->title_set_by_user = TRUE;
+	g_ptr_array_add(source->tabs, tab);
+	source->selected_terminal = 0;
+	source->selected_terminal_id = g_strdup("terminal-1");
+	g_free(source->active_group_id);
+	source->active_group_id = g_strdup("group-a");
+	source->sidebar_visible = FALSE;
+	source->sidebar_width = 280;
+
+	sakura_session_snapshot_save(source, key_file);
+	g_assert_true(sakura_session_snapshot_load(key_file, loaded, &error));
+	g_assert_no_error(error);
+	g_assert_cmpuint(loaded->groups->len, ==, 1);
+	g_assert_cmpuint(loaded->tabs->len, ==, 1);
+	g_assert_cmpint(loaded->selected_terminal, ==, 0);
+	g_assert_cmpstr(loaded->selected_terminal_id, ==, "terminal-1");
+	g_assert_cmpstr(loaded->active_group_id, ==, "group-a");
+	g_assert_false(loaded->sidebar_visible);
+	g_assert_cmpint(loaded->sidebar_width, ==, 280);
+
+	{
+		SakuraSessionGroupRecord *loaded_group = g_ptr_array_index(loaded->groups, 0);
+		SakuraSessionTabRecord *loaded_tab = g_ptr_array_index(loaded->tabs, 0);
+		g_assert_cmpstr(loaded_group->title, ==, "Alpha");
+		g_assert_cmpstr(loaded_tab->cwd, ==, "/tmp");
+		g_assert_cmpstr(loaded_tab->tool_id, ==, "gitui");
+		g_assert_true(loaded_tab->title_set_by_user);
+	}
+
+	g_key_file_free(key_file);
+	sakura_session_snapshot_free(source);
+	sakura_session_snapshot_free(loaded);
+}
+
+
+static void
+test_session_snapshot_rejects_group_cycle(void)
+{
+	SakuraSessionSnapshot *snapshot = sakura_session_snapshot_new();
+	SakuraSessionGroupRecord *first = g_new0(SakuraSessionGroupRecord, 1);
+	SakuraSessionGroupRecord *second = g_new0(SakuraSessionGroupRecord, 1);
+	GKeyFile *key_file = g_key_file_new();
+	GError *error = NULL;
+
+	first->id = g_strdup("group-a");
+	first->parent_id = g_strdup("group-b");
+	first->title = g_strdup("A");
+	second->id = g_strdup("group-b");
+	second->parent_id = g_strdup("group-a");
+	second->title = g_strdup("B");
+	g_ptr_array_add(snapshot->groups, first);
+	g_ptr_array_add(snapshot->groups, second);
+
+	sakura_session_snapshot_save(snapshot, key_file);
+	g_assert_false(sakura_session_snapshot_load(key_file, snapshot, &error));
+	g_assert_error(error, G_KEY_FILE_ERROR, G_KEY_FILE_ERROR_INVALID_VALUE);
+	g_clear_error(&error);
+
+	g_key_file_free(key_file);
+	sakura_session_snapshot_free(snapshot);
+}
+
+
+static void
+test_session_snapshot_uses_safe_optional_defaults(void)
+{
+	SakuraSessionSnapshot *snapshot = sakura_session_snapshot_new();
+	GKeyFile *key_file = g_key_file_new();
+	GError *error = NULL;
+
+	/* Version 1 sessions did not persist the newer selection/sidebar fields. */
+	g_key_file_set_integer(key_file, "Session", "version", 1);
+	g_key_file_set_integer(key_file, "Session", "group_count", 0);
+	g_key_file_set_integer(key_file, "Session", "terminal_count", 0);
+	snapshot->selected_terminal = 42;
+	g_clear_pointer(&snapshot->selected_terminal_id, g_free);
+	snapshot->selected_terminal_id = g_strdup("stale-terminal");
+	g_clear_pointer(&snapshot->active_group_id, g_free);
+	snapshot->active_group_id = g_strdup("stale-group");
+	snapshot->sidebar_visible = FALSE;
+	snapshot->sidebar_width = 480;
+
+	g_assert_true(sakura_session_snapshot_load(key_file, snapshot, &error));
+	g_assert_no_error(error);
+	g_assert_cmpint(snapshot->selected_terminal, ==, -1);
+	g_assert_null(snapshot->selected_terminal_id);
+	g_assert_cmpstr(snapshot->active_group_id, ==, "root");
+	g_assert_true(snapshot->sidebar_visible);
+	g_assert_cmpint(snapshot->sidebar_width, ==, 200);
+
+	g_key_file_free(key_file);
+	sakura_session_snapshot_free(snapshot);
+}
+
+
+static void
+test_session_snapshot_preserves_previous_on_failure(void)
+{
+	SakuraSessionSnapshot *snapshot = sakura_session_snapshot_new();
+	GKeyFile *key_file = g_key_file_new();
+	GError *error = NULL;
+
+	g_clear_pointer(&snapshot->active_group_id, g_free);
+	snapshot->active_group_id = g_strdup("keep-me");
+	g_key_file_set_integer(key_file, "Session", "version", 3);
+	g_key_file_set_integer(key_file, "Session", "group_count", 1);
+	g_key_file_set_integer(key_file, "Session", "terminal_count", 0);
+	/* The group has no id, so validation must fail after parsing. */
+	g_key_file_set_string(key_file, "Group0", "parent", "root");
+
+	g_assert_false(sakura_session_snapshot_load(key_file, snapshot, &error));
+	g_assert_error(error, G_KEY_FILE_ERROR, G_KEY_FILE_ERROR_INVALID_VALUE);
+	g_assert_cmpstr(snapshot->active_group_id, ==, "keep-me");
+	g_clear_error(&error);
+
+	g_key_file_free(key_file);
+	sakura_session_snapshot_free(snapshot);
+}
+
+
+int
+main(int argc, char **argv)
+{
+	g_test_init(&argc, &argv, NULL);
+	g_test_add_func("/tools/ids/round-trip", test_tool_ids_round_trip);
+	g_test_add_func("/tools/ids/unknown", test_tool_ids_reject_unknown_values);
+	g_test_add_func("/tools/scope", test_tool_scope);
+	g_test_add_func("/session/snapshot/round-trip", test_session_snapshot_round_trip);
+	g_test_add_func("/session/snapshot/reject-cycle", test_session_snapshot_rejects_group_cycle);
+	g_test_add_func("/session/snapshot/optional-defaults", test_session_snapshot_uses_safe_optional_defaults);
+	g_test_add_func("/session/snapshot/preserve-on-failure", test_session_snapshot_preserves_previous_on_failure);
+	return g_test_run();
+}

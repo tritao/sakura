@@ -5,7 +5,7 @@ SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 BUILD_DIR="${BUILD_DIR:-"$SCRIPT_DIR/build"}"
 BUILD_TYPE="${BUILD_TYPE:-Debug}"
 INSTALL_PREFIX="${INSTALL_PREFIX:-/usr/local}"
-BUILD_TARGET="${BUILD_TARGET:-sakura}"
+BUILD_TARGET="${BUILD_TARGET:-all}"
 
 # Set VTE_PREFIX explicitly only when VTE was installed outside the system
 # paths. With no prefix, CMake/pkg-config uses the system VTE package.

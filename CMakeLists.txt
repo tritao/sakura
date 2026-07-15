@@ -6,51 +6,45 @@ SET (VERSION "3.8.9")
 
 
 INCLUDE (FindPkgConfig)
+INCLUDE (CTest)
 FIND_PACKAGE (Python3 COMPONENTS Interpreter)
+
+OPTION (SAKURA_ENABLE_SANITIZERS
+	"Build Sakura and the core tests with AddressSanitizer and UBSan"
+	OFF)
 
 IF (NOT PKG_CONFIG_FOUND)
 	MESSAGE (FATAL_ERROR "pkg-config not found...")
 ENDIF (NOT PKG_CONFIG_FOUND)
 
-pkg_check_modules (GLIB REQUIRED glib-2.0>=2.40)
+pkg_check_modules (GLIB REQUIRED IMPORTED_TARGET glib-2.0>=2.40)
 IF (NOT GLIB_FOUND)
 	MESSAGE(FATAL_ERROR "You don't seem to have glib >= 2.40 development libraries installed...")
 ENDIF (NOT GLIB_FOUND)
 
-pkg_check_modules (GLIB REQUIRED gio-unix-2.0)
-IF (NOT GLIB_FOUND)
+pkg_check_modules (GIO_UNIX REQUIRED IMPORTED_TARGET gio-unix-2.0)
+IF (NOT GIO_UNIX_FOUND)
 	MESSAGE(FATAL_ERROR "You don't seem to have glib >= 2.40 development libraries installed...")
-ENDIF (NOT GLIB_FOUND)
+ENDIF (NOT GIO_UNIX_FOUND)
 
-pkg_check_modules (GTK REQUIRED gtk+-3.0>=3.20)
+pkg_check_modules (GTK REQUIRED IMPORTED_TARGET gtk+-3.0>=3.20)
 IF (NOT GTK_FOUND)
 	MESSAGE(FATAL_ERROR "You don't seem to have gtk >= 3.20 development libraries installed...")
 ENDIF (NOT GTK_FOUND)
 
-pkg_check_modules (VTE REQUIRED vte-2.91>=0.50)
+pkg_check_modules (VTE REQUIRED IMPORTED_TARGET vte-2.91>=0.50)
 IF (NOT VTE_FOUND)
 	MESSAGE(FATAL_ERROR "You don't seem to have vte >= 0.50 development libraries installed...")
 ENDIF (NOT VTE_FOUND)
 
 # WebKitGTK is optional. When available, PR tabs render the GitHub page
 # inside Sakura; otherwise they retain the terminal-based gh pr view fallback.
-pkg_check_modules (WEBKIT41 QUIET webkit2gtk-4.1)
-IF (WEBKIT41_FOUND)
-	SET (WEBKIT_INCLUDE_DIRS ${WEBKIT41_INCLUDE_DIRS})
-	SET (WEBKIT_LIBRARY_DIRS ${WEBKIT41_LIBRARY_DIRS})
-	SET (WEBKIT_LIBRARIES ${WEBKIT41_LIBRARIES})
-	ADD_DEFINITIONS (-DHAVE_WEBKITGTK)
-ELSE (WEBKIT41_FOUND)
-	pkg_check_modules (WEBKIT40 QUIET webkit2gtk-4.0)
-	IF (WEBKIT40_FOUND)
-		SET (WEBKIT_INCLUDE_DIRS ${WEBKIT40_INCLUDE_DIRS})
-		SET (WEBKIT_LIBRARY_DIRS ${WEBKIT40_LIBRARY_DIRS})
-		SET (WEBKIT_LIBRARIES ${WEBKIT40_LIBRARIES})
-		ADD_DEFINITIONS (-DHAVE_WEBKITGTK)
-	ENDIF (WEBKIT40_FOUND)
-ENDIF (WEBKIT41_FOUND)
+pkg_check_modules (WEBKIT41 QUIET IMPORTED_TARGET webkit2gtk-4.1)
+IF (NOT WEBKIT41_FOUND)
+	pkg_check_modules (WEBKIT40 QUIET IMPORTED_TARGET webkit2gtk-4.0)
+ENDIF ()
 
-pkg_check_modules (X11 REQUIRED x11)
+pkg_check_modules (X11 REQUIRED IMPORTED_TARGET x11)
 IF (NOT X11_FOUND)
 	MESSAGE(FATAL_ERROR "You don't seem to have x11 development libraries installed...")
 ENDIF (NOT X11_FOUND)
@@ -58,22 +52,76 @@ ENDIF (NOT X11_FOUND)
 FIND_PROGRAM(POD2MAN pod2man)
 MESSAGE ("pod2man executable is" ${POD2MAN})
 
-ADD_DEFINITIONS (-DVERSION="${VERSION}")
-ADD_DEFINITIONS (-DDATADIR="${CMAKE_INSTALL_PREFIX}/share")
-ADD_DEFINITIONS (-DSAKURA_SOURCE_ICON_DIR="${CMAKE_SOURCE_DIR}/icons")
-ADD_DEFINITIONS (-DSAKURA_SOURCE_SCRIPT_DIR="${CMAKE_SOURCE_DIR}/scripts")
-ADD_DEFINITIONS (-DBUILDTYPE="${CMAKE_BUILD_TYPE}")
+ADD_EXECUTABLE (sakura)
+TARGET_SOURCES (sakura PRIVATE
+	src/sakura.c
+	src/sakura-tab.c
+	src/sakura-workspace.c
+	src/sakura-integrations.c
+	src/sakura-session.c)
 
-IF (${CMAKE_BUILD_TYPE} MATCHES "Debug")
-	SET (CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wall")
-ELSE (${CMAKE_BUILD_TYPE} NOT MATCHES "Debug")
-	SET (CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -O2 -Wno-deprecated-declarations")
-ENDIF (${CMAKE_BUILD_TYPE} MATCHES "Debug")
+TARGET_INCLUDE_DIRECTORIES (sakura PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+TARGET_COMPILE_DEFINITIONS (sakura PRIVATE
+	VERSION="${VERSION}"
+	DATADIR="${CMAKE_INSTALL_PREFIX}/share"
+	SAKURA_SOURCE_ICON_DIR="${CMAKE_SOURCE_DIR}/icons"
+	SAKURA_SOURCE_SCRIPT_DIR="${CMAKE_SOURCE_DIR}/scripts"
+	BUILDTYPE="${CMAKE_BUILD_TYPE}")
+IF (WEBKIT41_FOUND OR WEBKIT40_FOUND)
+	TARGET_COMPILE_DEFINITIONS (sakura PRIVATE HAVE_WEBKITGTK)
+ENDIF ()
 
-INCLUDE_DIRECTORIES (. ${GTK_INCLUDE_DIRS} ${VTE_INCLUDE_DIRS} ${WEBKIT_INCLUDE_DIRS})
-LINK_DIRECTORIES (${GTK_LIBRARY_DIRS} ${VTE_LIBRARY_DIRS} ${X11_LIBRARY_DIRS} ${WEBKIT_LIBRARY_DIRS})
-LINK_LIBRARIES (${GTK_LIBRARIES} ${VTE_LIBRARIES} ${X11_LIBRARIES} ${WEBKIT_LIBRARIES} m)
-ADD_EXECUTABLE (sakura src/sakura.c)
+# GTK and GLib callbacks intentionally leave some ABI parameters unused. The
+# legacy configuration stores accelerator/button values as gint while GDK
+# exposes event masks/buttons as guint; keep those compatibility warnings out
+# of every target while retaining the main warning policy.
+SET (SAKURA_WARNING_FLAGS
+	-Wall -Wextra -Wformat=2
+	-Wno-unused-parameter -Wno-sign-compare)
+IF (CMAKE_BUILD_TYPE MATCHES "Debug")
+	TARGET_COMPILE_OPTIONS (sakura PRIVATE ${SAKURA_WARNING_FLAGS})
+ELSE ()
+	TARGET_COMPILE_OPTIONS (sakura PRIVATE ${SAKURA_WARNING_FLAGS}
+		-O2 -Wno-deprecated-declarations)
+ENDIF ()
+IF (WEBKIT41_FOUND)
+	TARGET_LINK_LIBRARIES (sakura PRIVATE PkgConfig::WEBKIT41)
+ELSEIF (WEBKIT40_FOUND)
+	TARGET_LINK_LIBRARIES (sakura PRIVATE PkgConfig::WEBKIT40)
+ENDIF ()
+TARGET_LINK_LIBRARIES (sakura PRIVATE
+	PkgConfig::GLIB
+	PkgConfig::GIO_UNIX
+	PkgConfig::GTK
+	PkgConfig::VTE
+	PkgConfig::X11
+	m)
+
+IF (SAKURA_ENABLE_SANITIZERS)
+	TARGET_COMPILE_OPTIONS (sakura PRIVATE -fsanitize=address,undefined -fno-omit-frame-pointer)
+	TARGET_LINK_OPTIONS (sakura PRIVATE -fsanitize=address,undefined)
+ENDIF ()
+
+IF (BUILD_TESTING)
+	ADD_EXECUTABLE (sakura-core-test)
+	TARGET_SOURCES (sakura-core-test PRIVATE
+		tests/test-core.c
+		src/sakura-integrations.c
+		src/sakura-session.c)
+	SET_PROPERTY (TARGET sakura-core-test APPEND PROPERTY COMPILE_DEFINITIONS SAKURA_CORE_TEST)
+	TARGET_INCLUDE_DIRECTORIES (sakura-core-test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+	TARGET_COMPILE_OPTIONS (sakura-core-test PRIVATE ${SAKURA_WARNING_FLAGS})
+	TARGET_LINK_LIBRARIES (sakura-core-test PRIVATE
+		PkgConfig::GLIB
+		PkgConfig::GIO_UNIX
+		PkgConfig::GTK
+		PkgConfig::VTE)
+	IF (SAKURA_ENABLE_SANITIZERS)
+		TARGET_COMPILE_OPTIONS (sakura-core-test PRIVATE -fsanitize=address,undefined -fno-omit-frame-pointer)
+		TARGET_LINK_OPTIONS (sakura-core-test PRIVATE -fsanitize=address,undefined)
+	ENDIF ()
+	ADD_TEST (NAME core COMMAND sakura-core-test)
+ENDIF (BUILD_TESTING)
 
 IF (Python3_Interpreter_FOUND)
 	ADD_CUSTOM_TARGET (session-stress
@@ -81,6 +129,17 @@ IF (Python3_Interpreter_FOUND)
 		        --binary $<TARGET_FILE:sakura>
 		DEPENDS sakura
 		USES_TERMINAL)
+
+	FIND_PROGRAM (XVFB_EXECUTABLE Xvfb)
+	FIND_PROGRAM (XDOTOOL_EXECUTABLE xdotool)
+	IF (BUILD_TESTING AND XVFB_EXECUTABLE AND XDOTOOL_EXECUTABLE)
+		ADD_TEST (NAME session-stress
+		          COMMAND ${Python3_EXECUTABLE}
+		                  ${CMAKE_SOURCE_DIR}/tests/session-stress.py
+		                  --binary $<TARGET_FILE:sakura>
+		                  --iterations 1 --no-drag)
+		SET_TESTS_PROPERTIES (session-stress PROPERTIES TIMEOUT 90)
+	ENDIF (BUILD_TESTING AND XVFB_EXECUTABLE AND XDOTOOL_EXECUTABLE)
 ENDIF (Python3_Interpreter_FOUND)
 
 ADD_SUBDIRECTORY (po)

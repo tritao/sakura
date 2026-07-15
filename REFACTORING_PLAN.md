@@ -6,6 +6,67 @@ Refactor Sakura into a small number of cohesive modules while preserving its
 current behavior, session format, GTK/VTE integration, and ability to absorb
 upstream C changes.
 
+## Implementation Status
+
+The refactor is implemented in the five-module layout below. The application
+file intentionally remains the owner of top-level configuration,
+menu/preferences, and process lifecycle; subsystem behavior has been moved
+behind the existing module boundaries rather than split into more files:
+
+- `SakuraApp`, `SakuraTab`, and `SakuraSidebarNode` are named internal types;
+  tabs have stable application-owned identities and notebook indexes are
+  adapters rather than persistent state.
+- Tab status, tab-strip rendering, sidebar row rendering, spinner updates, and
+  sidebar model ownership have explicit subsystem entry points.
+- Session files are parsed into plain records, validated, and atomically
+  committed to a snapshot before the UI consumes them. Compatibility tests
+  cover round trips, older optional fields, malformed group graphs, and
+  failed-restore preservation.
+- Tool descriptors, executable discovery, tool-tab reuse, target matching, and
+  the core CMake/pkg-config boundaries are centralized.
+- Debug and Release builds use target-scoped dependencies and warnings; an
+  optional AddressSanitizer/UndefinedBehaviorSanitizer build is available via
+  `-DSAKURA_ENABLE_SANITIZERS=ON`.
+- Terminal/VTE creation, signal wiring, spawning, tab insertion, and tab
+  deletion now live behind `sakura-tab.c`.
+- Sidebar construction, groups, context menus, selection, scoped tabs,
+  ordering, persistence of group structure, and tracking of the current
+  working directory now live in `sakura-workspace.c`.
+- Session snapshot serialization/loading, locking, backups, and Bash history
+  setup now live in `sakura-session.c`; the workspace builds and applies the
+  validated snapshot records.
+- Session dirty-state policy, save timers, duplicate-instance confirmation,
+  and per-instance session selection now also live in `sakura-session.c`.
+- Notebook selection/removal callbacks live in `sakura-workspace.c`; terminal
+  input, focus, close/reorder, child-exit, and tab-name/search actions live in
+  `sakura-tab.c`.
+- Codex tool actions (attach, refresh name, and hook installation) now live in
+  `sakura-integrations.c`; `sakura.c` retains generic menu composition.
+- Startup sizing tolerates GTK's transient "no current page" state during
+  first-tab creation, and shutdown releases owned tab records without making
+  widget calls after the main window's native children have been destroyed.
+
+The five-module boundary is now stable. `sakura.c` is approximately 3,300
+lines because it still contains the deliberately cohesive configuration,
+preferences, menu construction, theme/font/palette handling, startup, and
+top-level lifecycle code. Further reduction should only happen when a whole
+responsibility can move to one of the existing modules without creating a
+new catch-all file or widening global interfaces.
+
+### Current phase status
+
+| Phase | Status | Notes |
+| --- | --- | --- |
+| 0. Safety net | Complete | Core tests, CTest, stress target, warnings, and sanitizer option exist. |
+| 1. Explicit ownership | Complete | Named app/tab/sidebar types and lifecycle helpers are in place. |
+| 2. Stable tab identity | Complete | `SakuraApp.tabs` is authoritative; notebook pages are adapters. |
+| 3. Tab lifecycle | First extraction complete | Creation, spawning, terminal actions, callbacks, insertion, and deletion are in `sakura-tab.c`. |
+| 4. Session persistence | First extraction complete | Plain snapshots, validation, serialization, loading, locking, backups, and failed-restore handling are separated. |
+| 5. Workspace UI | First extraction complete | Sidebar, scoped tabs, snapshot assembly, restore application, and ordering are in `sakura-workspace.c`. |
+| 6. Integrations | First extraction complete | Tools, Codex, URI, PR, Open Here, and discovery are centralized. |
+| 7. Application file reduction | First reduction complete | Session policy, notebook/VTE callbacks, tab actions, and Codex dialogs were removed; configuration, preferences, menus, and top-level lifecycle intentionally remain in `sakura.c`. |
+| 8. CMake modernization | Complete | Target-scoped sources/dependencies, CTest, and optional sanitizers are configured. |
+
 The main architectural goals are:
 
 - Make application and tab ownership explicit.
@@ -305,6 +366,21 @@ Every phase must pass:
 Session-format compatibility should be tested against a fixture produced by
 the current committed version.
 
+## Current Verification Record
+
+- Debug build: `cmake --build build -j2` passed.
+- Release build: `/tmp/sakura-refactor-release-build` passed.
+- ASan/UBSan build: `/tmp/sakura-refactor-asan-build` passed.
+- Core CTest passed in Debug, Release, and ASan/UBSan configurations.
+- Full Debug CTest passed, including `session-stress` with nested groups,
+  terminal restoration, failed-restore preservation, and drag/reorder
+  coverage.
+- Direct ASan GUI restore stress passed with leak detection disabled because
+  GTK/X11 teardown owns process-global allocations outside Sakura's records.
+- `git diff --check` passed.
+- The manual smoke checklist remains the final human-facing verification
+  step after the refactor is reviewed in the running application.
+
 ## Definition of Done
 
 The refactor is complete when:
@@ -322,5 +398,7 @@ The refactor is complete when:
 - Current user-visible behavior and the existing session format remain
   compatible.
 
-The first implementation batch should cover Phase 0 and the named-state and
-ownership portion of Phase 1.
+The first implementation batch covered Phase 0 and the named-state and
+ownership portion of Phase 1. The current implementation has completed the
+first extraction pass through Phases 3–7; the remaining item is the manual
+GUI smoke checklist, which is intentionally kept outside automated tests.

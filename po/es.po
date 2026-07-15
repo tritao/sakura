@@ -5,7 +5,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: sakura\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-07-15 00:55+0100\n"
+"POT-Creation-Date: 2026-07-15 10:18+0100\n"
 "PO-Revision-Date: 2019-08-12 16:53+0000\n"
 "Last-Translator: David Gómez <david@pleyades.net>\n"
 "Language-Team: <davidge@pleyades.net>\n"
@@ -15,6 +15,369 @@ msgstr ""
 "Content-Transfer-Encoding: 8bit\n"
 "X-Launchpad-Export-Date: 2020-05-06 05:44+0000\n"
 "X-Generator: Launchpad (build fbdff7602bd10fb883bf7e2ddcc7fd5a16f60398)\n"
+
+#, fuzzy
+msgid "GitUI"
+msgstr "Abrir correo"
+
+msgid "GitHub Dashboard"
+msgstr ""
+
+#, fuzzy
+msgid "Pull request"
+msgstr "Pantalla completa"
+
+msgid "Git Cola"
+msgstr ""
+
+msgid "Tool"
+msgstr ""
+
+msgid "Could not determine the current directory."
+msgstr ""
+
+msgid "Could not find a file manager opener (gio or xdg-open)."
+msgstr ""
+
+#, c-format
+msgid "Could not parse the configured editor command: %s"
+msgstr ""
+
+#, fuzzy
+msgid "empty command"
+msgstr "Ejecutar orden"
+
+msgid ""
+"No graphical editor was found. Set editor_command in Sakura's config or "
+"SAKURA_EDITOR."
+msgstr ""
+
+#, c-format
+msgid "Could not open %s: %s"
+msgstr ""
+
+msgid "the file manager"
+msgstr ""
+
+msgid "the editor"
+msgstr ""
+
+msgid "unknown error"
+msgstr ""
+
+msgid "File Manager"
+msgstr ""
+
+msgid "Editor"
+msgstr ""
+
+msgid ""
+"GitHub Dashboard is not installed. Run: gh extension install dlvhdr/gh-dash"
+msgstr ""
+
+msgid "Git Cola is not installed. Install the git-cola package and try again."
+msgstr ""
+
+msgid "GitUI is not installed. Install it and try again."
+msgstr ""
+
+msgid "The current directory is not inside a Git repository."
+msgstr ""
+
+msgid "Could not determine the Git repository root."
+msgstr ""
+
+msgid "Open pull request"
+msgstr ""
+
+msgid "_Cancel"
+msgstr "_Cancelar"
+
+msgid "_Open"
+msgstr ""
+
+msgid "https://github.com/owner/repo/pull/123"
+msgstr ""
+
+msgid "Enter a valid HTTPS GitHub pull request URL."
+msgstr ""
+
+msgid "GitHub CLI is not installed. Install gh and try again."
+msgstr ""
+
+#, c-format
+msgid "Could not parse BROWSER: %s"
+msgstr ""
+
+#, c-format
+msgid "Could not open link with %s: %s"
+msgstr ""
+
+#, c-format
+msgid "Could not open link: %s"
+msgstr ""
+
+msgid "Codex rejected the rename request"
+msgstr ""
+
+#, c-format
+msgid "Could not rename Codex session: %s"
+msgstr ""
+
+msgid "The Codex session helper is not installed."
+msgstr ""
+
+#, c-format
+msgid "Could not start the Codex session helper: %s"
+msgstr ""
+
+msgid "enabled"
+msgstr ""
+
+msgid "incomplete"
+msgstr ""
+
+msgid "missing"
+msgstr ""
+
+#, c-format
+msgid ""
+"Codex tracking status:\n"
+"\n"
+"Hook entry: %s\n"
+"Tracking directory: %s\n"
+"Current tab environment: %s\n"
+"Current tab kind: %s\n"
+"Current Codex session: %s\n"
+"Current Codex name: %s"
+msgstr ""
+
+msgid "disabled"
+msgstr ""
+
+msgid "present"
+msgstr ""
+
+msgid "missing (reopen this tab)"
+msgstr ""
+
+msgid "Codex"
+msgstr ""
+
+#, fuzzy
+msgid "shell"
+msgstr "Shell de login"
+
+msgid "not received"
+msgstr ""
+
+msgid "not available"
+msgstr ""
+
+msgid "Resume session"
+msgstr ""
+
+msgid "_Resume"
+msgstr ""
+
+msgid "Session ID or name"
+msgstr ""
+
+msgid "The current tab is not attached to a Codex session."
+msgstr ""
+
+msgid "Rename Codex session"
+msgstr ""
+
+msgid "_Rename"
+msgstr ""
+
+msgid "Session name"
+msgstr ""
+
+msgid "Attach Codex session"
+msgstr ""
+
+msgid "_Attach"
+msgstr ""
+
+msgid ""
+"The Codex hook is not installed. Run scripts/sakura-codex-session-hook --"
+"install from the Sakura source tree first."
+msgstr ""
+
+#, c-format
+msgid "Could not install the Codex session hook: %s"
+msgstr ""
+
+msgid "Codex session tracking is enabled."
+msgstr ""
+
+msgid "Back"
+msgstr ""
+
+msgid "Forward"
+msgstr ""
+
+msgid "Reload"
+msgstr ""
+
+msgid "Open in external browser"
+msgstr ""
+
+msgid "This Sakura session is already open."
+msgstr ""
+
+msgid "Sakura session already open"
+msgstr ""
+
+msgid ""
+"Choose Exit to keep using the existing session, or launch a new persistent "
+"instance with its own saved workspace."
+msgstr ""
+
+msgid "_Exit"
+msgstr ""
+
+msgid "_Launch new instance"
+msgstr ""
+
+msgid "Idle"
+msgstr ""
+
+msgid "Working"
+msgstr ""
+
+msgid "Needs approval"
+msgstr ""
+
+msgid "Ready to review"
+msgstr ""
+
+msgid "Interrupted"
+msgstr ""
+
+msgid "Error"
+msgstr ""
+
+#, c-format
+msgid "Terminal %d"
+msgstr "Terminal %d"
+
+msgid "Search"
+msgstr "Buscar"
+
+msgid "_Apply"
+msgstr "_Aplicar"
+
+msgid "Set tab name"
+msgstr "Establecer nombre de pestaña"
+
+msgid "New text"
+msgstr "Texto nuevo"
+
+msgid ""
+"There is a running process in this terminal.\n"
+"\n"
+"Do you really want to close it?"
+msgstr ""
+"Hay procesos en ejecución en este terminal.\n"
+"\n"
+"¿Confirma que quiere cerrarlo?"
+
+msgid "All terminals"
+msgstr ""
+
+#, c-format
+msgid "%s (%u)"
+msgstr ""
+
+#, fuzzy
+msgid "Terminal"
+msgstr "Terminal %d"
+
+#, fuzzy
+msgid "Copy pull request URL"
+msgstr "Pantalla completa"
+
+#, fuzzy
+msgid "Rename terminal..."
+msgstr "Establecer nombre de pestaña..."
+
+#, fuzzy
+msgid "Close terminal"
+msgstr "Cerrar pestaña"
+
+msgid "Open pull request..."
+msgstr ""
+
+#, fuzzy
+msgid "New terminal in group"
+msgstr "Pestaña nueva"
+
+msgid "Open Here"
+msgstr ""
+
+msgid "Tools"
+msgstr ""
+
+msgid "Move to group"
+msgstr ""
+
+msgid "New Codex session"
+msgstr ""
+
+msgid "Resume session..."
+msgstr ""
+
+msgid "Rename Codex session..."
+msgstr ""
+
+#, fuzzy
+msgid "New terminal"
+msgstr "Pestaña nueva"
+
+#, fuzzy
+msgid "New terminal here"
+msgstr "Pestaña nueva"
+
+#, fuzzy
+msgid "New Codex session here"
+msgstr "Pestaña nueva"
+
+msgid "New subgroup"
+msgstr ""
+
+msgid "Rename group..."
+msgstr ""
+
+msgid "Delete group"
+msgstr ""
+
+msgid "New group"
+msgstr ""
+
+msgid "_Create"
+msgstr ""
+
+msgid "Group name"
+msgstr ""
+
+msgid "Rename group"
+msgstr ""
+
+msgid "Only empty terminal groups can be deleted."
+msgstr ""
+
+msgid "Workspace"
+msgstr ""
+
+msgid "No terminals in this group"
+msgstr ""
+
+#, c-format
+msgid "Workspace (%u need attention)"
+msgstr ""
 
 msgid "Print version number"
 msgstr "Imprimir número de versión"
@@ -70,163 +433,6 @@ msgstr ""
 msgid "Select initial colorset"
 msgstr "Seleccionar grupo de colores inicial"
 
-msgid "Workspace"
-msgstr ""
-
-#, c-format
-msgid "Workspace (%u need attention)"
-msgstr ""
-
-msgid "Idle"
-msgstr ""
-
-msgid "Working"
-msgstr ""
-
-msgid "Needs approval"
-msgstr ""
-
-msgid "Ready to review"
-msgstr ""
-
-msgid "Stopped"
-msgstr ""
-
-#, fuzzy
-msgid "GitUI"
-msgstr "Abrir correo"
-
-msgid "GitHub Dashboard"
-msgstr ""
-
-#, fuzzy
-msgid "Pull request"
-msgstr "Pantalla completa"
-
-msgid "Git Cola"
-msgstr ""
-
-msgid "Tool"
-msgstr ""
-
-#, fuzzy
-msgid "Terminal"
-msgstr "Terminal %d"
-
-msgid "All terminals"
-msgstr ""
-
-#, c-format
-msgid "%s (%u)"
-msgstr ""
-
-#, fuzzy
-msgid "Rename terminal..."
-msgstr "Establecer nombre de pestaña..."
-
-#, fuzzy
-msgid "Close terminal"
-msgstr "Cerrar pestaña"
-
-msgid "Codex"
-msgstr ""
-
-#, c-format
-msgid "Terminal %d"
-msgstr "Terminal %d"
-
-msgid "File Manager"
-msgstr ""
-
-msgid "Editor"
-msgstr ""
-
-msgid "Open pull request..."
-msgstr ""
-
-#, fuzzy
-msgid "New terminal in group"
-msgstr "Pestaña nueva"
-
-msgid "Open Here"
-msgstr ""
-
-msgid "Tools"
-msgstr ""
-
-msgid "Move to group"
-msgstr ""
-
-msgid "New Codex session"
-msgstr ""
-
-msgid "Resume session..."
-msgstr ""
-
-msgid "Rename Codex session..."
-msgstr ""
-
-#, fuzzy
-msgid "New terminal"
-msgstr "Pestaña nueva"
-
-#, fuzzy
-msgid "New terminal here"
-msgstr "Pestaña nueva"
-
-msgid "New subgroup"
-msgstr ""
-
-msgid "Rename group..."
-msgstr ""
-
-msgid "Delete group"
-msgstr ""
-
-msgid "New group"
-msgstr ""
-
-msgid "_Cancel"
-msgstr "_Cancelar"
-
-msgid "_Create"
-msgstr ""
-
-msgid "Group name"
-msgstr ""
-
-msgid "Rename group"
-msgstr ""
-
-msgid "_Apply"
-msgstr "_Aplicar"
-
-msgid "Only empty terminal groups can be deleted."
-msgstr ""
-
-msgid "This Sakura session is already open."
-msgstr ""
-
-msgid "Sakura session already open"
-msgstr ""
-
-msgid ""
-"Choose Exit to keep using the existing session, or launch a new persistent "
-"instance with its own saved workspace."
-msgstr ""
-
-msgid "_Exit"
-msgstr ""
-
-msgid "_Launch new instance"
-msgstr ""
-
-msgid "unknown error"
-msgstr ""
-
-msgid "No terminals in this group"
-msgstr ""
-
 msgid ""
 "There are running processes.\n"
 "\n"
@@ -238,12 +444,6 @@ msgstr ""
 
 msgid "Select font"
 msgstr "Seleccionar tipo de letra"
-
-msgid "Set tab name"
-msgstr "Establecer nombre de pestaña"
-
-msgid "New text"
-msgstr "Texto nuevo"
 
 msgid "Select colors"
 msgstr "Seleccionar colores"
@@ -279,170 +479,20 @@ msgid "New window title"
 msgstr "Título nuevo de la ventana"
 
 #, c-format
-msgid "Could not parse BROWSER: %s"
-msgstr ""
-
-#, c-format
-msgid "Could not open link with %s: %s"
-msgstr ""
-
-#, c-format
-msgid "Could not open link: %s"
-msgstr ""
-
-msgid "Could not determine the current directory."
-msgstr ""
-
-msgid "Could not find a file manager opener (gio or xdg-open)."
-msgstr ""
-
-#, c-format
-msgid "Could not parse the configured editor command: %s"
-msgstr ""
-
-#, fuzzy
-msgid "empty command"
-msgstr "Ejecutar orden"
-
-msgid ""
-"No graphical editor was found. Set editor_command in Sakura's config or "
-"SAKURA_EDITOR."
-msgstr ""
-
-#, c-format
-msgid "Could not open %s: %s"
-msgstr ""
-
-msgid "the file manager"
-msgstr ""
-
-msgid "the editor"
-msgstr ""
-
-msgid ""
-"GitHub Dashboard is not installed. Run: gh extension install dlvhdr/gh-dash"
-msgstr ""
-
-msgid "Git Cola is not installed. Install the git-cola package and try again."
-msgstr ""
-
-msgid "GitUI is not installed. Install it and try again."
-msgstr ""
-
-msgid "The current directory is not inside a Git repository."
-msgstr ""
-
-msgid "Could not determine the Git repository root."
-msgstr ""
-
-msgid "Open pull request"
-msgstr ""
-
-msgid "_Open"
-msgstr ""
-
-msgid "https://github.com/owner/repo/pull/123"
-msgstr ""
-
-msgid "Enter a valid HTTPS GitHub pull request URL."
-msgstr ""
-
-msgid "GitHub CLI is not installed. Install gh and try again."
-msgstr ""
-
-msgid "Resume session"
-msgstr ""
-
-msgid "_Resume"
-msgstr ""
-
-msgid "Session ID or name"
-msgstr ""
-
-msgid "Attach Codex session"
-msgstr ""
-
-msgid "_Attach"
-msgstr ""
-
-msgid "The current tab is not attached to a Codex session."
-msgstr ""
-
-msgid "Rename Codex session"
-msgstr ""
-
-msgid "_Rename"
-msgstr ""
-
-msgid "Session name"
-msgstr ""
-
-msgid "Codex rejected the rename request"
-msgstr ""
-
-#, c-format
-msgid "Could not rename Codex session: %s"
-msgstr ""
-
-msgid "The Codex session helper is not installed."
-msgstr ""
-
-#, c-format
-msgid "Could not start the Codex session helper: %s"
-msgstr ""
-
-#, c-format
-msgid ""
-"Codex tracking status:\n"
-"\n"
-"Hook entry: %s\n"
-"Tracking directory: %s\n"
-"Current tab environment: %s\n"
-"Current tab kind: %s\n"
-"Current Codex session: %s\n"
-"Current Codex name: %s"
-msgstr ""
-
-msgid "present"
-msgstr ""
-
-msgid "missing"
-msgstr ""
-
-msgid "disabled"
-msgstr ""
-
-msgid "missing (reopen this tab)"
-msgstr ""
-
-#, fuzzy
-msgid "shell"
-msgstr "Shell de login"
-
-msgid "not received"
-msgstr ""
-
-msgid "not available"
-msgstr ""
-
-msgid ""
-"The Codex hook is not installed. Run scripts/sakura-codex-session-hook --"
-"install from the Sakura source tree first."
-msgstr ""
-
-#, c-format
-msgid "Could not install the Codex session hook: %s"
-msgstr ""
-
-msgid "Codex session tracking is enabled."
-msgstr ""
-
-#, c-format
 msgid "Could not create a separate persistent session.\n"
 msgstr ""
 
 #, c-format
 msgid "Could not lock the Sakura session.\n"
+msgstr ""
+
+msgid "Codex session tracking enabled"
+msgstr ""
+
+msgid "Repair Codex session tracking"
+msgstr ""
+
+msgid "Enable Codex session tracking"
 msgstr ""
 
 msgid "Open mail"
@@ -470,9 +520,6 @@ msgstr ""
 msgid "Check session tracking"
 msgstr ""
 
-msgid "Enable Codex session tracking"
-msgstr ""
-
 msgid "Set tab name..."
 msgstr "Establecer nombre de pestaña..."
 
@@ -487,6 +534,9 @@ msgstr "Copiar"
 
 msgid "Paste"
 msgstr "Pegar"
+
+msgid "Select text mode"
+msgstr ""
 
 msgid "Options"
 msgstr "Opciones"
@@ -552,30 +602,6 @@ msgstr "Subrayado"
 
 msgid "IBeam"
 msgstr "IBeam"
-
-msgid "Search"
-msgstr "Buscar"
-
-msgid "Back"
-msgstr ""
-
-msgid "Forward"
-msgstr ""
-
-msgid "Reload"
-msgstr ""
-
-msgid "Open in external browser"
-msgstr ""
-
-msgid ""
-"There is a running process in this terminal.\n"
-"\n"
-"Do you really want to close it?"
-msgstr ""
-"Hay procesos en ejecución en este terminal.\n"
-"\n"
-"¿Confirma que quiere cerrarlo?"
 
 msgid "Configuration has been modified by another process. Overwrite?"
 msgstr "La configuración ha sido modificada por otro proceso. ¿Sobreescribir?"
