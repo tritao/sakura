@@ -8,6 +8,35 @@
 
 static guint next_layout_id;
 
+
+void
+sakura_layout_paned_position_cb(GObject *object, GParamSpec *pspec, gpointer data)
+{
+	SakuraLayoutNode *node = data;
+	GtkAllocation allocation;
+	gint available, position;
+	gdouble ratio;
+
+	(void)pspec;
+	if (node == NULL || node->kind != SAKURA_LAYOUT_SPLIT ||
+	    !GTK_IS_PANED(object))
+		return;
+	gtk_widget_get_allocation(GTK_WIDGET(object), &allocation);
+	available = node->data.split.direction == SAKURA_SPLIT_RIGHT
+	          ? allocation.width : allocation.height;
+	position = gtk_paned_get_position(GTK_PANED(object));
+	if (available <= 0 || position <= 0)
+		return;
+	ratio = (gdouble)position / (gdouble)available;
+	if (ratio >= 0.05 && ratio <= 0.95 && isfinite(ratio) &&
+	    fabs(node->data.split.ratio - ratio) > 0.001) {
+		node->data.split.ratio = ratio;
+	#ifndef SAKURA_CORE_TEST
+		sakura_session_mark_dirty();
+	#endif
+	}
+}
+
 static gchar *
 sakura_layout_new_id(void)
 {
@@ -76,6 +105,7 @@ sakura_page_new(const gchar *id)
 	page->id = id != NULL && id[0] != '\0'
 	        ? g_strdup(id)
 	        : g_strdup_printf("page-%u", ++next_page_id);
+	page->panes = g_ptr_array_new();
 	return page;
 }
 
@@ -87,6 +117,7 @@ sakura_page_free(SakuraPage *page)
 		return;
 
 	sakura_layout_node_free_recursive(page->layout_root);
+	g_clear_pointer(&page->panes, g_ptr_array_unref);
 	g_free(page->id);
 	g_free(page->title);
 	g_free(page->last_active_terminal_id);
@@ -119,8 +150,11 @@ sakura_layout_leaf_new(SakuraPage *page, SakuraTab *tab)
 	node->data.leaf.tab = tab;
 	tab->page = page;
 	tab->layout_leaf = node;
+	g_ptr_array_add(page->panes, tab);
 	if (page->layout_root == NULL)
 		page->layout_root = node;
+	if (page->active_tab == NULL)
+		page->active_tab = tab;
 	return node;
 }
 
@@ -171,6 +205,7 @@ sakura_layout_split_leaf(SakuraLayoutNode *leaf,
 
 	split = sakura_layout_node_new(page, SAKURA_LAYOUT_SPLIT);
 	if (split == NULL) {
+		g_ptr_array_remove_fast(page->panes, new_tab);
 		new_tab->page = NULL;
 		new_tab->layout_leaf = NULL;
 		sakura_layout_node_free_shallow(new_leaf);
@@ -182,6 +217,7 @@ sakura_layout_split_leaf(SakuraLayoutNode *leaf,
 	split->data.split.second = new_leaf;
 	if (old_parent == NULL) {
 		if (page->layout_root != leaf) {
+			g_ptr_array_remove_fast(page->panes, new_tab);
 			new_tab->page = NULL;
 			new_tab->layout_leaf = NULL;
 			sakura_layout_node_free_shallow(new_leaf);
@@ -196,6 +232,7 @@ sakura_layout_split_leaf(SakuraLayoutNode *leaf,
 		old_parent->data.split.second = split;
 		split->parent = old_parent;
 	} else {
+		g_ptr_array_remove_fast(page->panes, new_tab);
 		new_tab->page = NULL;
 		new_tab->layout_leaf = NULL;
 		sakura_layout_node_free_shallow(new_leaf);
@@ -204,6 +241,226 @@ sakura_layout_split_leaf(SakuraLayoutNode *leaf,
 	}
 	leaf->parent = split;
 	new_leaf->parent = split;
+	return TRUE;
+}
+
+
+gboolean
+sakura_layout_split_leaf_widgets(SakuraLayoutNode *leaf,
+                                 SakuraSplitDirection direction,
+                                 SakuraTab *new_tab)
+{
+	SakuraLayoutNode *old_parent, *split, *new_leaf;
+	SakuraPage *page;
+	GtkWidget *old_widget, *paned;
+	gboolean old_is_first = FALSE;
+
+	if (leaf == NULL || leaf->kind != SAKURA_LAYOUT_LEAF ||
+	    leaf->widget == NULL || new_tab == NULL || new_tab->hbox == NULL)
+		return FALSE;
+	page = leaf->page;
+	old_parent = leaf->parent;
+	old_widget = leaf->widget;
+	if (old_parent != NULL) {
+		if (old_parent->kind != SAKURA_LAYOUT_SPLIT || old_parent->widget == NULL)
+			return FALSE;
+		old_is_first = old_parent->data.split.first == leaf;
+		if (!old_is_first && old_parent->data.split.second != leaf)
+			return FALSE;
+	}
+
+	if (!sakura_layout_split_leaf(leaf, direction, new_tab))
+		return FALSE;
+	split = leaf->parent;
+	new_leaf = split != NULL && split->kind == SAKURA_LAYOUT_SPLIT
+	         ? split->data.split.second : NULL;
+	if (split == NULL || new_leaf == NULL) {
+		/* This should be unreachable after a successful model operation. */
+		return FALSE;
+	}
+
+	paned = gtk_paned_new(direction == SAKURA_SPLIT_RIGHT
+	                     ? GTK_ORIENTATION_HORIZONTAL
+	                     : GTK_ORIENTATION_VERTICAL);
+	gtk_widget_set_hexpand(paned, TRUE);
+	gtk_widget_set_vexpand(paned, TRUE);
+
+	/* Hold the old surface while removing it from its current container. */
+	g_object_ref(old_widget);
+	if (old_parent == NULL) {
+		gtk_container_remove(GTK_CONTAINER(page->container), old_widget);
+		gtk_box_pack_start(GTK_BOX(page->container), paned, TRUE, TRUE, 0);
+	} else {
+		gtk_container_remove(GTK_CONTAINER(old_parent->widget), old_widget);
+		if (old_is_first)
+			gtk_paned_pack1(GTK_PANED(old_parent->widget), paned, TRUE, FALSE);
+		else
+			gtk_paned_pack2(GTK_PANED(old_parent->widget), paned, TRUE, FALSE);
+	}
+	gtk_paned_pack1(GTK_PANED(paned), old_widget, TRUE, FALSE);
+	gtk_paned_pack2(GTK_PANED(paned), new_tab->hbox, TRUE, FALSE);
+	g_object_unref(old_widget);
+
+	leaf->widget = old_widget;
+	new_leaf->widget = new_tab->hbox;
+	split->widget = paned;
+	g_signal_connect(paned, "notify::position",
+	                 G_CALLBACK(sakura_layout_paned_position_cb), split);
+	gtk_widget_show_all(paned);
+	return TRUE;
+}
+
+
+gboolean
+sakura_layout_split_node_widgets(SakuraLayoutNode *node,
+                                 SakuraSplitDirection direction,
+                                 SakuraTab *new_tab)
+{
+	SakuraLayoutNode *old_parent, *split, *new_leaf;
+	SakuraPage *page;
+	GtkWidget *old_widget, *paned;
+	gboolean old_is_first = FALSE;
+
+	if (node == NULL || node->page == NULL || node->widget == NULL ||
+	    new_tab == NULL || new_tab->hbox == NULL)
+		return FALSE;
+	page = node->page;
+	old_parent = node->parent;
+	if (old_parent != NULL) {
+		if (old_parent->kind != SAKURA_LAYOUT_SPLIT || old_parent->widget == NULL)
+			return FALSE;
+		old_is_first = old_parent->data.split.first == node;
+		if (!old_is_first && old_parent->data.split.second != node)
+			return FALSE;
+	}
+	if (node->kind == SAKURA_LAYOUT_LEAF) {
+		if (!sakura_layout_split_leaf(node, direction, new_tab))
+			return FALSE;
+	} else {
+		new_leaf = sakura_layout_leaf_new(page, new_tab);
+		if (new_leaf == NULL)
+			return FALSE;
+		split = sakura_layout_node_new(page, SAKURA_LAYOUT_SPLIT);
+		if (split == NULL) {
+			g_ptr_array_remove_fast(page->panes, new_tab);
+			new_tab->page = NULL;
+			new_tab->layout_leaf = NULL;
+			sakura_layout_node_free_shallow(new_leaf);
+			return FALSE;
+		}
+		split->data.split.direction = direction;
+		split->data.split.ratio = 0.5;
+		split->data.split.first = node;
+		split->data.split.second = new_leaf;
+		if (old_parent == NULL) {
+			if (page->layout_root != node) {
+				g_ptr_array_remove_fast(page->panes, new_tab);
+				new_tab->page = NULL;
+				new_tab->layout_leaf = NULL;
+				sakura_layout_node_free_shallow(new_leaf);
+				sakura_layout_node_free_shallow(split);
+				return FALSE;
+			}
+			page->layout_root = split;
+		} else if (old_is_first) {
+			old_parent->data.split.first = split;
+			split->parent = old_parent;
+		} else {
+			old_parent->data.split.second = split;
+			split->parent = old_parent;
+		}
+		node->parent = split;
+		new_leaf->parent = split;
+	}
+
+	/* In the leaf case the model operation has already populated split/new_leaf. */
+	split = new_tab->layout_leaf != NULL ? new_tab->layout_leaf->parent : NULL;
+	new_leaf = new_tab->layout_leaf;
+	if (split == NULL || new_leaf == NULL)
+		return FALSE;
+	old_widget = node->widget;
+	paned = gtk_paned_new(direction == SAKURA_SPLIT_RIGHT
+	                     ? GTK_ORIENTATION_HORIZONTAL : GTK_ORIENTATION_VERTICAL);
+	gtk_widget_set_hexpand(paned, TRUE);
+	gtk_widget_set_vexpand(paned, TRUE);
+	g_object_ref(old_widget);
+	if (old_parent == NULL) {
+		gtk_container_remove(GTK_CONTAINER(page->container), old_widget);
+		gtk_box_pack_start(GTK_BOX(page->container), paned, TRUE, TRUE, 0);
+	} else {
+		gtk_container_remove(GTK_CONTAINER(old_parent->widget), old_widget);
+		if (old_is_first)
+			gtk_paned_pack1(GTK_PANED(old_parent->widget), paned, TRUE, FALSE);
+		else
+			gtk_paned_pack2(GTK_PANED(old_parent->widget), paned, TRUE, FALSE);
+	}
+	gtk_paned_pack1(GTK_PANED(paned), old_widget, TRUE, FALSE);
+	gtk_paned_pack2(GTK_PANED(paned), new_tab->hbox, TRUE, FALSE);
+	g_object_unref(old_widget);
+	node->widget = old_widget;
+	new_leaf->widget = new_tab->hbox;
+	split->widget = paned;
+	g_signal_connect(paned, "notify::position",
+	                 G_CALLBACK(sakura_layout_paned_position_cb), split);
+	gtk_widget_show_all(paned);
+	return TRUE;
+}
+
+
+static SakuraLayoutNode *
+sakura_layout_first_leaf(SakuraLayoutNode *node)
+{
+	if (node == NULL)
+		return NULL;
+	while (node->kind == SAKURA_LAYOUT_SPLIT)
+		node = node->data.split.first;
+	return node;
+}
+
+
+gboolean
+sakura_layout_remove_leaf_widgets(SakuraLayoutNode *leaf)
+{
+	SakuraLayoutNode *parent, *grandparent, *sibling;
+	GtkWidget *parent_widget, *sibling_widget, *container;
+	gboolean sibling_is_first;
+
+	if (leaf == NULL || leaf->kind != SAKURA_LAYOUT_LEAF ||
+	    leaf->page == NULL || leaf->parent == NULL)
+		return FALSE;
+	parent = leaf->parent;
+	if (parent->kind != SAKURA_LAYOUT_SPLIT || parent->widget == NULL)
+		return FALSE;
+	sibling_is_first = parent->data.split.first == leaf;
+	sibling = sibling_is_first ? parent->data.split.second : parent->data.split.first;
+	if (sibling == NULL || sibling->widget == NULL)
+		return FALSE;
+	grandparent = parent->parent;
+	parent_widget = parent->widget;
+	sibling_widget = sibling->widget;
+
+	/* Keep the surviving surface alive while the split widget is removed. */
+	g_object_ref(sibling_widget);
+	if (grandparent == NULL) {
+		container = leaf->page->container;
+		gtk_container_remove(GTK_CONTAINER(container), parent_widget);
+		gtk_box_pack_start(GTK_BOX(container), sibling_widget, TRUE, TRUE, 0);
+	} else {
+		if (grandparent->kind != SAKURA_LAYOUT_SPLIT ||
+		    grandparent->widget == NULL ||
+		    (grandparent->data.split.first != parent &&
+	     grandparent->data.split.second != parent)) {
+			g_object_unref(sibling_widget);
+			return FALSE;
+		}
+		container = grandparent->widget;
+		gtk_container_remove(GTK_CONTAINER(container), parent_widget);
+		if (grandparent->data.split.first == parent)
+			gtk_paned_pack1(GTK_PANED(container), sibling_widget, TRUE, FALSE);
+		else
+			gtk_paned_pack2(GTK_PANED(container), sibling_widget, TRUE, FALSE);
+	}
+	g_object_unref(sibling_widget);
 	return TRUE;
 }
 
@@ -226,6 +483,8 @@ sakura_layout_remove_leaf(SakuraLayoutNode *leaf)
 		page->layout_root = NULL;
 		page->active_tab = NULL;
 		if (tab != NULL && tab->layout_leaf == leaf) {
+			if (page->panes != NULL)
+				g_ptr_array_remove_fast(page->panes, tab);
 			tab->layout_leaf = NULL;
 			tab->page = NULL;
 		}
@@ -259,12 +518,13 @@ sakura_layout_remove_leaf(SakuraLayoutNode *leaf)
 	}
 
 	if (tab != NULL && tab->layout_leaf == leaf) {
+		if (page->panes != NULL)
+			g_ptr_array_remove_fast(page->panes, tab);
 		tab->layout_leaf = NULL;
 		tab->page = NULL;
 	}
 	if (page->active_tab == tab)
-		page->active_tab = sibling->kind == SAKURA_LAYOUT_LEAF
-		                 ? sibling->data.leaf.tab : NULL;
+		page->active_tab = sakura_layout_first_leaf(sibling)->data.leaf.tab;
 	parent->data.split.first = NULL;
 	parent->data.split.second = NULL;
 	sakura_layout_node_free_shallow(parent);

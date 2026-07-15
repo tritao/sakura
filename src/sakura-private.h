@@ -85,6 +85,10 @@ typedef struct {
 	gboolean login_shell;
 	gboolean hold;
 	gboolean execute_on_existing_tabs;
+	SakuraPage *target_page;
+	SakuraLayoutNode *target_layout;
+	gdouble target_ratio;
+	SakuraSplitDirection split_direction;
 } SakuraTabLaunchConfig;
 
 enum {
@@ -123,6 +127,7 @@ struct sakura_app {
 	GtkWidget *notebook;
 	GPtrArray *tabs;               /* Stable tab ownership, in notebook order */
 	GPtrArray *pages;              /* Notebook pages; panes remain in tabs */
+	GPtrArray *panes;              /* All terminal surfaces, including splits */
 	SakuraPage *active_page;
 	GtkWidget *content_box;
 	GtkWidget *tab_bar_shell;
@@ -272,6 +277,8 @@ struct sakura_page {
 	SakuraTab *active_tab;
 	SakuraSidebarNode *sidebar_node;
 	gchar *last_active_terminal_id;
+	SakuraTab *tab_bar_tab;
+	GPtrArray *panes;
 	gboolean zoomed;
 };
 
@@ -358,6 +365,15 @@ SakuraLayoutNode *sakura_layout_split_new(SakuraPage *page,
 gboolean sakura_layout_split_leaf(SakuraLayoutNode *leaf,
                                   SakuraSplitDirection direction,
                                   SakuraTab *new_tab);
+gboolean sakura_layout_split_leaf_widgets(SakuraLayoutNode *leaf,
+                                           SakuraSplitDirection direction,
+                                           SakuraTab *new_tab);
+gboolean sakura_layout_split_node_widgets(SakuraLayoutNode *node,
+                                          SakuraSplitDirection direction,
+                                          SakuraTab *new_tab);
+gboolean sakura_layout_remove_leaf_widgets(SakuraLayoutNode *leaf);
+void sakura_layout_paned_position_cb(GObject *object, GParamSpec *pspec,
+                                     gpointer data);
 gboolean sakura_layout_remove_leaf(SakuraLayoutNode *leaf);
 gboolean sakura_layout_contains_tab(const SakuraLayoutNode *node,
                                     const SakuraTab *tab);
@@ -374,6 +390,7 @@ gboolean sakura_tab_is_current(SakuraTab *tab);
 SakuraTab *sakura_tab_new(void);
 void sakura_tab_free(SakuraTab *tab);
 SakuraTab *sakura_tab_for_vte(VteTerminal *vte);
+SakuraTab *sakura_find_pane_by_terminal_id(const gchar *terminal_id);
 void sakura_set_tab_label_text(const gchar *title, gint page);
 void sakura_set_window_title(const gchar *title);
 gboolean sakura_update_tab_cwd(SakuraTab *tab);
@@ -401,6 +418,8 @@ void sakura_set_text_selection_mode(SakuraTab *tab, gboolean enabled);
 gboolean sakura_tab_keypress_cb(GtkWidget *widget, GdkEventKey *event,
                                 gpointer data);
 void sakura_tab_title_changed_cb(GtkWidget *widget, void *data);
+gboolean sakura_pane_focus_in_cb(GtkWidget *widget, GdkEventFocus *event,
+                                 gpointer data);
 gboolean sakura_tab_is_in_active_scope(SakuraTab *tab);
 SakuraSidebarNode *sakura_sidebar_default_parent(void);
 void sakura_sidebar_set_scope(SakuraSidebarNode *scope);
@@ -454,6 +473,7 @@ void sakura_tab_bar_add_tab(SakuraTab *tab);
 void sakura_tab_bar_remove_tab(SakuraTab *tab);
 void sakura_select_tab(SakuraTab *tab, gboolean focus);
 void sakura_new_tab_cb(GtkWidget *widget, void *data);
+void sakura_split_current_cb(GtkWidget *widget, void *data);
 void sakura_new_codex_cb(GtkWidget *widget, void *data);
 void sakura_resume_codex_cb(GtkWidget *widget, void *data);
 void sakura_attach_codex_cb(GtkWidget *widget, void *data);
@@ -514,6 +534,7 @@ void sakura_tab_add_with_options(const gchar *restore_cwd,
                                  const gchar *restore_terminal_id,
                                  const SakuraTabLaunchConfig *launch_config);
 void sakura_tab_delete_page(gint page);
+void sakura_tab_delete_pane(SakuraTab *tab);
 gboolean sakura_codex_session_id_is_uuid(const gchar *value);
 gboolean sakura_codex_tracking_poll_cb(gpointer data);
 SakuraTab *sakura_find_codex_tab_by_tracking_token(const gchar *token);
@@ -595,11 +616,34 @@ typedef struct {
 	gint64 attention_timestamp;
 } SakuraSessionTabRecord;
 
+typedef struct {
+	gchar *id;
+	gchar *parent_id;
+	gchar *title;
+	gboolean title_set_by_user;
+	gchar *root_layout_id;
+	gchar *active_terminal_id;
+} SakuraSessionPageRecord;
+
+typedef struct {
+	gchar *id;
+	gchar *page_id;
+	gchar *type;
+	SakuraSplitDirection direction;
+	gdouble ratio;
+	gchar *first_id;
+	gchar *second_id;
+	gchar *terminal_id;
+} SakuraSessionLayoutRecord;
+
 struct sakura_session_snapshot {
 	GPtrArray *groups;
 	GPtrArray *tabs;
+	GPtrArray *pages;
+	GPtrArray *layouts;
 	gint selected_terminal;
 	gchar *selected_terminal_id;
+	gchar *selected_page_id;
 	gchar *active_group_id;
 	gboolean sidebar_visible;
 	gint sidebar_width;

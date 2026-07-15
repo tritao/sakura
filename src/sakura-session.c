@@ -3,6 +3,7 @@
 #include <sys/file.h>
 #include <sys/stat.h>
 #include <unistd.h>
+#include <math.h>
 
 #include <libintl.h>
 
@@ -10,7 +11,7 @@
 
 #include "sakura-private.h"
 
-#define SAKURA_SESSION_VERSION 3
+#define SAKURA_SESSION_VERSION 4
 #define _(String) gettext(String)
 
 
@@ -383,6 +384,39 @@ sakura_session_tab_record_free(gpointer data)
 }
 
 
+static void
+sakura_session_page_record_free(gpointer data)
+{
+	SakuraSessionPageRecord *record = data;
+
+	if (record == NULL)
+		return;
+	g_free(record->id);
+	g_free(record->parent_id);
+	g_free(record->title);
+	g_free(record->root_layout_id);
+	g_free(record->active_terminal_id);
+	g_free(record);
+}
+
+
+static void
+sakura_session_layout_record_free(gpointer data)
+{
+	SakuraSessionLayoutRecord *record = data;
+
+	if (record == NULL)
+		return;
+	g_free(record->id);
+	g_free(record->page_id);
+	g_free(record->type);
+	g_free(record->first_id);
+	g_free(record->second_id);
+	g_free(record->terminal_id);
+	g_free(record);
+}
+
+
 SakuraSessionSnapshot *
 sakura_session_snapshot_new(void)
 {
@@ -390,6 +424,8 @@ sakura_session_snapshot_new(void)
 
 	snapshot->groups = g_ptr_array_new_with_free_func(sakura_session_group_record_free);
 	snapshot->tabs = g_ptr_array_new_with_free_func(sakura_session_tab_record_free);
+	snapshot->pages = g_ptr_array_new_with_free_func(sakura_session_page_record_free);
+	snapshot->layouts = g_ptr_array_new_with_free_func(sakura_session_layout_record_free);
 	snapshot->selected_terminal = -1;
 	snapshot->active_group_id = g_strdup("root");
 	snapshot->sidebar_visible = TRUE;
@@ -405,7 +441,10 @@ sakura_session_snapshot_free(SakuraSessionSnapshot *snapshot)
 		return;
 	g_clear_pointer(&snapshot->groups, g_ptr_array_unref);
 	g_clear_pointer(&snapshot->tabs, g_ptr_array_unref);
+	g_clear_pointer(&snapshot->pages, g_ptr_array_unref);
+	g_clear_pointer(&snapshot->layouts, g_ptr_array_unref);
 	g_free(snapshot->selected_terminal_id);
+	g_free(snapshot->selected_page_id);
 	g_free(snapshot->active_group_id);
 	g_free(snapshot);
 }
@@ -526,11 +565,120 @@ sakura_session_terminal_ids_valid(const SakuraSessionSnapshot *snapshot,
 
 
 static gboolean
+sakura_session_layout_valid(const SakuraSessionSnapshot *snapshot,
+                             GError **error)
+{
+	GHashTable *pages = g_hash_table_new(g_str_hash, g_str_equal);
+	GHashTable *layouts = g_hash_table_new(g_str_hash, g_str_equal);
+	GHashTable *terminals = g_hash_table_new(g_str_hash, g_str_equal);
+	GHashTable *children = g_hash_table_new(g_str_hash, g_str_equal);
+	GHashTable *leaf_terminals = g_hash_table_new(g_str_hash, g_str_equal);
+	GHashTable *groups = g_hash_table_new(g_str_hash, g_str_equal);
+	guint index;
+	if (snapshot->pages->len == 0 && snapshot->layouts->len == 0) {
+		g_hash_table_destroy(pages);
+		g_hash_table_destroy(layouts);
+		g_hash_table_destroy(terminals);
+		g_hash_table_destroy(children);
+		g_hash_table_destroy(leaf_terminals);
+		g_hash_table_destroy(groups);
+		return TRUE;
+	}
+
+	for (index = 0; index < snapshot->pages->len; index++) {
+		SakuraSessionPageRecord *page = g_ptr_array_index(snapshot->pages, index);
+		if (page->id == NULL || page->id[0] == '\0' ||
+		    g_hash_table_contains(pages, page->id))
+			goto invalid;
+		g_hash_table_add(pages, page->id);
+	}
+	for (index = 0; index < snapshot->groups->len; index++) {
+		SakuraSessionGroupRecord *group = g_ptr_array_index(snapshot->groups, index);
+		g_hash_table_add(groups, group->id);
+	}
+	for (index = 0; index < snapshot->pages->len; index++) {
+		SakuraSessionPageRecord *page = g_ptr_array_index(snapshot->pages, index);
+		if (page->parent_id != NULL && g_strcmp0(page->parent_id, "root") != 0 &&
+		    !g_hash_table_contains(groups, page->parent_id))
+			goto invalid;
+	}
+	for (index = 0; index < snapshot->tabs->len; index++) {
+		SakuraSessionTabRecord *tab = g_ptr_array_index(snapshot->tabs, index);
+		if (tab->terminal_id != NULL && tab->terminal_id[0] != '\0')
+			g_hash_table_add(terminals, tab->terminal_id);
+	}
+	for (index = 0; index < snapshot->layouts->len; index++) {
+		SakuraSessionLayoutRecord *layout = g_ptr_array_index(snapshot->layouts, index);
+		if (layout->id == NULL || layout->id[0] == '\0' ||
+		    g_hash_table_contains(layouts, layout->id) ||
+		    layout->page_id == NULL || !g_hash_table_contains(pages, layout->page_id) ||
+		    layout->type == NULL ||
+		    (g_strcmp0(layout->type, "leaf") != 0 &&
+		     g_strcmp0(layout->type, "split") != 0))
+			goto invalid;
+		if (g_strcmp0(layout->type, "leaf") == 0) {
+			if (layout->terminal_id == NULL ||
+			    !g_hash_table_contains(terminals, layout->terminal_id) ||
+			    g_hash_table_contains(leaf_terminals, layout->terminal_id))
+				goto invalid;
+			g_hash_table_add(leaf_terminals, layout->terminal_id);
+		} else if (layout->first_id == NULL || layout->second_id == NULL ||
+		           !isfinite(layout->ratio) || layout->ratio < 0.05 ||
+		           layout->ratio > 0.95 ||
+		           g_strcmp0(layout->first_id, layout->second_id) == 0)
+			goto invalid;
+		g_hash_table_insert(layouts, layout->id, layout);
+	}
+	for (index = 0; index < snapshot->layouts->len; index++) {
+		SakuraSessionLayoutRecord *layout = g_ptr_array_index(snapshot->layouts, index);
+		if (g_strcmp0(layout->type, "split") != 0)
+			continue;
+		SakuraSessionLayoutRecord *first = g_hash_table_lookup(layouts, layout->first_id);
+		SakuraSessionLayoutRecord *second = g_hash_table_lookup(layouts, layout->second_id);
+		if (first == NULL || second == NULL ||
+		    g_strcmp0(first->page_id, layout->page_id) != 0 ||
+		    g_strcmp0(second->page_id, layout->page_id) != 0 ||
+		    g_hash_table_contains(children, first->id) ||
+		    g_hash_table_contains(children, second->id))
+			goto invalid;
+		g_hash_table_add(children, first->id);
+		g_hash_table_add(children, second->id);
+	}
+	for (index = 0; index < snapshot->pages->len; index++) {
+		SakuraSessionPageRecord *page = g_ptr_array_index(snapshot->pages, index);
+		if (page->root_layout_id == NULL ||
+		    !g_hash_table_contains(layouts, page->root_layout_id) ||
+		    g_hash_table_contains(children, page->root_layout_id))
+			goto invalid;
+	}
+	if (g_hash_table_size(leaf_terminals) != g_hash_table_size(terminals))
+		goto invalid;
+	g_hash_table_destroy(pages);
+	g_hash_table_destroy(layouts);
+	g_hash_table_destroy(terminals);
+	g_hash_table_destroy(children);
+	g_hash_table_destroy(leaf_terminals);
+	g_hash_table_destroy(groups);
+	return TRUE;
+
+invalid:
+	g_hash_table_destroy(pages);
+	g_hash_table_destroy(layouts);
+	g_hash_table_destroy(terminals);
+	g_hash_table_destroy(children);
+	g_hash_table_destroy(leaf_terminals);
+	g_hash_table_destroy(groups);
+	return sakura_session_error(error, G_KEY_FILE_ERROR_INVALID_VALUE,
+	                            g_strdup("invalid page or layout record"));
+}
+
+
+static gboolean
 sakura_session_snapshot_load_into(GKeyFile *key_file,
                                    SakuraSessionSnapshot *snapshot,
                                    GError **error)
 {
-	gint version, group_count, terminal_count;
+	gint version, group_count, terminal_count, page_count = 0, layout_count = 0;
 	gint index;
 
 	if (key_file == NULL || snapshot == NULL)
@@ -552,7 +700,18 @@ sakura_session_snapshot_load_into(GKeyFile *key_file,
 		return FALSE;
 	if (group_count < 0 || terminal_count < 0)
 		return sakura_session_error(error, G_KEY_FILE_ERROR_INVALID_VALUE,
-		                            g_strdup("session counts cannot be negative"));
+			g_strdup("session counts cannot be negative"));
+	if (version >= 4) {
+		page_count = g_key_file_get_integer(key_file, "Session", "page_count", error);
+		if (error != NULL && *error != NULL)
+			return FALSE;
+		layout_count = g_key_file_get_integer(key_file, "Session", "layout_count", error);
+		if (error != NULL && *error != NULL)
+			return FALSE;
+		if (page_count < 0 || layout_count < 0)
+			return sakura_session_error(error, G_KEY_FILE_ERROR_INVALID_VALUE,
+			                            g_strdup("page and layout counts cannot be negative"));
+	}
 
 	if (g_key_file_has_key(key_file, "Session", "selected_terminal", NULL))
 		snapshot->selected_terminal = g_key_file_get_integer(key_file, "Session",
@@ -560,6 +719,10 @@ sakura_session_snapshot_load_into(GKeyFile *key_file,
 	g_free(snapshot->selected_terminal_id);
 	snapshot->selected_terminal_id = g_key_file_get_string(key_file, "Session",
 	                                                       "selected_terminal_id", NULL);
+	g_free(snapshot->selected_page_id);
+	snapshot->selected_page_id = version >= 4
+	                           ? g_key_file_get_string(key_file, "Session",
+	                                                   "selected_page_id", NULL) : NULL;
 	g_free(snapshot->active_group_id);
 	snapshot->active_group_id = g_key_file_get_string(key_file, "Session",
 	                                                  "active_group_id", NULL);
@@ -574,6 +737,8 @@ sakura_session_snapshot_load_into(GKeyFile *key_file,
 
 	g_ptr_array_set_size(snapshot->groups, 0);
 	g_ptr_array_set_size(snapshot->tabs, 0);
+	g_ptr_array_set_size(snapshot->pages, 0);
+	g_ptr_array_set_size(snapshot->layouts, 0);
 	for (index = 0; index < group_count; index++) {
 		gchar *section = g_strdup_printf("Group%d", index);
 		SakuraSessionGroupRecord *group = g_new0(SakuraSessionGroupRecord, 1);
@@ -585,6 +750,42 @@ sakura_session_snapshot_load_into(GKeyFile *key_file,
 		if (group->title == NULL)
 			group->title = g_strdup("");
 		g_ptr_array_add(snapshot->groups, group);
+		g_free(section);
+	}
+	for (index = 0; index < page_count; index++) {
+		gchar *section = g_strdup_printf("Page%d", index);
+		SakuraSessionPageRecord *page = g_new0(SakuraSessionPageRecord, 1);
+		page->id = g_key_file_get_string(key_file, section, "id", NULL);
+		page->parent_id = g_key_file_get_string(key_file, section, "parent", NULL);
+		page->title = g_key_file_get_string(key_file, section, "title", NULL);
+		page->root_layout_id = g_key_file_get_string(key_file, section, "root_layout", NULL);
+		page->active_terminal_id = g_key_file_get_string(key_file, section,
+		                                                "active_terminal_id", NULL);
+		page->title_set_by_user = g_key_file_get_boolean(key_file, section,
+		                                               "title_set_by_user", NULL);
+		if (page->parent_id == NULL)
+			page->parent_id = g_strdup("root");
+		g_ptr_array_add(snapshot->pages, page);
+		g_free(section);
+	}
+	for (index = 0; index < layout_count; index++) {
+		gchar *section = g_strdup_printf("Layout%d", index);
+		gchar *direction;
+		SakuraSessionLayoutRecord *layout = g_new0(SakuraSessionLayoutRecord, 1);
+		layout->id = g_key_file_get_string(key_file, section, "id", NULL);
+		layout->page_id = g_key_file_get_string(key_file, section, "page", NULL);
+		layout->type = g_key_file_get_string(key_file, section, "type", NULL);
+		direction = g_key_file_get_string(key_file, section, "direction", NULL);
+		layout->direction = g_strcmp0(direction, "down") == 0
+		                 ? SAKURA_SPLIT_DOWN : SAKURA_SPLIT_RIGHT;
+		g_free(direction);
+		layout->ratio = g_key_file_get_double(key_file, section, "ratio", NULL);
+		if (layout->ratio == 0.0)
+			layout->ratio = 0.5;
+		layout->first_id = g_key_file_get_string(key_file, section, "first", NULL);
+		layout->second_id = g_key_file_get_string(key_file, section, "second", NULL);
+		layout->terminal_id = g_key_file_get_string(key_file, section, "terminal_id", NULL);
+		g_ptr_array_add(snapshot->layouts, layout);
 		g_free(section);
 	}
 
@@ -628,7 +829,8 @@ sakura_session_snapshot_load_into(GKeyFile *key_file,
 	}
 
 	return sakura_session_group_ids_valid(snapshot, error) &&
-	       sakura_session_terminal_ids_valid(snapshot, error);
+	       sakura_session_terminal_ids_valid(snapshot, error) &&
+	       (version < 4 || sakura_session_layout_valid(snapshot, error));
 }
 
 
@@ -668,12 +870,17 @@ sakura_session_snapshot_save(const SakuraSessionSnapshot *snapshot,
 
 	g_key_file_set_integer(key_file, "Session", "version", SAKURA_SESSION_VERSION);
 	g_key_file_set_integer(key_file, "Session", "group_count", snapshot->groups->len);
+	g_key_file_set_integer(key_file, "Session", "page_count", snapshot->pages->len);
+	g_key_file_set_integer(key_file, "Session", "layout_count", snapshot->layouts->len);
 	g_key_file_set_integer(key_file, "Session", "terminal_count", snapshot->tabs->len);
 	g_key_file_set_integer(key_file, "Session", "selected_terminal",
 	                      snapshot->selected_terminal);
 	if (snapshot->selected_terminal_id != NULL)
 		g_key_file_set_string(key_file, "Session", "selected_terminal_id",
 		                      snapshot->selected_terminal_id);
+	if (snapshot->selected_page_id != NULL)
+		g_key_file_set_string(key_file, "Session", "selected_page_id",
+		                      snapshot->selected_page_id);
 	g_key_file_set_string(key_file, "Session", "active_group_id",
 	                      snapshot->active_group_id != NULL ? snapshot->active_group_id : "root");
 	g_key_file_set_boolean(key_file, "Session", "sidebar_visible", snapshot->sidebar_visible);
@@ -686,6 +893,37 @@ sakura_session_snapshot_save(const SakuraSessionSnapshot *snapshot,
 		g_key_file_set_string(key_file, section, "parent",
 		                      group->parent_id != NULL ? group->parent_id : "root");
 		g_key_file_set_string(key_file, section, "title", group->title != NULL ? group->title : "");
+		g_free(section);
+	}
+	for (index = 0; index < snapshot->pages->len; index++) {
+		SakuraSessionPageRecord *page = g_ptr_array_index(snapshot->pages, index);
+		gchar *section = g_strdup_printf("Page%u", index);
+		g_key_file_set_string(key_file, section, "id", page->id != NULL ? page->id : "");
+		g_key_file_set_string(key_file, section, "parent",
+		                      page->parent_id != NULL ? page->parent_id : "root");
+		g_key_file_set_string(key_file, section, "title", page->title != NULL ? page->title : "");
+		g_key_file_set_boolean(key_file, section, "title_set_by_user", page->title_set_by_user);
+		g_key_file_set_string(key_file, section, "root_layout",
+		                      page->root_layout_id != NULL ? page->root_layout_id : "");
+		if (page->active_terminal_id != NULL)
+			g_key_file_set_string(key_file, section, "active_terminal_id", page->active_terminal_id);
+		g_free(section);
+	}
+	for (index = 0; index < snapshot->layouts->len; index++) {
+		SakuraSessionLayoutRecord *layout = g_ptr_array_index(snapshot->layouts, index);
+		gchar *section = g_strdup_printf("Layout%u", index);
+		g_key_file_set_string(key_file, section, "id", layout->id != NULL ? layout->id : "");
+		g_key_file_set_string(key_file, section, "page", layout->page_id != NULL ? layout->page_id : "");
+		g_key_file_set_string(key_file, section, "type", layout->type != NULL ? layout->type : "leaf");
+		g_key_file_set_string(key_file, section, "direction",
+		                      layout->direction == SAKURA_SPLIT_DOWN ? "down" : "right");
+		g_key_file_set_double(key_file, section, "ratio", layout->ratio);
+		if (layout->first_id != NULL)
+			g_key_file_set_string(key_file, section, "first", layout->first_id);
+		if (layout->second_id != NULL)
+			g_key_file_set_string(key_file, section, "second", layout->second_id);
+		if (layout->terminal_id != NULL)
+			g_key_file_set_string(key_file, section, "terminal_id", layout->terminal_id);
 		g_free(section);
 	}
 

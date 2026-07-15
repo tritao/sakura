@@ -123,10 +123,8 @@ sakura_select_scope_default (void)
 	    sakura_tab_is_in_active_scope(sakura.active_tab)) {
 		sk_tab = sakura.active_tab;
 	} else if (sakura.active_group_scope->last_terminal_id != NULL) {
-		page = sakura_find_tab_by_terminal_id(
+		sk_tab = sakura_find_pane_by_terminal_id(
 			sakura.active_group_scope->last_terminal_id);
-		if (page >= 0)
-			sk_tab = sakura_tab_at_page(page);
 		if (sk_tab != NULL && !sakura_tab_is_in_active_scope(sk_tab))
 			sk_tab = NULL;
 	}
@@ -966,6 +964,228 @@ sakura_sidebar_collect_terminals (GtkTreeModel *model, GtkTreeIter *parent,
 		valid = gtk_tree_model_iter_next(model, &iter);
 	}
 }
+
+
+static void
+sakura_workspace_snapshot_layout(SakuraSessionSnapshot *snapshot,
+                                 SakuraPage *page,
+                                 SakuraLayoutNode *node)
+{
+	SakuraSessionLayoutRecord *record;
+
+	if (snapshot == NULL || page == NULL || node == NULL)
+		return;
+	record = g_new0(SakuraSessionLayoutRecord, 1);
+	record->id = g_strdup(node->id);
+	record->page_id = g_strdup(page->id);
+	record->ratio = node->kind == SAKURA_LAYOUT_SPLIT ? node->data.split.ratio : 0.5;
+	if (node->kind == SAKURA_LAYOUT_LEAF) {
+		record->type = g_strdup("leaf");
+		record->terminal_id = g_strdup(node->data.leaf.tab != NULL
+		                              ? node->data.leaf.tab->terminal_id : NULL);
+	} else {
+		record->type = g_strdup("split");
+		record->direction = node->data.split.direction;
+		record->first_id = g_strdup(node->data.split.first != NULL
+		                           ? node->data.split.first->id : NULL);
+		record->second_id = g_strdup(node->data.split.second != NULL
+		                            ? node->data.split.second->id : NULL);
+	}
+	g_ptr_array_add(snapshot->layouts, record);
+	if (node->kind == SAKURA_LAYOUT_SPLIT) {
+		sakura_workspace_snapshot_layout(snapshot, page, node->data.split.first);
+		sakura_workspace_snapshot_layout(snapshot, page, node->data.split.second);
+	}
+}
+
+
+static SakuraSessionPageRecord *
+sakura_workspace_snapshot_page_record(SakuraPage *page)
+{
+	SakuraSessionPageRecord *record;
+	SakuraTab *representative;
+
+	if (page == NULL)
+		return NULL;
+	record = g_new0(SakuraSessionPageRecord, 1);
+	record->id = g_strdup(page->id);
+	representative = page->tab_bar_tab;
+	record->parent_id = g_strdup(representative != NULL && representative->sidebar_node != NULL &&
+	                            representative->sidebar_node->parent != NULL
+	                          ? representative->sidebar_node->parent->id : "root");
+	record->title = g_strdup(page->title != NULL ? page->title :
+	                          representative != NULL && representative->label != NULL
+	                        ? gtk_label_get_text(GTK_LABEL(representative->label)) : "");
+	record->title_set_by_user = page->title_set_by_user ||
+	                            (representative != NULL && representative->label_set_byuser);
+	record->root_layout_id = g_strdup(page->layout_root != NULL ? page->layout_root->id : NULL);
+	if (page->active_tab != NULL)
+		record->active_terminal_id = g_strdup(page->active_tab->terminal_id);
+	return record;
+}
+
+
+static SakuraSessionLayoutRecord *
+sakura_workspace_layout_record(GHashTable *records, const gchar *id)
+{
+	return id != NULL ? g_hash_table_lookup(records, id) : NULL;
+}
+
+
+static SakuraSessionTabRecord *
+sakura_workspace_tab_record(GHashTable *records, const gchar *terminal_id)
+{
+	return terminal_id != NULL ? g_hash_table_lookup(records, terminal_id) : NULL;
+}
+
+
+static SakuraSessionLayoutRecord *
+sakura_workspace_layout_leftmost(GHashTable *records,
+                                 SakuraSessionLayoutRecord *record)
+{
+	while (record != NULL && g_strcmp0(record->type, "split") == 0)
+		record = sakura_workspace_layout_record(records, record->first_id);
+	return record;
+}
+
+
+static SakuraLayoutNode *
+sakura_workspace_restore_layout_subtree(SakuraPage *page,
+                                        GHashTable *layout_records,
+                                        GHashTable *tab_records,
+                                        SakuraSessionLayoutRecord *record,
+                                        SakuraTab *anchor,
+                                        SakuraLayoutNode *boundary)
+{
+	SakuraSessionLayoutRecord *first_record, *second_record, *second_leaf;
+	SakuraSessionTabRecord *second_tab_record;
+	SakuraTabLaunchConfig config = { 0 };
+	SakuraTab *second_tab;
+	SakuraLayoutNode *first, *split;
+	SakuraSidebarNode *parent;
+
+	if (page == NULL || record == NULL || anchor == NULL ||
+	    anchor->layout_leaf == NULL)
+		return NULL;
+	if (g_strcmp0(record->type, "leaf") == 0)
+		return anchor->layout_leaf;
+	first_record = sakura_workspace_layout_record(layout_records, record->first_id);
+	second_record = sakura_workspace_layout_record(layout_records, record->second_id);
+	if (first_record == NULL || second_record == NULL)
+		return NULL;
+	first = sakura_workspace_restore_layout_subtree(page, layout_records,
+	                                                tab_records, first_record,
+	                                                anchor, boundary);
+	if (first == NULL)
+		return NULL;
+	second_leaf = sakura_workspace_layout_leftmost(layout_records, second_record);
+	second_tab_record = second_leaf != NULL
+	                 ? sakura_workspace_tab_record(tab_records, second_leaf->terminal_id) : NULL;
+	if (second_tab_record == NULL)
+		return NULL;
+	config.target_page = page;
+	config.target_layout = first;
+	config.target_ratio = record->ratio;
+	config.split_direction = record->direction;
+	parent = sakura_sidebar_find_group_by_id(second_tab_record->parent_id);
+	sakura_tab_add_with_options(second_tab_record->cwd, parent,
+	                            second_tab_record->title,
+	                            second_tab_record->title_set_by_user,
+	                            second_tab_record->kind,
+	                            sakura_tool_from_id(second_tab_record->tool_id),
+	                            second_tab_record->codex_session_id,
+	                            second_tab_record->codex_session_name,
+	                            second_tab_record->tool_target,
+	                            second_tab_record->terminal_id, &config);
+	second_tab = sakura_find_pane_by_terminal_id(second_tab_record->terminal_id);
+	if (second_tab == NULL || second_tab->layout_leaf == NULL)
+		return NULL;
+	split = second_tab->layout_leaf->parent;
+	if (split == NULL)
+		return NULL;
+	if (g_strcmp0(second_record->type, "split") == 0 &&
+	    sakura_workspace_restore_layout_subtree(page, layout_records,
+	                                             tab_records, second_record,
+	                                             second_tab, split) == NULL)
+		return NULL;
+	(void)boundary;
+	return split;
+}
+
+
+static gboolean
+sakura_workspace_restore_layout_snapshot(SakuraSessionSnapshot *snapshot)
+{
+	GHashTable *layout_records, *tab_records, *page_records;
+	guint index;
+
+	layout_records = g_hash_table_new(g_str_hash, g_str_equal);
+	tab_records = g_hash_table_new(g_str_hash, g_str_equal);
+	page_records = g_hash_table_new(g_str_hash, g_str_equal);
+	for (index = 0; index < snapshot->layouts->len; index++) {
+		SakuraSessionLayoutRecord *record = g_ptr_array_index(snapshot->layouts, index);
+		g_hash_table_insert(layout_records, record->id, record);
+	}
+	for (index = 0; index < snapshot->tabs->len; index++) {
+		SakuraSessionTabRecord *record = g_ptr_array_index(snapshot->tabs, index);
+		g_hash_table_insert(tab_records, record->terminal_id, record);
+	}
+	for (index = 0; index < snapshot->pages->len; index++) {
+		SakuraSessionPageRecord *record = g_ptr_array_index(snapshot->pages, index);
+		g_hash_table_insert(page_records, record->id, record);
+	}
+
+	/* Build each notebook page from its leftmost layout leaf, then recursively
+	 * wrap existing subtrees with the remaining leaves. */
+	for (index = 0; index < snapshot->pages->len; index++) {
+		SakuraSessionPageRecord *page_record = g_ptr_array_index(snapshot->pages, index);
+		SakuraSessionLayoutRecord *root = sakura_workspace_layout_record(
+			layout_records, page_record->root_layout_id);
+		SakuraSessionLayoutRecord *root_leaf = sakura_workspace_layout_leftmost(
+			layout_records, root);
+		SakuraSessionTabRecord *tab_record;
+		SakuraTab *tab;
+		SakuraSidebarNode *parent;
+
+		if (root_leaf == NULL || root_leaf->terminal_id == NULL)
+			continue;
+		tab_record = sakura_workspace_tab_record(tab_records, root_leaf->terminal_id);
+		if (tab_record == NULL)
+			continue;
+		parent = sakura_sidebar_find_group_by_id(tab_record->parent_id);
+		sakura_tab_add_with_options(tab_record->cwd, parent,
+		                            tab_record->title,
+		                            tab_record->title_set_by_user,
+		                            tab_record->kind,
+		                            sakura_tool_from_id(tab_record->tool_id),
+		                            tab_record->codex_session_id,
+		                            tab_record->codex_session_name,
+		                            tab_record->tool_target,
+		                            tab_record->terminal_id, NULL);
+		tab = sakura_find_pane_by_terminal_id(tab_record->terminal_id);
+		if (tab == NULL || tab->page == NULL)
+			continue;
+		g_free(tab->page->id);
+		tab->page->id = g_strdup(page_record->id);
+		tab->page->title = g_strdup(page_record->title);
+		tab->page->title_set_by_user = page_record->title_set_by_user;
+		if (root != NULL && g_strcmp0(root->type, "split") == 0)
+			sakura_workspace_restore_layout_subtree(tab->page, layout_records,
+			                                       tab_records, root, tab, NULL);
+	}
+
+	if (snapshot->selected_terminal_id != NULL) {
+		SakuraTab *selected = sakura_find_pane_by_terminal_id(snapshot->selected_terminal_id);
+		if (selected != NULL)
+			sakura_select_tab(selected, FALSE);
+	}
+	g_hash_table_destroy(layout_records);
+	g_hash_table_destroy(tab_records);
+	g_hash_table_destroy(page_records);
+	return sakura.pages != NULL && sakura.pages->len > 0;
+}
+
+
 gboolean
 sakura_workspace_restore_snapshot (SakuraSessionSnapshot *snapshot)
 {
@@ -977,6 +1197,9 @@ sakura_workspace_restore_snapshot (SakuraSessionSnapshot *snapshot)
 	if (snapshot->tabs->len == 0) {
 		return FALSE;
 	}
+	if (snapshot->pages != NULL && snapshot->pages->len > 0 &&
+	    snapshot->layouts != NULL && snapshot->layouts->len > 0)
+		return sakura_workspace_restore_layout_snapshot(snapshot);
 
 	selected_terminal = snapshot->selected_terminal;
 	for (i = 0; i < snapshot->tabs->len; i++) {
@@ -1012,9 +1235,10 @@ sakura_workspace_restore_snapshot (SakuraSessionSnapshot *snapshot)
 		                            tab_kind == SAKURA_TAB_TOOL ? record->tool_target : NULL,
 		                            sakura_terminal_id_is_valid(record->terminal_id)
 		                            ? record->terminal_id : NULL);
-		restored_page = sakura_find_tab_by_terminal_id(record->terminal_id);
+		SakuraTab *restored_tab = sakura_find_pane_by_terminal_id(record->terminal_id);
+		restored_page = restored_tab != NULL ? sakura_page_for_tab(restored_tab) : -1;
 		if (tab_kind == SAKURA_TAB_CODEX && restored_page >= 0)
-			sakura_tab_restore_state(sakura_tab_at_page(restored_page),
+			sakura_tab_restore_state(restored_tab,
 			                        record->status, record->attention,
 			                        record->attention_timestamp);
 		if (selected_terminal == (gint)i)
@@ -1034,10 +1258,11 @@ sakura_workspace_restore_snapshot (SakuraSessionSnapshot *snapshot)
 				snapshot->tabs, snapshot->selected_terminal);
 			selected_id = selected_record->terminal_id;
 		}
-		selected_page = sakura_find_tab_by_terminal_id(selected_id);
+		selected_tab = sakura_find_pane_by_terminal_id(selected_id);
+		selected_page = selected_tab != NULL ? sakura_page_for_tab(selected_tab) : -1;
 		if (selected_page < 0 && selected_terminal >= 0 && selected_terminal < restored)
 			selected_page = selected_terminal;
-		if (selected_page >= 0)
+		if (selected_tab == NULL && selected_page >= 0)
 			selected_tab = sakura_tab_at_page(selected_page);
 		if (selected_tab != NULL && sakura_tab_is_in_active_scope(selected_tab))
 			sakura_select_tab(selected_tab, FALSE);
@@ -1082,6 +1307,8 @@ sakura_workspace_snapshot_new(void)
 		}
 		if (selected_tab != NULL && selected_tab->terminal_id != NULL)
 			snapshot->selected_terminal_id = g_strdup(selected_tab->terminal_id);
+		if (selected_tab != NULL && selected_tab->page != NULL)
+			snapshot->selected_page_id = g_strdup(selected_tab->page->id);
 	}
 
 	snapshot->selected_terminal = selected_terminal;
@@ -1126,6 +1353,18 @@ sakura_workspace_snapshot_new(void)
 		record->attention = tab->attention;
 		record->attention_timestamp = tab->attention_timestamp;
 		g_ptr_array_add(snapshot->tabs, record);
+	}
+
+	if (sakura.pages != NULL) {
+		for (index = 0; index < sakura.pages->len; index++) {
+			SakuraPage *page = g_ptr_array_index(sakura.pages, index);
+			SakuraSessionPageRecord *page_record =
+				sakura_workspace_snapshot_page_record(page);
+			if (page_record != NULL)
+				g_ptr_array_add(snapshot->pages, page_record);
+			if (page != NULL)
+				sakura_workspace_snapshot_layout(snapshot, page, page->layout_root);
+		}
 	}
 
 	g_ptr_array_free(group_ids, TRUE);
@@ -1674,11 +1913,11 @@ sakura_sidebar_update_attention_count(void)
 	guint index;
 	gchar *label;
 
-	if (sakura.sidebar_title == NULL || sakura.tabs == NULL)
+	if (sakura.sidebar_title == NULL || sakura.panes == NULL)
 		return;
 
-	for (index = 0; index < sakura.tabs->len; index++) {
-		SakuraTab *tab = g_ptr_array_index(sakura.tabs, index);
+	for (index = 0; index < sakura.panes->len; index++) {
+		SakuraTab *tab = g_ptr_array_index(sakura.panes, index);
 		if (tab != NULL && tab->attention)
 			count++;
 	}

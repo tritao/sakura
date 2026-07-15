@@ -136,6 +136,66 @@ test_session_snapshot_rejects_group_cycle(void)
 
 
 static void
+test_session_layout_round_trip(void)
+{
+	SakuraSessionSnapshot *source = sakura_session_snapshot_new();
+	SakuraSessionSnapshot *loaded = sakura_session_snapshot_new();
+	SakuraSessionPageRecord *page = g_new0(SakuraSessionPageRecord, 1);
+	SakuraSessionLayoutRecord *split = g_new0(SakuraSessionLayoutRecord, 1);
+	SakuraSessionLayoutRecord *first = g_new0(SakuraSessionLayoutRecord, 1);
+	SakuraSessionLayoutRecord *second = g_new0(SakuraSessionLayoutRecord, 1);
+	SakuraSessionTabRecord *a = g_new0(SakuraSessionTabRecord, 1);
+	SakuraSessionTabRecord *b = g_new0(SakuraSessionTabRecord, 1);
+	GKeyFile *key_file = g_key_file_new();
+	GError *error = NULL;
+
+	page->id = g_strdup("page-1");
+	page->parent_id = g_strdup("root");
+	page->root_layout_id = g_strdup("layout-root");
+	g_ptr_array_add(source->pages, page);
+	split->id = g_strdup("layout-root");
+	split->page_id = g_strdup("page-1");
+	split->type = g_strdup("split");
+	split->direction = SAKURA_SPLIT_RIGHT;
+	split->ratio = 0.5;
+	split->first_id = g_strdup("layout-a");
+	split->second_id = g_strdup("layout-b");
+	g_ptr_array_add(source->layouts, split);
+	first->id = g_strdup("layout-a");
+	first->page_id = g_strdup("page-1");
+	first->type = g_strdup("leaf");
+	first->terminal_id = g_strdup("terminal-a");
+	g_ptr_array_add(source->layouts, first);
+	second->id = g_strdup("layout-b");
+	second->page_id = g_strdup("page-1");
+	second->type = g_strdup("leaf");
+	second->terminal_id = g_strdup("terminal-b");
+	g_ptr_array_add(source->layouts, second);
+	a->terminal_id = g_strdup("terminal-a");
+	a->parent_id = g_strdup("root");
+	b->terminal_id = g_strdup("terminal-b");
+	b->parent_id = g_strdup("root");
+	g_ptr_array_add(source->tabs, a);
+	g_ptr_array_add(source->tabs, b);
+	source->selected_page_id = g_strdup("page-1");
+	source->selected_terminal_id = g_strdup("terminal-b");
+
+	sakura_session_snapshot_save(source, key_file);
+	g_assert_true(sakura_session_snapshot_load(key_file, loaded, &error));
+	g_assert_no_error(error);
+	g_assert_cmpuint(loaded->pages->len, ==, 1);
+	g_assert_cmpuint(loaded->layouts->len, ==, 3);
+	g_assert_cmpstr(loaded->selected_page_id, ==, "page-1");
+	g_assert_cmpstr(((SakuraSessionLayoutRecord *)g_ptr_array_index(loaded->layouts, 0))->second_id,
+	               ==, "layout-b");
+
+	g_key_file_free(key_file);
+	sakura_session_snapshot_free(source);
+	sakura_session_snapshot_free(loaded);
+}
+
+
+static void
 test_session_snapshot_uses_safe_optional_defaults(void)
 {
 	SakuraSessionSnapshot *snapshot = sakura_session_snapshot_new();
@@ -266,6 +326,7 @@ main(int argc, char **argv)
 	g_test_add_func("/tools/scope", test_tool_scope);
 	g_test_add_func("/session/snapshot/round-trip", test_session_snapshot_round_trip);
 	g_test_add_func("/session/snapshot/reject-cycle", test_session_snapshot_rejects_group_cycle);
+	g_test_add_func("/session/snapshot/layout-round-trip", test_session_layout_round_trip);
 	g_test_add_func("/session/snapshot/optional-defaults", test_session_snapshot_uses_safe_optional_defaults);
 	g_test_add_func("/session/snapshot/preserve-on-failure", test_session_snapshot_preserves_previous_on_failure);
 	g_test_add_func("/layout/split-and-collapse", test_layout_split_and_collapse);
