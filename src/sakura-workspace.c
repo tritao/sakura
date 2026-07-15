@@ -1789,7 +1789,11 @@ sakura_switch_page_cb (GtkWidget *widget, GtkWidget *widget_page,
 	/* A notebook switch can be triggered while a sidebar click is still being
 	 * dispatched. Queue the tree update so the original click's target wins
 	 * over any intermediate scope/fallback switch. */
-	sakura_sidebar_queue_select_node(tab->sidebar_node);
+	if (tab->page != NULL && tab->page->panes != NULL && tab->page->panes->len <= 1)
+		sakura_sidebar_queue_select_node(tab->page->sidebar_node);
+	else
+		sakura_sidebar_queue_select_node(tab->sidebar_node);
+	sakura_sidebar_update_page(tab->page);
 	sakura_codex_sync_name(tab);
 
 	/* Update the window title when a new tab is selected, but don't when a user
