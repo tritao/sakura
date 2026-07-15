@@ -159,9 +159,10 @@ backups, and verifies that a failed restore does not overwrite the original
 session file.
 
 Tracked Codex tabs show their current state in the terminal sidebar: working,
-needs approval, or ready to review. Working tabs show an animated spinner in
-the sidebar. When a background Codex turn finishes or needs approval, Sakura
-marks that terminal as needing attention and updates the sidebar count.
+needs approval, ready to review, interrupted, or error. Working tabs show an
+animated spinner; completed, interrupted, and error states use stable status
+symbols instead. When a background Codex turn finishes or needs approval,
+Sakura marks that terminal as needing attention and updates the sidebar count.
 Ordinary terminals use bell and process-exit signals as a fallback.
 
 ## Keybindings

@@ -529,6 +529,7 @@ typedef enum {
 	SAKURA_TAB_STATUS_RUNNING,
 	SAKURA_TAB_STATUS_NEEDS_APPROVAL,
 	SAKURA_TAB_STATUS_READY,
+	SAKURA_TAB_STATUS_INTERRUPTED,
 	SAKURA_TAB_STATUS_ERROR
 } SakuraTabStatus;
 
@@ -585,6 +586,7 @@ struct sakura_tab {
 	gboolean codex_name_query_active;
 	guint codex_name_retry_source_id;
 	guint codex_name_retry_count;
+	gboolean codex_interrupt_requested;
 	SakuraTabStatus status;
 	gboolean attention;
 	gboolean text_selection_mode;
@@ -1336,8 +1338,10 @@ sakura_tab_status_label (SakuraTabStatus status)
 			return _("Needs approval");
 		case SAKURA_TAB_STATUS_READY:
 			return _("Ready to review");
+		case SAKURA_TAB_STATUS_INTERRUPTED:
+			return _("Interrupted");
 		case SAKURA_TAB_STATUS_ERROR:
-			return _("Stopped");
+			return _("Error");
 		case SAKURA_TAB_STATUS_NONE:
 		default:
 			return NULL;
@@ -1355,10 +1359,34 @@ sakura_tab_status_color (SakuraTabStatus status)
 			return "#e5a13a";
 		case SAKURA_TAB_STATUS_READY:
 			return "#72b879";
+		case SAKURA_TAB_STATUS_INTERRUPTED:
+			return "#8c8c8c";
 		case SAKURA_TAB_STATUS_ERROR:
 			return "#d96c75";
 		case SAKURA_TAB_STATUS_IDLE:
 			return "#8c8c8c";
+		case SAKURA_TAB_STATUS_NONE:
+		default:
+			return NULL;
+	}
+}
+
+
+static const gchar *
+sakura_tab_status_symbol (SakuraTabStatus status)
+{
+	switch (status) {
+		case SAKURA_TAB_STATUS_IDLE:
+			return "•";
+		case SAKURA_TAB_STATUS_NEEDS_APPROVAL:
+			return "?";
+		case SAKURA_TAB_STATUS_READY:
+			return "✓";
+		case SAKURA_TAB_STATUS_INTERRUPTED:
+			return "■";
+		case SAKURA_TAB_STATUS_ERROR:
+			return "!";
+		case SAKURA_TAB_STATUS_RUNNING:
 		case SAKURA_TAB_STATUS_NONE:
 		default:
 			return NULL;
@@ -1678,7 +1706,7 @@ static void
 sakura_sidebar_set_node_row (struct sakura_sidebar_node *node, GtkTreeIter *iter)
 {
 	const gchar *icon_name;
-	const gchar *status_label, *status_color;
+	const gchar *status_label, *status_color, *status_symbol;
 	GtkIconTheme *icon_theme;
 	gchar *escaped_title, *escaped_subtitle, *markup, *status_markup = NULL;
 	gchar *tooltip_markup = NULL;
@@ -1703,8 +1731,10 @@ sakura_sidebar_set_node_row (struct sakura_sidebar_node *node, GtkTreeIter *iter
 	status_label = node->tab != NULL ? sakura_tab_status_label(node->tab->status) : NULL;
 	status_running = node->tab != NULL && node->tab->status == SAKURA_TAB_STATUS_RUNNING;
 	status_color = node->tab != NULL ? sakura_tab_status_color(node->tab->status) : NULL;
-	if (!status_running && status_color != NULL)
-		status_markup = g_strdup_printf("<span foreground=\"%s\">●</span>", status_color);
+	status_symbol = node->tab != NULL ? sakura_tab_status_symbol(node->tab->status) : NULL;
+	if (!status_running && status_color != NULL && status_symbol != NULL)
+		status_markup = g_strdup_printf("<span foreground=\"%s\">%s</span>",
+		                                status_color, status_symbol);
 	status_marker_visible = status_markup != NULL;
 	if (node->subtitle != NULL && node->subtitle[0] != '\0')
 		markup = g_strdup_printf("%s\n<small>%s</small>", escaped_title, escaped_subtitle);
@@ -1893,7 +1923,7 @@ sakura_tab_button_close_cb (GtkWidget *widget, void *data)
 static void
 sakura_tab_bar_update_tab (struct sakura_tab *sk_tab)
 {
-	const gchar *status_color;
+	const gchar *status_color, *status_symbol;
 	const gchar *tooltip;
 	GtkWidget *status_slot;
 
@@ -1912,6 +1942,7 @@ sakura_tab_bar_update_tab (struct sakura_tab *sk_tab)
 	gtk_widget_set_tooltip_text(sk_tab->tab_button, tooltip);
 
 	status_color = sakura_tab_status_color(sk_tab->status);
+	status_symbol = sakura_tab_status_symbol(sk_tab->status);
 	if (sk_tab->status == SAKURA_TAB_STATUS_RUNNING) {
 		gtk_widget_show(status_slot);
 		gtk_widget_hide(sk_tab->tab_button_status);
@@ -1920,9 +1951,9 @@ sakura_tab_bar_update_tab (struct sakura_tab *sk_tab)
 	} else {
 		gtk_spinner_stop(GTK_SPINNER(sk_tab->tab_button_spinner));
 		gtk_widget_hide(sk_tab->tab_button_spinner);
-		if (status_color != NULL) {
-			gchar *status_markup = g_strdup_printf("<span foreground=\"%s\">●</span>",
-			                                       status_color);
+		if (status_color != NULL && status_symbol != NULL) {
+			gchar *status_markup = g_strdup_printf("<span foreground=\"%s\">%s</span>",
+			                                       status_color, status_symbol);
 			gtk_label_set_markup(GTK_LABEL(sk_tab->tab_button_status), status_markup);
 			g_free(status_markup);
 			gtk_widget_show(status_slot);
@@ -3844,6 +3875,11 @@ sakura_codex_status_from_state (const gchar *state, SakuraTabStatus *status,
 	} else if (g_strcmp0(state, "ready") == 0) {
 		*status = SAKURA_TAB_STATUS_READY;
 		*attention = TRUE;
+	} else if (g_strcmp0(state, "interrupted") == 0 ||
+	           g_strcmp0(state, "cancelled") == 0 ||
+	           g_strcmp0(state, "canceled") == 0) {
+		*status = SAKURA_TAB_STATUS_INTERRUPTED;
+		*attention = FALSE;
 	} else if (g_strcmp0(state, "error") == 0) {
 		*status = SAKURA_TAB_STATUS_ERROR;
 		*attention = TRUE;
@@ -3936,8 +3972,18 @@ sakura_codex_tracking_poll_cb (gpointer data)
 				sk_tab->codex_session_id = g_strdup(session_id);
 				changed = TRUE;
 			}
-			if (state != NULL && sakura_codex_status_from_state(state, &status, &attention))
+			if (state != NULL && sakura_codex_status_from_state(state, &status, &attention)) {
+				/* A Stop hook normally reports a completed turn as ready. If the
+				 * user sent Ctrl-C, preserve the more useful interrupted state. */
+				if (status == SAKURA_TAB_STATUS_RUNNING) {
+					sk_tab->codex_interrupt_requested = FALSE;
+				} else if (status == SAKURA_TAB_STATUS_READY && sk_tab->codex_interrupt_requested) {
+					status = SAKURA_TAB_STATUS_INTERRUPTED;
+					attention = FALSE;
+					sk_tab->codex_interrupt_requested = FALSE;
+				}
 				sakura_tab_set_status(sk_tab, status, attention);
+			}
 			else if (state == NULL && sk_tab->status == SAKURA_TAB_STATUS_NONE)
 				sakura_tab_set_status(sk_tab, SAKURA_TAB_STATUS_IDLE, FALSE);
 			matched_tab = sk_tab;
@@ -4356,6 +4402,17 @@ static gboolean
 sakura_term_keypress_cb (GtkWidget *widget, GdkEventKey *event, gpointer data)
 {
 	struct sakura_tab *sk_tab = data;
+
+	/* Ctrl-C is the conventional terminal interrupt. Mark an active Codex
+	 * turn as interrupted immediately; the next hook event can replace this
+	 * optimistic state with the authoritative state from Codex. */
+	if (sk_tab != NULL && sk_tab->kind == SAKURA_TAB_CODEX &&
+	    sk_tab->status == SAKURA_TAB_STATUS_RUNNING &&
+	    event->keyval == GDK_KEY_c &&
+	    (event->state & (GDK_CONTROL_MASK | GDK_SHIFT_MASK)) == GDK_CONTROL_MASK) {
+		sk_tab->codex_interrupt_requested = TRUE;
+		sakura_tab_set_status(sk_tab, SAKURA_TAB_STATUS_INTERRUPTED, FALSE);
+	}
 
 	if (sk_tab != NULL && sk_tab->text_selection_mode &&
 	    event->keyval == GDK_KEY_Escape) {
