@@ -363,6 +363,10 @@ SakuraApp sakura;
 #define DEFAULT_SEARCH_ACCELERATOR (GDK_CONTROL_MASK|GDK_SHIFT_MASK)
 #define DEFAULT_SELECT_COLORSET_ACCELERATOR (GDK_CONTROL_MASK|GDK_SHIFT_MASK)
 #define DEFAULT_NEW_WINDOW_ACCELERATOR (GDK_CONTROL_MASK|GDK_SHIFT_MASK)
+#define DEFAULT_SPLIT_RIGHT_ACCELERATOR (GDK_CONTROL_MASK|GDK_SHIFT_MASK)
+#define DEFAULT_SPLIT_DOWN_ACCELERATOR (GDK_CONTROL_MASK|GDK_SHIFT_MASK)
+#define DEFAULT_FOCUS_PANE_ACCELERATOR (GDK_CONTROL_MASK|GDK_MOD1_MASK)
+#define DEFAULT_PANE_ACTION_ACCELERATOR (GDK_CONTROL_MASK|GDK_SHIFT_MASK)
 #define DEFAULT_ADD_TAB_KEY  GDK_KEY_T
 #define DEFAULT_DEL_TAB_KEY  GDK_KEY_W
 #define DEFAULT_PREV_TAB_KEY  GDK_KEY_Left
@@ -376,6 +380,15 @@ SakuraApp sakura;
 #define DEFAULT_INCREASE_FONT_SIZE_KEY GDK_KEY_plus
 #define DEFAULT_DECREASE_FONT_SIZE_KEY GDK_KEY_minus
 #define DEFAULT_NEW_WINDOW_KEY GDK_KEY_O
+#define DEFAULT_SPLIT_RIGHT_KEY GDK_KEY_E
+#define DEFAULT_SPLIT_DOWN_KEY GDK_KEY_P
+#define DEFAULT_FOCUS_PANE_LEFT_KEY GDK_KEY_H
+#define DEFAULT_FOCUS_PANE_RIGHT_KEY GDK_KEY_L
+#define DEFAULT_FOCUS_PANE_UP_KEY GDK_KEY_K
+#define DEFAULT_FOCUS_PANE_DOWN_KEY GDK_KEY_J
+#define DEFAULT_PANE_CLOSE_KEY GDK_KEY_W
+#define DEFAULT_PANE_EQUALIZE_KEY GDK_KEY_equal
+#define DEFAULT_PANE_ZOOM_KEY GDK_KEY_Z
 #define DEFAULT_SCROLLABLE_TABS TRUE
 #define DEFAULT_PASTE_BUTTON 2
 #define DEFAULT_MENU_BUTTON 3
@@ -487,6 +500,10 @@ void            sakura_error (const char *, ...);
 static guint    sakura_tokeycode (guint key);
 static void     sakura_set_keybind (const gchar *, guint);
 static guint    sakura_get_keybind (const gchar *);
+static guint    sakura_get_keybind_default (const gchar *, guint);
+static gint     sakura_get_accelerator_default (const gchar *, gint);
+static void     sakura_pane_menu_show_cb (GtkWidget *, gpointer);
+static gboolean sakura_key_matches (GdkEventKey *, gint, gint);
 static void     sakura_sanitize_working_directory (void);
 
 /* Functions */
@@ -570,46 +587,50 @@ sakura_key_press_cb (GtkWidget *widget, GdkEventKey *event, gpointer user_data)
 	struct sakura_tab *current_tab;
 
 	if (event->type != GDK_KEY_PRESS) return FALSE;
-	if ((event->state & (GDK_CONTROL_MASK | GDK_SHIFT_MASK)) ==
-	    (GDK_CONTROL_MASK | GDK_SHIFT_MASK)) {
-		if (event->keyval == GDK_KEY_E) {
-			sakura_split_current_cb(NULL, GINT_TO_POINTER(SAKURA_SPLIT_RIGHT));
-			return TRUE;
-		}
-		if (event->keyval == GDK_KEY_O) {
-			sakura_split_current_cb(NULL, GINT_TO_POINTER(SAKURA_SPLIT_DOWN));
-			return TRUE;
-		}
+	if (sakura_key_matches(event, sakura.split_right_accelerator,
+	                       sakura.split_right_key)) {
+		sakura_split_current_cb(NULL, GINT_TO_POINTER(SAKURA_SPLIT_RIGHT));
+		return TRUE;
 	}
-	if ((event->state & (GDK_CONTROL_MASK | GDK_MOD1_MASK)) ==
-	    (GDK_CONTROL_MASK | GDK_MOD1_MASK)) {
-		switch (gdk_keyval_to_lower(event->keyval)) {
-			case GDK_KEY_h:
-				sakura_focus_direction_cb(NULL, GINT_TO_POINTER(SAKURA_FOCUS_LEFT));
-				return TRUE;
-			case GDK_KEY_l:
-				sakura_focus_direction_cb(NULL, GINT_TO_POINTER(SAKURA_FOCUS_RIGHT));
-				return TRUE;
-			case GDK_KEY_k:
-				sakura_focus_direction_cb(NULL, GINT_TO_POINTER(SAKURA_FOCUS_UP));
-				return TRUE;
-			case GDK_KEY_j:
-				sakura_focus_direction_cb(NULL, GINT_TO_POINTER(SAKURA_FOCUS_DOWN));
-				return TRUE;
-			default:
-				break;
-		}
+	if (sakura_key_matches(event, sakura.split_down_accelerator,
+	                       sakura.split_down_key)) {
+		sakura_split_current_cb(NULL, GINT_TO_POINTER(SAKURA_SPLIT_DOWN));
+		return TRUE;
 	}
-	if ((event->state & (GDK_CONTROL_MASK | GDK_SHIFT_MASK)) ==
-	    (GDK_CONTROL_MASK | GDK_SHIFT_MASK)) {
-		if (event->keyval == GDK_KEY_Z) {
-			sakura_toggle_zoom_current_cb(NULL, NULL);
-			return TRUE;
-		}
-		if (event->keyval == GDK_KEY_equal || event->keyval == GDK_KEY_plus) {
-			sakura_equalize_current_cb(NULL, NULL);
-			return TRUE;
-		}
+	if (sakura_key_matches(event, sakura.focus_pane_left_accelerator,
+	                       sakura.focus_pane_left_key)) {
+		sakura_focus_direction_cb(NULL, GINT_TO_POINTER(SAKURA_FOCUS_LEFT));
+		return TRUE;
+	}
+	if (sakura_key_matches(event, sakura.focus_pane_right_accelerator,
+	                       sakura.focus_pane_right_key)) {
+		sakura_focus_direction_cb(NULL, GINT_TO_POINTER(SAKURA_FOCUS_RIGHT));
+		return TRUE;
+	}
+	if (sakura_key_matches(event, sakura.focus_pane_up_accelerator,
+	                       sakura.focus_pane_up_key)) {
+		sakura_focus_direction_cb(NULL, GINT_TO_POINTER(SAKURA_FOCUS_UP));
+		return TRUE;
+	}
+	if (sakura_key_matches(event, sakura.focus_pane_down_accelerator,
+	                       sakura.focus_pane_down_key)) {
+		sakura_focus_direction_cb(NULL, GINT_TO_POINTER(SAKURA_FOCUS_DOWN));
+		return TRUE;
+	}
+	if (sakura_key_matches(event, sakura.pane_zoom_accelerator,
+	                       sakura.pane_zoom_key)) {
+		sakura_toggle_zoom_current_cb(NULL, NULL);
+		return TRUE;
+	}
+	if (sakura_key_matches(event, sakura.pane_equalize_accelerator,
+	                       sakura.pane_equalize_key)) {
+		sakura_equalize_current_cb(NULL, NULL);
+		return TRUE;
+	}
+	if (sakura_key_matches(event, sakura.pane_close_accelerator,
+	                       sakura.pane_close_key)) {
+		sakura_close_tab_cb(NULL, NULL);
+		return TRUE;
 	}
 
 	page = gtk_notebook_get_current_page(GTK_NOTEBOOK(sakura.notebook));
@@ -1485,7 +1506,7 @@ sakura_split_current_cb (GtkWidget *widget, void *data)
 	if (direction < SAKURA_SPLIT_RIGHT || direction > SAKURA_SPLIT_DOWN)
 		return;
 	if (page == NULL || tab == NULL || tab->page != page ||
-	    tab->layout_leaf == NULL || page->container == NULL)
+	    !sakura_tab_can_split(tab) || page->container == NULL)
 		return;
 
 	config.target_page = page;
@@ -1653,6 +1674,40 @@ sakura_close_tab_cb (GtkWidget *widget, void *data)
 
 	if (page >= 0)
 		sakura_close_tab(page);
+}
+
+
+static void
+sakura_pane_menu_show_cb(GtkWidget *widget, gpointer data)
+{
+	SakuraTab *tab = sakura.active_tab;
+	SakuraLayoutNode *parent = tab != NULL ? tab->layout_leaf != NULL
+	                                      ? tab->layout_leaf->parent : NULL : NULL;
+	gboolean can_split = sakura_tab_can_split(tab);
+	gboolean has_panes = tab != NULL && tab->page != NULL &&
+	                     tab->page->panes != NULL && tab->page->panes->len > 1;
+
+	(void)widget;
+	(void)data;
+	if (sakura.pane_split_right != NULL)
+		gtk_widget_set_sensitive(sakura.pane_split_right, can_split);
+	if (sakura.pane_split_down != NULL)
+		gtk_widget_set_sensitive(sakura.pane_split_down, can_split);
+	if (sakura.pane_focus_left != NULL)
+		gtk_widget_set_sensitive(sakura.pane_focus_left, has_panes);
+	if (sakura.pane_focus_right != NULL)
+		gtk_widget_set_sensitive(sakura.pane_focus_right, has_panes);
+	if (sakura.pane_focus_up != NULL)
+		gtk_widget_set_sensitive(sakura.pane_focus_up, has_panes);
+	if (sakura.pane_focus_down != NULL)
+		gtk_widget_set_sensitive(sakura.pane_focus_down, has_panes);
+	if (sakura.pane_close != NULL)
+		gtk_widget_set_sensitive(sakura.pane_close, tab != NULL);
+	if (sakura.pane_equalize != NULL)
+		gtk_widget_set_sensitive(sakura.pane_equalize, parent != NULL &&
+		                         parent->kind == SAKURA_LAYOUT_SPLIT);
+	if (sakura.pane_zoom != NULL)
+		gtk_widget_set_sensitive(sakura.pane_zoom, has_panes);
 }
 
 
@@ -2258,6 +2313,25 @@ sakura_init()
 	}
 	sakura.new_window_accelerator = g_key_file_get_integer(sakura.cfg, cfg_group, "new_window_accelerator", NULL);
 
+	sakura.split_right_accelerator = sakura_get_accelerator_default(
+		"split_right_accelerator", DEFAULT_SPLIT_RIGHT_ACCELERATOR);
+	sakura.split_down_accelerator = sakura_get_accelerator_default(
+		"split_down_accelerator", DEFAULT_SPLIT_DOWN_ACCELERATOR);
+	sakura.focus_pane_left_accelerator = sakura_get_accelerator_default(
+		"focus_pane_left_accelerator", DEFAULT_FOCUS_PANE_ACCELERATOR);
+	sakura.focus_pane_right_accelerator = sakura_get_accelerator_default(
+		"focus_pane_right_accelerator", DEFAULT_FOCUS_PANE_ACCELERATOR);
+	sakura.focus_pane_up_accelerator = sakura_get_accelerator_default(
+		"focus_pane_up_accelerator", DEFAULT_FOCUS_PANE_ACCELERATOR);
+	sakura.focus_pane_down_accelerator = sakura_get_accelerator_default(
+		"focus_pane_down_accelerator", DEFAULT_FOCUS_PANE_ACCELERATOR);
+	sakura.pane_close_accelerator = sakura_get_accelerator_default(
+		"pane_close_accelerator", DEFAULT_PANE_ACTION_ACCELERATOR);
+	sakura.pane_equalize_accelerator = sakura_get_accelerator_default(
+		"pane_equalize_accelerator", DEFAULT_PANE_ACTION_ACCELERATOR);
+	sakura.pane_zoom_accelerator = sakura_get_accelerator_default(
+		"pane_zoom_accelerator", DEFAULT_PANE_ACTION_ACCELERATOR);
+
 	if (!g_key_file_has_key(sakura.cfg, cfg_group, "add_tab_key", NULL)) {
 		sakura_set_keybind("add_tab_key", DEFAULT_ADD_TAB_KEY);
 	}
@@ -2322,6 +2396,25 @@ sakura_init()
 		sakura_set_keybind("new_window_key", DEFAULT_NEW_WINDOW_KEY);
 	}
 	sakura.new_window_key = sakura_get_keybind("new_window_key");
+
+	sakura.split_right_key = sakura_get_keybind_default(
+		"split_right_key", DEFAULT_SPLIT_RIGHT_KEY);
+	sakura.split_down_key = sakura_get_keybind_default(
+		"split_down_key", DEFAULT_SPLIT_DOWN_KEY);
+	sakura.focus_pane_left_key = sakura_get_keybind_default(
+		"focus_pane_left_key", DEFAULT_FOCUS_PANE_LEFT_KEY);
+	sakura.focus_pane_right_key = sakura_get_keybind_default(
+		"focus_pane_right_key", DEFAULT_FOCUS_PANE_RIGHT_KEY);
+	sakura.focus_pane_up_key = sakura_get_keybind_default(
+		"focus_pane_up_key", DEFAULT_FOCUS_PANE_UP_KEY);
+	sakura.focus_pane_down_key = sakura_get_keybind_default(
+		"focus_pane_down_key", DEFAULT_FOCUS_PANE_DOWN_KEY);
+	sakura.pane_close_key = sakura_get_keybind_default(
+		"pane_close_key", DEFAULT_PANE_CLOSE_KEY);
+	sakura.pane_equalize_key = sakura_get_keybind_default(
+		"pane_equalize_key", DEFAULT_PANE_EQUALIZE_KEY);
+	sakura.pane_zoom_key = sakura_get_keybind_default(
+		"pane_zoom_key", DEFAULT_PANE_ZOOM_KEY);
 
 	if (!g_key_file_has_key(sakura.cfg, cfg_group, "set_colorset_accelerator", NULL)) {
 		sakura_set_config_integer("set_colorset_accelerator", DEFAULT_SELECT_COLORSET_ACCELERATOR);
@@ -2601,7 +2694,7 @@ sakura_init_popup()
 {
 	GtkWidget *item_new_tab, *item_tools, *item_open_here,
 	          *item_gitui, *item_git_cola, *item_gh_dash, *item_open_pr,
-		          *item_set_name, *item_close_tab, *item_split_right, *item_split_down, *item_copy,
+	          *item_set_name, *item_close_tab, *item_pane, *item_copy,
 	          *item_paste, *item_select_text, *item_fullscreen,
 	          *item_select_font, *item_select_colors,
 	          *item_show_tab_bar, *item_sidebar,
@@ -2611,7 +2704,10 @@ sakura_init_popup()
 	          *item_cursor, *item_cursor_block, *item_cursor_underline, *item_cursor_ibeam,
 		  *item_tabs_on_bottom, *item_less_questions, *item_copy_on_select,
 	          *item_disable_numbered_tabswitch, *item_new_tab_after_current; // *item_use_fading;
-	GtkWidget *options_menu, *show_tab_bar_menu, *cursor_menu, *tools_menu;
+	GtkWidget *options_menu, *show_tab_bar_menu, *cursor_menu, *tools_menu, *pane_menu;
+	GtkWidget *pane_split_right, *pane_split_down, *pane_focus_left,
+	          *pane_focus_right, *pane_focus_up, *pane_focus_down,
+	          *pane_close, *pane_equalize, *pane_zoom;
 	GtkWidget *codex_menu, *item_codex, *item_new_codex, *item_resume_codex,
 	          *item_attach_codex, *item_rename_codex, *item_refresh_codex_name, *item_codex_status,
 	          *item_install_codex;
@@ -2620,8 +2716,16 @@ sakura_init_popup()
 	sakura.item_open_link = gtk_menu_item_new_with_label(_("Open link"));
 	sakura.item_copy_link = gtk_menu_item_new_with_label(_("Copy link"));
 	item_new_tab = gtk_menu_item_new_with_label(_("New tab"));
-	item_split_right = gtk_menu_item_new_with_label(_("Split Right"));
-	item_split_down = gtk_menu_item_new_with_label(_("Split Down"));
+	item_pane = gtk_menu_item_new_with_label(_("Pane"));
+	pane_split_right = gtk_menu_item_new_with_label(_("Split Right"));
+	pane_split_down = gtk_menu_item_new_with_label(_("Split Down"));
+	pane_focus_left = gtk_menu_item_new_with_label(_("Focus Left"));
+	pane_focus_right = gtk_menu_item_new_with_label(_("Focus Right"));
+	pane_focus_up = gtk_menu_item_new_with_label(_("Focus Up"));
+	pane_focus_down = gtk_menu_item_new_with_label(_("Focus Down"));
+	pane_close = gtk_menu_item_new_with_label(_("Close pane"));
+	pane_equalize = gtk_menu_item_new_with_label(_("Equalize split"));
+	pane_zoom = gtk_menu_item_new_with_label(_("Zoom pane"));
 	item_tools = gtk_menu_item_new_with_label(_("Tools"));
 	item_open_here = gtk_menu_item_new_with_label(_("Open Here"));
 	item_gitui = gtk_menu_item_new_with_label(_("GitUI"));
@@ -2760,8 +2864,7 @@ sakura_init_popup()
 	gtk_menu_shell_append(GTK_MENU_SHELL(sakura.menu), item_select_text);
 	gtk_menu_shell_append(GTK_MENU_SHELL(sakura.menu), gtk_separator_menu_item_new());
 	gtk_menu_shell_append(GTK_MENU_SHELL(sakura.menu), item_new_tab);
-	gtk_menu_shell_append(GTK_MENU_SHELL(sakura.menu), item_split_right);
-	gtk_menu_shell_append(GTK_MENU_SHELL(sakura.menu), item_split_down);
+	gtk_menu_shell_append(GTK_MENU_SHELL(sakura.menu), item_pane);
 	gtk_menu_shell_append(GTK_MENU_SHELL(sakura.menu), item_tools);
 	gtk_menu_shell_append(GTK_MENU_SHELL(sakura.menu), item_open_here);
 	gtk_menu_shell_append(GTK_MENU_SHELL(sakura.menu), item_codex);
@@ -2776,6 +2879,17 @@ sakura_init_popup()
 	show_tab_bar_menu = gtk_menu_new();
 	cursor_menu = gtk_menu_new();
 	tools_menu = gtk_menu_new();
+	pane_menu = gtk_menu_new();
+	sakura.pane_menu = pane_menu;
+	sakura.pane_split_right = pane_split_right;
+	sakura.pane_split_down = pane_split_down;
+	sakura.pane_focus_left = pane_focus_left;
+	sakura.pane_focus_right = pane_focus_right;
+	sakura.pane_focus_up = pane_focus_up;
+	sakura.pane_focus_down = pane_focus_down;
+	sakura.pane_close = pane_close;
+	sakura.pane_equalize = pane_equalize;
+	sakura.pane_zoom = pane_zoom;
 	codex_menu = gtk_menu_new();
 	gtk_menu_shell_append(GTK_MENU_SHELL(tools_menu), item_gitui);
 	gtk_menu_shell_append(GTK_MENU_SHELL(tools_menu), item_git_cola);
@@ -2790,6 +2904,19 @@ sakura_init_popup()
 	gtk_menu_shell_append(GTK_MENU_SHELL(codex_menu), item_refresh_codex_name);
 	gtk_menu_shell_append(GTK_MENU_SHELL(codex_menu), item_codex_status);
 	gtk_menu_item_set_submenu(GTK_MENU_ITEM(item_codex), codex_menu);
+	gtk_menu_shell_append(GTK_MENU_SHELL(pane_menu), pane_split_right);
+	gtk_menu_shell_append(GTK_MENU_SHELL(pane_menu), pane_split_down);
+	gtk_menu_shell_append(GTK_MENU_SHELL(pane_menu), gtk_separator_menu_item_new());
+	gtk_menu_shell_append(GTK_MENU_SHELL(pane_menu), pane_focus_left);
+	gtk_menu_shell_append(GTK_MENU_SHELL(pane_menu), pane_focus_right);
+	gtk_menu_shell_append(GTK_MENU_SHELL(pane_menu), pane_focus_up);
+	gtk_menu_shell_append(GTK_MENU_SHELL(pane_menu), pane_focus_down);
+	gtk_menu_shell_append(GTK_MENU_SHELL(pane_menu), gtk_separator_menu_item_new());
+	gtk_menu_shell_append(GTK_MENU_SHELL(pane_menu), pane_close);
+	gtk_menu_shell_append(GTK_MENU_SHELL(pane_menu), pane_equalize);
+	gtk_menu_shell_append(GTK_MENU_SHELL(pane_menu), pane_zoom);
+	gtk_menu_item_set_submenu(GTK_MENU_ITEM(item_pane), pane_menu);
+	g_signal_connect(pane_menu, "show", G_CALLBACK(sakura_pane_menu_show_cb), NULL);
 
 	gtk_menu_shell_append(GTK_MENU_SHELL(options_menu), item_select_colors);
 	gtk_menu_shell_append(GTK_MENU_SHELL(options_menu), item_select_font);
@@ -2823,10 +2950,21 @@ sakura_init_popup()
 
 	/* ... and finally assign callbacks to menuitems */
 	g_signal_connect(G_OBJECT(item_new_tab), "activate", G_CALLBACK(sakura_new_tab_cb), NULL);
-	g_signal_connect(G_OBJECT(item_split_right), "activate", G_CALLBACK(sakura_split_current_cb),
+	g_signal_connect(G_OBJECT(pane_split_right), "activate", G_CALLBACK(sakura_split_current_cb),
 	                 GINT_TO_POINTER(SAKURA_SPLIT_RIGHT));
-	g_signal_connect(G_OBJECT(item_split_down), "activate", G_CALLBACK(sakura_split_current_cb),
+	g_signal_connect(G_OBJECT(pane_split_down), "activate", G_CALLBACK(sakura_split_current_cb),
 	                 GINT_TO_POINTER(SAKURA_SPLIT_DOWN));
+	g_signal_connect(G_OBJECT(pane_focus_left), "activate", G_CALLBACK(sakura_focus_direction_cb),
+	                 GINT_TO_POINTER(SAKURA_FOCUS_LEFT));
+	g_signal_connect(G_OBJECT(pane_focus_right), "activate", G_CALLBACK(sakura_focus_direction_cb),
+	                 GINT_TO_POINTER(SAKURA_FOCUS_RIGHT));
+	g_signal_connect(G_OBJECT(pane_focus_up), "activate", G_CALLBACK(sakura_focus_direction_cb),
+	                 GINT_TO_POINTER(SAKURA_FOCUS_UP));
+	g_signal_connect(G_OBJECT(pane_focus_down), "activate", G_CALLBACK(sakura_focus_direction_cb),
+	                 GINT_TO_POINTER(SAKURA_FOCUS_DOWN));
+	g_signal_connect(G_OBJECT(pane_close), "activate", G_CALLBACK(sakura_close_tab_cb), NULL);
+	g_signal_connect(G_OBJECT(pane_equalize), "activate", G_CALLBACK(sakura_equalize_current_cb), NULL);
+	g_signal_connect(G_OBJECT(pane_zoom), "activate", G_CALLBACK(sakura_toggle_zoom_current_cb), NULL);
 	g_signal_connect(G_OBJECT(item_gitui), "activate", G_CALLBACK(sakura_new_tool_cb),
 	                 GINT_TO_POINTER(SAKURA_TOOL_GITUI));
 	g_signal_connect(G_OBJECT(item_git_cola), "activate", G_CALLBACK(sakura_new_tool_cb),
@@ -3377,6 +3515,37 @@ sakura_get_keybind(const gchar *key)
 
 	/* Always use uppercase value as keyval */
 	return gdk_keyval_to_upper(retval);
+}
+
+
+static guint
+sakura_get_keybind_default(const gchar *key, guint default_value)
+{
+	if (!g_key_file_has_key(sakura.cfg, cfg_group, key, NULL))
+		sakura_set_keybind(key, default_value);
+	return sakura_get_keybind(key);
+}
+
+
+static gint
+sakura_get_accelerator_default(const gchar *key, gint default_value)
+{
+	if (!g_key_file_has_key(sakura.cfg, cfg_group, key, NULL))
+		sakura_set_config_integer(key, default_value);
+	return g_key_file_get_integer(sakura.cfg, cfg_group, key, NULL);
+}
+
+
+static gboolean
+sakura_key_matches(GdkEventKey *event, gint accelerator, gint key)
+{
+	GdkModifierType accel_mask;
+
+	if (event == NULL)
+		return FALSE;
+	accel_mask = gtk_accelerator_get_default_mod_mask();
+	return (event->state & accel_mask) == (accelerator & accel_mask) &&
+	       event->hardware_keycode == sakura_tokeycode(key);
 }
 
 

@@ -98,6 +98,24 @@ sakura_tab_is_current(SakuraTab *tab)
 }
 
 
+gboolean
+sakura_tab_can_split(SakuraTab *tab)
+{
+	if (tab == NULL || tab->page == NULL || tab->layout_leaf == NULL)
+		return FALSE;
+	/* Shells and Codex sessions are terminal surfaces. Tool pages may be
+	 * terminal-backed today, but their reuse/lookup semantics are not yet
+	 * defined for splits; keep them single-pane until that policy is explicit. */
+	if (tab->kind == SAKURA_TAB_TOOL)
+		return FALSE;
+#ifdef HAVE_WEBKITGTK
+	if (tab->browser != NULL)
+		return FALSE;
+#endif
+	return TRUE;
+}
+
+
 SakuraTab *
 sakura_tab_new(void)
 {
@@ -577,6 +595,7 @@ sakura_tab_add_with_options (const gchar *restore_cwd,
 	g_signal_connect(G_OBJECT(sk_tab->vte), "window-title-changed", G_CALLBACK(sakura_tab_title_changed_cb), NULL);
 	g_signal_connect(G_OBJECT(sk_tab->vte), "button-press-event", G_CALLBACK(sakura_term_buttonpressed_cb), sakura.menu);
 	g_signal_connect_swapped(G_OBJECT(sk_tab->vte), "button-release-event", G_CALLBACK(sakura_term_buttonreleased_cb), sakura.menu);
+	g_signal_connect(G_OBJECT(sk_tab->vte), "focus-in-event", G_CALLBACK(sakura_pane_focus_in_cb), sk_tab);
 	g_signal_connect(G_OBJECT(sk_tab->vte), "key-press-event", G_CALLBACK(sakura_tab_keypress_cb), sk_tab);
 
 	/* Label & button signals */
@@ -1455,6 +1474,13 @@ sakura_term_buttonpressed_cb (GtkWidget *widget,
 
 	if (button_event->button == sakura.menu_button) {
 		GtkMenu *menu = GTK_MENU(user_data);
+		if (sakura.pane_menu != NULL)
+			/* Refresh pane action sensitivity before the parent menu opens. */
+			gtk_widget_set_sensitive(sakura.pane_menu, TRUE);
+		if (sakura.pane_split_right != NULL)
+			gtk_widget_set_sensitive(sakura.pane_split_right, sakura_tab_can_split(tab));
+		if (sakura.pane_split_down != NULL)
+			gtk_widget_set_sensitive(sakura.pane_split_down, sakura_tab_can_split(tab));
 
 		if (sakura.item_select_text != NULL) {
 			gtk_check_menu_item_set_active(

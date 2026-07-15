@@ -1609,6 +1609,8 @@ sakura_tab_spawn_tool(SakuraTab *tab, const gchar *cwd, gchar **env)
 		view = WEBKIT_WEB_VIEW(webkit_web_view_new());
 		tab->browser = GTK_WIDGET(view);
 		gtk_widget_set_can_focus(tab->browser, TRUE);
+		g_signal_connect(tab->browser, "focus-in-event",
+		                 G_CALLBACK(sakura_pane_focus_in_cb), tab);
 		gtk_widget_hide(tab->vte);
 		gtk_widget_hide(tab->scrollbar);
 		gtk_box_pack_start(GTK_BOX(browser_box), toolbar, FALSE, FALSE, 0);
