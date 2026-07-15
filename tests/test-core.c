@@ -192,6 +192,71 @@ test_session_snapshot_preserves_previous_on_failure(void)
 }
 
 
+static void
+test_layout_split_and_collapse(void)
+{
+	SakuraPage *page = sakura_page_new("page-layout");
+	SakuraTab first = { 0 };
+	SakuraTab second = { 0 };
+	SakuraLayoutNode *root;
+	GError *error = NULL;
+
+	root = sakura_layout_leaf_new(page, &first);
+	g_assert_nonnull(root);
+	g_assert_true(sakura_layout_validate(page, &error));
+	g_assert_no_error(error);
+	g_assert_true(sakura_layout_split_leaf(root, SAKURA_SPLIT_RIGHT, &second));
+	g_assert_cmpuint(sakura_layout_tab_count(page->layout_root), ==, 2);
+	g_assert_true(sakura_layout_contains_tab(page->layout_root, &first));
+	g_assert_true(sakura_layout_contains_tab(page->layout_root, &second));
+	g_assert_true(sakura_layout_validate(page, &error));
+	g_assert_no_error(error);
+
+	g_assert_true(sakura_layout_remove_leaf(second.layout_leaf));
+	g_assert_cmpuint(sakura_layout_tab_count(page->layout_root), ==, 1);
+	g_assert_true(sakura_layout_contains_tab(page->layout_root, &first));
+	g_assert_null(second.page);
+	g_assert_null(second.layout_leaf);
+	g_assert_true(sakura_layout_validate(page, &error));
+	g_assert_no_error(error);
+
+	sakura_page_free(page);
+}
+
+
+static void
+test_layout_rejects_invalid_tree(void)
+{
+	SakuraPage *page = sakura_page_new("page-invalid");
+	SakuraTab first = { 0 };
+	SakuraTab second = { 0 };
+	SakuraLayoutNode *first_leaf;
+	SakuraLayoutNode *second_leaf;
+	SakuraLayoutNode *split;
+	GError *error = NULL;
+
+	first_leaf = sakura_layout_leaf_new(page, &first);
+	second_leaf = sakura_layout_leaf_new(page, &second);
+	g_assert_nonnull(first_leaf);
+	g_assert_nonnull(second_leaf);
+	/* Deliberately create an invalid duplicate-child split for validation. */
+	split = sakura_layout_split_new(page, SAKURA_SPLIT_DOWN, 0.5,
+	                               first_leaf, second_leaf);
+	g_assert_nonnull(split);
+	page->layout_root = split;
+	split->data.split.second = first_leaf;
+	first_leaf->parent = split;
+	g_assert_false(sakura_layout_validate(page, &error));
+	g_assert_error(error, G_FILE_ERROR, G_FILE_ERROR_INVAL);
+	g_clear_error(&error);
+
+	/* Restore ownership before freeing the page. */
+	split->data.split.second = second_leaf;
+	second_leaf->parent = split;
+	sakura_page_free(page);
+}
+
+
 int
 main(int argc, char **argv)
 {
@@ -203,5 +268,7 @@ main(int argc, char **argv)
 	g_test_add_func("/session/snapshot/reject-cycle", test_session_snapshot_rejects_group_cycle);
 	g_test_add_func("/session/snapshot/optional-defaults", test_session_snapshot_uses_safe_optional_defaults);
 	g_test_add_func("/session/snapshot/preserve-on-failure", test_session_snapshot_preserves_previous_on_failure);
+	g_test_add_func("/layout/split-and-collapse", test_layout_split_and_collapse);
+	g_test_add_func("/layout/reject-invalid-tree", test_layout_rejects_invalid_tree);
 	return g_test_run();
 }

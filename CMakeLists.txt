@@ -55,6 +55,7 @@ MESSAGE ("pod2man executable is" ${POD2MAN})
 ADD_EXECUTABLE (sakura)
 TARGET_SOURCES (sakura PRIVATE
 	src/sakura.c
+	src/sakura-layout.c
 	src/sakura-tab.c
 	src/sakura-workspace.c
 	src/sakura-integrations.c
@@ -106,6 +107,7 @@ IF (BUILD_TESTING)
 	ADD_EXECUTABLE (sakura-core-test)
 	TARGET_SOURCES (sakura-core-test PRIVATE
 		tests/test-core.c
+		src/sakura-layout.c
 		src/sakura-integrations.c
 		src/sakura-session.c)
 	SET_PROPERTY (TARGET sakura-core-test APPEND PROPERTY COMPILE_DEFINITIONS SAKURA_CORE_TEST)

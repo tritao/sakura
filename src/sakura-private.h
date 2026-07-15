@@ -15,6 +15,8 @@
 #define NUM_COLORSETS 6
 
 typedef struct sakura_app SakuraApp;
+typedef struct sakura_page SakuraPage;
+typedef struct sakura_layout_node SakuraLayoutNode;
 typedef struct sakura_sidebar_node SakuraSidebarNode;
 typedef struct sakura_tab SakuraTab;
 typedef struct sakura_session_snapshot SakuraSessionSnapshot;
@@ -61,6 +63,16 @@ typedef enum {
 	SAKURA_CODEX_TRACKING_PARTIAL,
 	SAKURA_CODEX_TRACKING_ENABLED
 } SakuraCodexTrackingState;
+
+typedef enum {
+	SAKURA_LAYOUT_LEAF,
+	SAKURA_LAYOUT_SPLIT
+} SakuraLayoutKind;
+
+typedef enum {
+	SAKURA_SPLIT_RIGHT,
+	SAKURA_SPLIT_DOWN
+} SakuraSplitDirection;
 
 typedef enum {
 	SAKURA_SIDEBAR_GROUP,
@@ -110,6 +122,8 @@ struct sakura_app {
 	gint sidebar_width;
 	GtkWidget *notebook;
 	GPtrArray *tabs;               /* Stable tab ownership, in notebook order */
+	GPtrArray *pages;              /* Notebook pages; panes remain in tabs */
+	SakuraPage *active_page;
 	GtkWidget *content_box;
 	GtkWidget *tab_bar_shell;
 	GtkWidget *tab_bar_scope_label;
@@ -249,6 +263,37 @@ struct sakura_sidebar_node {
 	GtkTreeRowReference *row;
 };
 
+struct sakura_page {
+	gchar *id;
+	gchar *title;
+	gboolean title_set_by_user;
+	GtkWidget *container;
+	SakuraLayoutNode *layout_root;
+	SakuraTab *active_tab;
+	SakuraSidebarNode *sidebar_node;
+	gchar *last_active_terminal_id;
+	gboolean zoomed;
+};
+
+struct sakura_layout_node {
+	gchar *id;
+	SakuraLayoutKind kind;
+	SakuraLayoutNode *parent;
+	SakuraPage *page;
+	GtkWidget *widget;
+	union {
+		struct {
+			SakuraTab *tab;
+		} leaf;
+		struct {
+			SakuraSplitDirection direction;
+			gdouble ratio;
+			SakuraLayoutNode *first;
+			SakuraLayoutNode *second;
+		} split;
+	} data;
+};
+
 struct sakura_tab {
 	GtkWidget *hbox;
 	GtkWidget *label;
@@ -295,9 +340,31 @@ struct sakura_tab {
 	gboolean text_selection_mode;
 	gboolean hold;
 	SakuraSidebarNode *sidebar_node;
+	SakuraPage *page;
+	SakuraLayoutNode *layout_leaf;
 };
 
 extern SakuraApp sakura;
+
+SakuraPage *sakura_page_new(const gchar *id);
+void sakura_page_free(SakuraPage *page);
+SakuraLayoutNode *sakura_layout_leaf_new(SakuraPage *page, SakuraTab *tab);
+SakuraLayoutNode *sakura_layout_split_new(SakuraPage *page,
+                                           SakuraSplitDirection direction,
+                                           gdouble ratio,
+                                           SakuraLayoutNode *first,
+                                           SakuraLayoutNode *second);
+gboolean sakura_layout_split_leaf(SakuraLayoutNode *leaf,
+                                  SakuraSplitDirection direction,
+                                  SakuraTab *new_tab);
+gboolean sakura_layout_remove_leaf(SakuraLayoutNode *leaf);
+gboolean sakura_layout_contains_tab(const SakuraLayoutNode *node,
+                                    const SakuraTab *tab);
+guint sakura_layout_tab_count(const SakuraLayoutNode *node);
+void sakura_layout_foreach_tab(const SakuraLayoutNode *node,
+                               GFunc callback,
+                               gpointer user_data);
+gboolean sakura_layout_validate(const SakuraPage *page, GError **error);
 
 const gchar *sakura_tab_status_label(SakuraTabStatus status);
 const gchar *sakura_tab_status_color(SakuraTabStatus status);
