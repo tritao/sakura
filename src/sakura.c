@@ -1436,7 +1436,7 @@ sakura_close_tab_cb (GtkWidget *widget, void *data)
 	gint page;
 
 	page = sk_tab != NULL
-	     ? gtk_notebook_page_num(GTK_NOTEBOOK(sakura.notebook), sk_tab->hbox)
+	     ? sakura_page_for_tab(sk_tab)
 	     : gtk_notebook_get_current_page(GTK_NOTEBOOK(sakura.notebook));
 
 	if (page >= 0)
@@ -1720,6 +1720,7 @@ sakura_init()
 	int i;
 
 	sakura.tabs = g_ptr_array_new();
+	sakura.pages = g_ptr_array_new();
 	sakura.session_new_window = option_new_window;
 
 	/*** Config file initialization ***/
@@ -2700,6 +2701,11 @@ sakura_destroy()
 	 * window. Do not call notebook/VTE widget APIs here: their native windows
 	 * may already be gone. Release the application-owned records directly and
 	 * let GTK finish destroying the widget tree. */
+	if (sakura.pages != NULL) {
+		for (index = 0; index < sakura.pages->len; index++)
+			sakura_page_free(g_ptr_array_index(sakura.pages, index));
+		g_ptr_array_set_size(sakura.pages, 0);
+	}
 	if (sakura.tabs != NULL) {
 		for (index = 0; index < sakura.tabs->len; index++) {
 			tab = g_ptr_array_index(sakura.tabs, index);
@@ -2735,6 +2741,7 @@ sakura_destroy()
 	g_free(sakura.bash_history_rc);
 	g_free(sakura.editor_command);
 	g_clear_pointer(&sakura.tabs, g_ptr_array_unref);
+	g_clear_pointer(&sakura.pages, g_ptr_array_unref);
 
 	gtk_main_quit();
 }

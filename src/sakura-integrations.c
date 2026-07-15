@@ -1405,7 +1405,7 @@ sakura_rename_codex_session_cb (GtkWidget *widget, void *data)
 
 	(void)widget;
 	page = tab != NULL
-	     ? gtk_notebook_page_num(GTK_NOTEBOOK(sakura.notebook), tab->hbox)
+	     ? sakura_page_for_tab(tab)
 	     : gtk_notebook_get_current_page(GTK_NOTEBOOK(sakura.notebook));
 	if (page < 0)
 		return;

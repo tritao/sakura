@@ -91,11 +91,12 @@ sakura_select_tab (struct sakura_tab *sk_tab, gboolean focus)
 		sakura_sidebar_set_scope(scope);
 	}
 
-	page = gtk_notebook_page_num(GTK_NOTEBOOK(sakura.notebook), sk_tab->hbox);
+	page = sakura_page_for_tab(sk_tab);
 	if (page < 0)
 		return;
 
 	sakura.active_tab = sk_tab;
+	sakura.active_page = sk_tab->page;
 	current_page = gtk_notebook_get_current_page(GTK_NOTEBOOK(sakura.notebook));
 	if (current_page != page)
 		gtk_notebook_set_current_page(GTK_NOTEBOOK(sakura.notebook), page);
@@ -118,7 +119,7 @@ sakura_select_scope_default (void)
 		return;
 
 	if (sakura.active_tab != NULL &&
-	    gtk_notebook_page_num(GTK_NOTEBOOK(sakura.notebook), sakura.active_tab->hbox) >= 0 &&
+	    sakura_page_for_tab(sakura.active_tab) >= 0 &&
 	    sakura_tab_is_in_active_scope(sakura.active_tab)) {
 		sk_tab = sakura.active_tab;
 	} else if (sakura.active_group_scope->last_terminal_id != NULL) {
@@ -1023,8 +1024,17 @@ sakura_workspace_restore_snapshot (SakuraSessionSnapshot *snapshot)
 	}
 
 	if (restored > 0) {
-		gint selected_page = sakura_find_tab_by_terminal_id(snapshot->selected_terminal_id);
+		const gchar *selected_id = snapshot->selected_terminal_id;
+		gint selected_page;
 		struct sakura_tab *selected_tab = NULL;
+		if ((selected_id == NULL || selected_id[0] == '\0') &&
+		    snapshot->selected_terminal >= 0 &&
+		    (guint)snapshot->selected_terminal < snapshot->tabs->len) {
+			SakuraSessionTabRecord *selected_record = g_ptr_array_index(
+				snapshot->tabs, snapshot->selected_terminal);
+			selected_id = selected_record->terminal_id;
+		}
+		selected_page = sakura_find_tab_by_terminal_id(selected_id);
 		if (selected_page < 0 && selected_terminal >= 0 && selected_terminal < restored)
 			selected_page = selected_terminal;
 		if (selected_page >= 0)
@@ -1056,9 +1066,13 @@ sakura_workspace_snapshot_new(void)
 	                              group_ids, group_parents, group_titles);
 	sakura_sidebar_collect_terminals(GTK_TREE_MODEL(sakura.sidebar_model), NULL, terminals);
 
-	selected_page = gtk_notebook_get_current_page(GTK_NOTEBOOK(sakura.notebook));
+	selected_page = sakura.active_tab != NULL
+	              ? sakura_page_for_tab(sakura.active_tab)
+	              : gtk_notebook_get_current_page(GTK_NOTEBOOK(sakura.notebook));
 	if (selected_page >= 0) {
-		SakuraTab *selected_tab = sakura_tab_at_page(selected_page);
+		SakuraTab *selected_tab = sakura.active_tab != NULL
+		                       ? sakura.active_tab
+		                       : sakura_tab_at_page(selected_page);
 		for (index = 0; index < terminals->len; index++) {
 			SakuraSidebarNode *node = g_ptr_array_index(terminals, index);
 			if (node->tab == selected_tab) {
@@ -1444,6 +1458,8 @@ sakura_switch_page_cb (GtkWidget *widget, GtkWidget *widget_page,
 	if (tab == NULL)
 		return;
 	sakura.active_tab = tab;
+	sakura.active_page = sakura.pages != NULL && page_num < sakura.pages->len
+	                   ? g_ptr_array_index(sakura.pages, page_num) : tab->page;
 	sakura_remember_current_scope_tab(tab);
 	sakura_tab_clear_attention(tab);
 	/* A notebook switch can be triggered while a sidebar click is still being

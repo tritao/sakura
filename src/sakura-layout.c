@@ -94,6 +94,17 @@ sakura_page_free(SakuraPage *page)
 }
 
 
+GtkWidget *
+sakura_page_widget_for_tab(SakuraTab *tab)
+{
+	if (tab == NULL)
+		return NULL;
+	if (tab->page != NULL && tab->page->container != NULL)
+		return tab->page->container;
+	return tab->hbox;
+}
+
+
 SakuraLayoutNode *
 sakura_layout_leaf_new(SakuraPage *page, SakuraTab *tab)
 {

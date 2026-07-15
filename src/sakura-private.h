@@ -348,6 +348,7 @@ extern SakuraApp sakura;
 
 SakuraPage *sakura_page_new(const gchar *id);
 void sakura_page_free(SakuraPage *page);
+GtkWidget *sakura_page_widget_for_tab(SakuraTab *tab);
 SakuraLayoutNode *sakura_layout_leaf_new(SakuraPage *page, SakuraTab *tab);
 SakuraLayoutNode *sakura_layout_split_new(SakuraPage *page,
                                            SakuraSplitDirection direction,

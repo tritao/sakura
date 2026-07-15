@@ -91,7 +91,7 @@ gboolean
 sakura_tab_is_current(SakuraTab *tab)
 {
 	return tab != NULL && tab->hbox != NULL && sakura.notebook != NULL &&
-	       gtk_notebook_page_num(GTK_NOTEBOOK(sakura.notebook), tab->hbox) ==
+	       sakura_page_for_tab(tab) ==
        gtk_notebook_get_current_page(GTK_NOTEBOOK(sakura.notebook));
 }
 
@@ -414,6 +414,7 @@ sakura_tab_add_with_options (const gchar *restore_cwd,
                               const SakuraTabLaunchConfig *launch_config)
 {
 	struct sakura_tab *sk_tab;
+	SakuraPage *tab_page;
 	GtkWidget *tab_title_hbox; GtkWidget *close_button; /* We could put them inside struct sakura_tab, but it is not necessary */
 	GtkWidget *event_box;
 	gint index, page, npages;
@@ -424,6 +425,14 @@ sakura_tab_add_with_options (const gchar *restore_cwd,
 	gboolean hold_option = config->hold;
 
 	sk_tab = sakura_tab_new();
+	tab_page = sakura_page_new(NULL);
+	tab_page->container = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
+	if (sakura_layout_leaf_new(tab_page, sk_tab) == NULL) {
+		sakura_page_free(tab_page);
+		sakura_tab_free(sk_tab);
+		sakura_error("Cannot create a layout leaf");
+		exit(EXIT_FAILURE);
+	}
 	sk_tab->terminal_id = sakura_terminal_id_is_valid(restore_terminal_id)
 	                    ? g_strdup(restore_terminal_id)
 	                    : sakura_generate_terminal_id();
@@ -451,6 +460,7 @@ sakura_tab_add_with_options (const gchar *restore_cwd,
 	/* Tab widgets and the VTE are created together so the tab module owns the
 	 * complete terminal surface. */
 	sakura_tab_create_widgets(sk_tab);
+	gtk_box_pack_start(GTK_BOX(tab_page->container), sk_tab->hbox, TRUE, TRUE, 0);
 	tab_title_hbox = sk_tab->tab_title_hbox;
 	event_box = sk_tab->tab_event_box;
 	close_button = sk_tab->tab_close_button;
@@ -479,23 +489,27 @@ sakura_tab_add_with_options (const gchar *restore_cwd,
 		cwd = g_get_current_dir();
 
 	if (!sakura.new_tab_after_current) {
-		if ((index=gtk_notebook_append_page(GTK_NOTEBOOK(sakura.notebook), sk_tab->hbox, tab_title_hbox))==-1) {
+		if ((index=gtk_notebook_append_page(GTK_NOTEBOOK(sakura.notebook), tab_page->container, tab_title_hbox))==-1) {
 			sakura_error("Cannot create a new tab");
 			exit(1);
 		}
 	} else {
-		if ((index=gtk_notebook_insert_page(GTK_NOTEBOOK(sakura.notebook), sk_tab->hbox, tab_title_hbox, page+1))==-1) {
+		if ((index=gtk_notebook_insert_page(GTK_NOTEBOOK(sakura.notebook), tab_page->container, tab_title_hbox, page+1))==-1) {
 			sakura_error("Cannot create a new tab");
 			exit(1);
 		}
 	}
 
-	gtk_notebook_set_tab_reorderable(GTK_NOTEBOOK(sakura.notebook), sk_tab->hbox, TRUE);
+	gtk_notebook_set_tab_reorderable(GTK_NOTEBOOK(sakura.notebook), tab_page->container, TRUE);
 
 	if (sakura.tabs != NULL)
 		g_ptr_array_insert(sakura.tabs, index, sk_tab);
+	if (sakura.pages != NULL)
+		g_ptr_array_insert(sakura.pages, index, tab_page);
 	if (gtk_notebook_get_current_page(GTK_NOTEBOOK(sakura.notebook)) == index)
 		sakura.active_tab = sk_tab;
+	if (gtk_notebook_get_current_page(GTK_NOTEBOOK(sakura.notebook)) == index)
+		sakura.active_page = tab_page;
 
 	/* vte signals */
 	g_signal_connect(G_OBJECT(sk_tab->vte), "bell", G_CALLBACK(sakura_beep_cb), NULL);
@@ -510,9 +524,9 @@ sakura_tab_add_with_options (const gchar *restore_cwd,
 
 	/* Label & button signals */
 	/* We need the hbox to know which label/button was clicked */
-	g_signal_connect(G_OBJECT(event_box), "button_press_event", G_CALLBACK(sakura_label_clicked_cb), sk_tab->hbox);
+	g_signal_connect(G_OBJECT(event_box), "button_press_event", G_CALLBACK(sakura_label_clicked_cb), sk_tab);
 	if (sakura.show_closebutton) {
-		g_signal_connect(G_OBJECT(close_button), "clicked", G_CALLBACK(sakura_closebutton_clicked_cb), sk_tab->hbox);
+		g_signal_connect(G_OBJECT(close_button), "clicked", G_CALLBACK(sakura_closebutton_clicked_cb), sk_tab);
 	}
 	sakura_prepare_history_file(sk_tab);
 
@@ -644,7 +658,7 @@ sakura_tab_add_with_options (const gchar *restore_cwd,
 	}
 
 	/* Set the default title text (NULL is valid) */
-	page = gtk_notebook_get_current_page(GTK_NOTEBOOK(sakura.notebook));
+	page = sakura_page_for_tab(sk_tab);
 	sakura_set_tab_label_text(default_label_text, page);
 	sakura_sidebar_add_terminal(sk_tab, sidebar_parent);
 	if (sk_tab->kind == SAKURA_TAB_CODEX)
@@ -659,6 +673,8 @@ void
 sakura_tab_delete_page(gint page)
 {
 	struct sakura_tab *sk_tab;
+	SakuraPage *tab_page;
+	gint tab_index;
 	gboolean removed_active;
 
 	/* GTK's notebook API expects a non-negative page number. The shutdown
@@ -671,6 +687,8 @@ sakura_tab_delete_page(gint page)
 	sk_tab = sakura_tab_at_page(page);
 	if (sk_tab == NULL)
 		return;
+	tab_index = sakura_page_for_tab(sk_tab);
+	tab_page = sk_tab->page;
 	removed_active = sakura.active_tab == sk_tab;
 	if (removed_active)
 		sakura.active_tab = NULL;
@@ -684,11 +702,18 @@ sakura_tab_delete_page(gint page)
 	    g_signal_handler_is_connected(G_OBJECT(sk_tab->vte), sk_tab->exit_handler_id))
 		g_signal_handler_disconnect(sk_tab->vte, sk_tab->exit_handler_id);
 	if (sakura.tabs != NULL) {
-		gint tab_index = sakura_page_for_tab(sk_tab);
 		if (tab_index >= 0)
 			g_ptr_array_remove_index(sakura.tabs, tab_index);
 	}
+	if (sakura.pages != NULL) {
+		if (tab_index >= 0)
+			g_ptr_array_remove_index(sakura.pages, tab_index);
+		if (sakura.active_page == tab_page)
+			sakura.active_page = NULL;
+	}
 	gtk_notebook_remove_page(GTK_NOTEBOOK(sakura.notebook), page);
+	if (tab_page != NULL)
+		sakura_page_free(tab_page);
 	sakura_tab_free(sk_tab);
 	sakura_tab_bar_refresh();
 	if (gtk_notebook_get_n_pages(GTK_NOTEBOOK(sakura.notebook)) > 0)
@@ -1124,7 +1149,7 @@ sakura_set_name_dialog_cb (GtkWidget *widget, void *data)
 
 	(void)widget;
 	page = tab != NULL
-	     ? gtk_notebook_page_num(GTK_NOTEBOOK(sakura.notebook), tab->hbox)
+	     ? sakura_page_for_tab(tab)
 	     : gtk_notebook_get_current_page(GTK_NOTEBOOK(sakura.notebook));
 	if (page < 0)
 		return;
@@ -1200,12 +1225,13 @@ sakura_tab_keypress_cb(GtkWidget *widget, GdkEventKey *event, gpointer data)
 void
 sakura_closebutton_clicked_cb (GtkWidget *widget, void *data)
 {
-	GtkWidget *hbox = data;
+	SakuraTab *tab = data;
 	gint page;
 
 	(void)widget;
-	page = gtk_notebook_page_num(GTK_NOTEBOOK(sakura.notebook), hbox);
-	sakura_close_tab(page);
+	page = sakura_page_for_tab(tab);
+	if (page >= 0)
+		sakura_close_tab(page);
 }
 
 
@@ -1213,15 +1239,13 @@ gboolean
 sakura_label_clicked_cb (GtkWidget *widget, GdkEventButton *button_event,
                          void *data)
 {
-	GtkWidget *hbox = data;
-	SakuraTab *tab;
+	SakuraTab *tab = data;
 	gint page;
 
 	(void)widget;
-	page = gtk_notebook_page_num(GTK_NOTEBOOK(sakura.notebook), hbox);
-	tab = sakura_tab_at_page(page);
+	page = sakura_page_for_tab(tab);
 	if (button_event == NULL || button_event->type != GDK_BUTTON_PRESS ||
-	    tab == NULL)
+	    page < 0 || tab == NULL)
 		return FALSE;
 	if (button_event->button == 1) {
 		gtk_widget_grab_focus(tab->vte);
@@ -1609,8 +1633,7 @@ sakura_tab_bar_refresh(void)
 
 	pages = gtk_notebook_get_n_pages(GTK_NOTEBOOK(sakura.notebook));
 	current_page = sakura.active_tab != NULL
-	             ? gtk_notebook_page_num(GTK_NOTEBOOK(sakura.notebook),
-	                                     sakura.active_tab->hbox)
+	             ? sakura_page_for_tab(sakura.active_tab)
 	             : -1;
 
 	for (page = 0; page < pages; page++) {
@@ -1732,7 +1755,7 @@ sakura_tab_button_close_cb(GtkWidget *widget, void *data)
 	(void)widget;
 	if (tab == NULL || tab->hbox == NULL)
 		return;
-	page = gtk_notebook_page_num(GTK_NOTEBOOK(sakura.notebook), tab->hbox);
+	page = sakura_page_for_tab(tab);
 	if (page >= 0)
 		sakura_close_tab(page);
 }
@@ -1953,7 +1976,7 @@ sakura_notebook_page_reordered_cb(GtkNotebook *notebook, GtkWidget *child,
 
 	for (index = 0; index < sakura.tabs->len; index++) {
 		SakuraTab *candidate = g_ptr_array_index(sakura.tabs, index);
-		if (candidate != NULL && candidate->hbox == child) {
+		if (candidate != NULL && sakura_page_widget_for_tab(candidate) == child) {
 			tab = candidate;
 			break;
 		}
@@ -1966,5 +1989,11 @@ sakura_notebook_page_reordered_cb(GtkNotebook *notebook, GtkWidget *child,
 	if (page_num > sakura.tabs->len)
 		page_num = sakura.tabs->len;
 	g_ptr_array_insert(sakura.tabs, page_num, tab);
+	if (sakura.pages != NULL && (guint)old_page < sakura.pages->len) {
+		SakuraPage *page = g_ptr_array_remove_index(sakura.pages, old_page);
+		if (page_num > sakura.pages->len)
+			page_num = sakura.pages->len;
+		g_ptr_array_insert(sakura.pages, page_num, page);
+	}
 	sakura_session_mark_dirty();
 }
