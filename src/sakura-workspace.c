@@ -1795,6 +1795,7 @@ sakura_switch_page_cb (GtkWidget *widget, GtkWidget *widget_page,
 		sakura_sidebar_queue_select_node(tab->sidebar_node);
 	sakura_sidebar_update_page(tab->page);
 	sakura_codex_sync_name(tab);
+	sakura_update_geometry_hints();
 
 	/* Update the window title when a new tab is selected, but don't when a user
 	 * supplied a static title. */

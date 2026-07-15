@@ -75,6 +75,13 @@ typedef enum {
 } SakuraSplitDirection;
 
 typedef enum {
+	SAKURA_LAYOUT_PRESET_TWO_COLUMNS,
+	SAKURA_LAYOUT_PRESET_TWO_ROWS,
+	SAKURA_LAYOUT_PRESET_GRID_2X2,
+	SAKURA_LAYOUT_PRESET_MAIN_STACK
+} SakuraLayoutPreset;
+
+typedef enum {
 	SAKURA_FOCUS_LEFT,
 	SAKURA_FOCUS_RIGHT,
 	SAKURA_FOCUS_UP,
@@ -214,6 +221,7 @@ struct sakura_app {
 	GtkWidget *open_link_separator;
 	GtkWidget *item_select_text;
 	GtkWidget *pane_menu;
+	GtkWidget *pane_layout_menu;
 	GtkWidget *pane_split_right;
 	GtkWidget *pane_split_down;
 	GtkWidget *pane_focus_left;
@@ -408,6 +416,7 @@ gboolean sakura_layout_split_leaf_widgets(SakuraLayoutNode *leaf,
 gboolean sakura_layout_split_node_widgets(SakuraLayoutNode *node,
                                           SakuraSplitDirection direction,
                                           SakuraTab *new_tab);
+void sakura_layout_set_ratio(SakuraLayoutNode *split, gdouble ratio);
 gboolean sakura_layout_remove_leaf_widgets(SakuraLayoutNode *leaf);
 void sakura_layout_set_zoomed(SakuraPage *page, SakuraTab *tab, gboolean zoomed);
 void sakura_layout_paned_position_cb(GObject *object, GParamSpec *pspec,
@@ -470,6 +479,7 @@ void sakura_remember_current_scope_tab(SakuraTab *tab);
 void sakura_focus_tab(SakuraTab *tab);
 void sakura_register_codex_icon(void);
 void sakura_set_size(void);
+void sakura_update_geometry_hints(void);
 gboolean sakura_term_buttonpressed_cb(GtkWidget *widget, GdkEventButton *event,
                                       gpointer user_data);
 gboolean sakura_term_buttonreleased_cb(GtkWidget *widget, GdkEventButton *event,
@@ -555,6 +565,7 @@ void sakura_search_dialog(void);
 void sakura_close_tab(gint page);
 void sakura_tab_move_relative(gint direction);
 void sakura_new_tool_cb(GtkWidget *widget, void *data);
+void sakura_apply_layout_preset_cb(GtkWidget *widget, void *data);
 void sakura_open_pr_cb(GtkWidget *widget, void *data);
 void sakura_open_here_cb(GtkWidget *widget, void *data);
 void sakura_open_url_cb(GtkWidget *widget, void *data);

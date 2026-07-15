@@ -54,6 +54,28 @@ sakura_layout_normalize_ratio(gdouble ratio)
 }
 
 
+void
+sakura_layout_set_ratio(SakuraLayoutNode *split, gdouble ratio)
+{
+	GtkAllocation allocation;
+	gint available;
+	gint position;
+
+	if (split == NULL || split->kind != SAKURA_LAYOUT_SPLIT)
+		return;
+	split->data.split.ratio = sakura_layout_normalize_ratio(ratio);
+	if (split->widget == NULL || !GTK_IS_PANED(split->widget))
+		return;
+	gtk_widget_get_allocation(split->widget, &allocation);
+	available = split->data.split.direction == SAKURA_SPLIT_RIGHT
+	          ? allocation.width : allocation.height;
+	if (available <= 0)
+		return;
+	position = (gint)(available * split->data.split.ratio);
+	gtk_paned_set_position(GTK_PANED(split->widget), position);
+}
+
+
 static SakuraLayoutNode *
 sakura_layout_node_new(SakuraPage *page, SakuraLayoutKind kind)
 {

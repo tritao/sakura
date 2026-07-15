@@ -399,6 +399,8 @@ static int cs_keys[NUM_COLORSETS] =
 		{GDK_KEY_F1, GDK_KEY_F2, GDK_KEY_F3, GDK_KEY_F4, GDK_KEY_F5, GDK_KEY_F6};
 
 #define ERROR_BUFFER_LENGTH 256
+#define SAKURA_DEFAULT_MIN_WIDTH_CHARS 20
+#define SAKURA_DEFAULT_MIN_HEIGHT_CHARS 1
 const char cfg_group[] = "sakura";
 
 /* Configuration macros */
@@ -1521,6 +1523,100 @@ sakura_split_current_cb (GtkWidget *widget, void *data)
 
 
 static gboolean
+sakura_layout_preset_add_pane(SakuraPage *page, SakuraLayoutNode *target,
+                               SakuraSplitDirection direction, gdouble ratio,
+                               SakuraTab **new_tab_out)
+{
+	SakuraTabLaunchConfig config = { 0 };
+	guint old_len;
+	SakuraTab *new_tab;
+
+	if (page == NULL || target == NULL || page->panes == NULL)
+		return FALSE;
+	old_len = page->panes->len;
+	config.target_page = page;
+	config.target_layout = target;
+	config.target_ratio = ratio;
+	config.split_direction = direction;
+	sakura_tab_add_with_options(NULL, NULL, NULL, FALSE,
+	                            SAKURA_TAB_SHELL, SAKURA_TOOL_NONE,
+	                            NULL, NULL, NULL, NULL, &config);
+	if (page->panes->len != old_len + 1)
+		return FALSE;
+	new_tab = g_ptr_array_index(page->panes, old_len);
+	if (new_tab == NULL || new_tab->layout_leaf == NULL ||
+	    new_tab->layout_leaf->parent == NULL)
+		return FALSE;
+	sakura_layout_set_ratio(new_tab->layout_leaf->parent, ratio);
+	if (new_tab_out != NULL)
+		*new_tab_out = new_tab;
+	return TRUE;
+}
+
+
+void
+sakura_apply_layout_preset_cb(GtkWidget *widget, void *data)
+{
+	SakuraLayoutPreset preset = data != NULL
+	                          ? GPOINTER_TO_INT(data)
+	                          : SAKURA_LAYOUT_PRESET_TWO_COLUMNS;
+	SakuraPage *page = sakura.active_page;
+	SakuraTab *active = sakura.active_tab;
+	SakuraTab *new_tab = NULL;
+	SakuraLayoutNode *root, *first, *second;
+
+	(void)widget;
+	if (page == NULL || active == NULL || active->page != page ||
+	    page->layout_root == NULL || page->panes == NULL ||
+	    page->panes->len != 1 || !sakura_tab_can_split(active))
+		return;
+
+	root = page->layout_root;
+	sakura_session_accept_changes();
+	switch (preset) {
+		case SAKURA_LAYOUT_PRESET_TWO_COLUMNS:
+			if (!sakura_layout_preset_add_pane(page, root,
+			                                  SAKURA_SPLIT_RIGHT, 0.5, &new_tab))
+				return;
+			break;
+		case SAKURA_LAYOUT_PRESET_TWO_ROWS:
+			if (!sakura_layout_preset_add_pane(page, root,
+			                                  SAKURA_SPLIT_DOWN, 0.5, &new_tab))
+				return;
+			break;
+		case SAKURA_LAYOUT_PRESET_GRID_2X2:
+			if (!sakura_layout_preset_add_pane(page, root,
+			                                  SAKURA_SPLIT_RIGHT, 0.5, &new_tab))
+				return;
+			first = root;
+			second = new_tab->layout_leaf;
+			if (!sakura_layout_preset_add_pane(page, first,
+			                                  SAKURA_SPLIT_DOWN, 0.5, NULL) ||
+			    !sakura_layout_preset_add_pane(page, second,
+			                                  SAKURA_SPLIT_DOWN, 0.5, NULL))
+				return;
+			break;
+		case SAKURA_LAYOUT_PRESET_MAIN_STACK:
+			if (!sakura_layout_preset_add_pane(page, root,
+			                                  SAKURA_SPLIT_RIGHT, 0.65, &new_tab) ||
+			    !sakura_layout_preset_add_pane(page, new_tab->layout_leaf,
+			                                  SAKURA_SPLIT_DOWN, 0.5, NULL))
+				return;
+			break;
+		default:
+			return;
+	}
+
+	page->active_tab = active;
+	sakura.active_tab = active;
+	sakura.active_page = page;
+	sakura_select_tab(active, TRUE);
+	sakura_update_geometry_hints();
+	sakura_session_mark_dirty();
+}
+
+
+static gboolean
 sakura_focus_candidate_better(SakuraFocusDirection direction,
                               gint active_x, gint active_y,
                               gint active_width, gint active_height,
@@ -1686,6 +1782,8 @@ sakura_pane_menu_show_cb(GtkWidget *widget, gpointer data)
 	gboolean can_split = sakura_tab_can_split(tab);
 	gboolean has_panes = tab != NULL && tab->page != NULL &&
 	                     tab->page->panes != NULL && tab->page->panes->len > 1;
+	gboolean single_pane = tab != NULL && tab->page != NULL &&
+	                      tab->page->panes != NULL && tab->page->panes->len == 1;
 
 	(void)widget;
 	(void)data;
@@ -1708,6 +1806,8 @@ sakura_pane_menu_show_cb(GtkWidget *widget, gpointer data)
 		                         parent->kind == SAKURA_LAYOUT_SPLIT);
 	if (sakura.pane_zoom != NULL)
 		gtk_widget_set_sensitive(sakura.pane_zoom, has_panes);
+	if (sakura.pane_layout_menu != NULL)
+		gtk_widget_set_sensitive(sakura.pane_layout_menu, single_pane && can_split);
 }
 
 
@@ -2705,6 +2805,8 @@ sakura_init_popup()
 		  *item_tabs_on_bottom, *item_less_questions, *item_copy_on_select,
 	          *item_disable_numbered_tabswitch, *item_new_tab_after_current; // *item_use_fading;
 	GtkWidget *options_menu, *show_tab_bar_menu, *cursor_menu, *tools_menu, *pane_menu;
+	GtkWidget *pane_layout_menu, *pane_layout_item, *pane_two_columns,
+	          *pane_two_rows, *pane_grid_2x2, *pane_main_stack;
 	GtkWidget *pane_split_right, *pane_split_down, *pane_focus_left,
 	          *pane_focus_right, *pane_focus_up, *pane_focus_down,
 	          *pane_close, *pane_equalize, *pane_zoom;
@@ -2726,6 +2828,11 @@ sakura_init_popup()
 	pane_close = gtk_menu_item_new_with_label(_("Close pane"));
 	pane_equalize = gtk_menu_item_new_with_label(_("Equalize split"));
 	pane_zoom = gtk_menu_item_new_with_label(_("Zoom pane"));
+	pane_layout_item = gtk_menu_item_new_with_label(_("Layout preset"));
+	pane_two_columns = gtk_menu_item_new_with_label(_("Two columns"));
+	pane_two_rows = gtk_menu_item_new_with_label(_("Two rows"));
+	pane_grid_2x2 = gtk_menu_item_new_with_label(_("2 × 2 grid"));
+	pane_main_stack = gtk_menu_item_new_with_label(_("Main + stack"));
 	item_tools = gtk_menu_item_new_with_label(_("Tools"));
 	item_open_here = gtk_menu_item_new_with_label(_("Open Here"));
 	item_gitui = gtk_menu_item_new_with_label(_("GitUI"));
@@ -2880,7 +2987,9 @@ sakura_init_popup()
 	cursor_menu = gtk_menu_new();
 	tools_menu = gtk_menu_new();
 	pane_menu = gtk_menu_new();
+	pane_layout_menu = gtk_menu_new();
 	sakura.pane_menu = pane_menu;
+	sakura.pane_layout_menu = pane_layout_item;
 	sakura.pane_split_right = pane_split_right;
 	sakura.pane_split_down = pane_split_down;
 	sakura.pane_focus_left = pane_focus_left;
@@ -2915,8 +3024,27 @@ sakura_init_popup()
 	gtk_menu_shell_append(GTK_MENU_SHELL(pane_menu), pane_close);
 	gtk_menu_shell_append(GTK_MENU_SHELL(pane_menu), pane_equalize);
 	gtk_menu_shell_append(GTK_MENU_SHELL(pane_menu), pane_zoom);
+	gtk_menu_shell_append(GTK_MENU_SHELL(pane_layout_menu), pane_two_columns);
+	gtk_menu_shell_append(GTK_MENU_SHELL(pane_layout_menu), pane_two_rows);
+	gtk_menu_shell_append(GTK_MENU_SHELL(pane_layout_menu), pane_grid_2x2);
+	gtk_menu_shell_append(GTK_MENU_SHELL(pane_layout_menu), pane_main_stack);
+	gtk_menu_item_set_submenu(GTK_MENU_ITEM(pane_layout_item), pane_layout_menu);
+	gtk_menu_shell_append(GTK_MENU_SHELL(pane_menu), gtk_separator_menu_item_new());
+	gtk_menu_shell_append(GTK_MENU_SHELL(pane_menu), pane_layout_item);
 	gtk_menu_item_set_submenu(GTK_MENU_ITEM(item_pane), pane_menu);
 	g_signal_connect(pane_menu, "show", G_CALLBACK(sakura_pane_menu_show_cb), NULL);
+	g_signal_connect(pane_two_columns, "activate",
+	                 G_CALLBACK(sakura_apply_layout_preset_cb),
+	                 GINT_TO_POINTER(SAKURA_LAYOUT_PRESET_TWO_COLUMNS));
+	g_signal_connect(pane_two_rows, "activate",
+	                 G_CALLBACK(sakura_apply_layout_preset_cb),
+	                 GINT_TO_POINTER(SAKURA_LAYOUT_PRESET_TWO_ROWS));
+	g_signal_connect(pane_grid_2x2, "activate",
+	                 G_CALLBACK(sakura_apply_layout_preset_cb),
+	                 GINT_TO_POINTER(SAKURA_LAYOUT_PRESET_GRID_2X2));
+	g_signal_connect(pane_main_stack, "activate",
+	                 G_CALLBACK(sakura_apply_layout_preset_cb),
+	                 GINT_TO_POINTER(SAKURA_LAYOUT_PRESET_MAIN_STACK));
 
 	gtk_menu_shell_append(GTK_MENU_SHELL(options_menu), item_select_colors);
 	gtk_menu_shell_append(GTK_MENU_SHELL(options_menu), item_select_font);
@@ -3142,19 +3270,87 @@ sakura_show_scrollbar (void)
 
 
 void
+sakura_update_geometry_hints(void)
+{
+	SakuraPage *page;
+	SakuraTab *tab;
+	GdkGeometry hints;
+	gint page_index;
+	gint char_width, char_height;
+	gboolean split;
+	guint index;
+
+	if (sakura.main_window == NULL || sakura.notebook == NULL)
+		return;
+	page_index = gtk_notebook_get_current_page(GTK_NOTEBOOK(sakura.notebook));
+	page = sakura.pages != NULL && page_index >= 0 &&
+	       (guint)page_index < sakura.pages->len
+	     ? g_ptr_array_index(sakura.pages, page_index) : NULL;
+	tab = page != NULL ? page->active_tab : NULL;
+	if (tab == NULL && page_index >= 0)
+		tab = sakura_tab_at_page(page_index);
+	if (tab == NULL || tab->vte == NULL)
+		return;
+
+	split = page != NULL && page->panes != NULL && page->panes->len > 1;
+	if (split) {
+		/* A split is sized by its child panes rather than by one terminal's
+		 * character grid.  Remove the single-terminal increments so dividers
+		 * can land at arbitrary pixel positions. */
+		gtk_window_set_geometry_hints(GTK_WINDOW(sakura.main_window), NULL, NULL, 0);
+		char_width = vte_terminal_get_char_width(VTE_TERMINAL(tab->vte));
+		char_height = vte_terminal_get_char_height(VTE_TERMINAL(tab->vte));
+		char_height = (gint)(sakura.line_height * char_height);
+		for (index = 0; index < page->panes->len; index++) {
+			SakuraTab *pane = g_ptr_array_index(page->panes, index);
+			if (pane != NULL && pane->hbox != NULL)
+				gtk_widget_set_size_request(pane->hbox,
+				                            char_width * SAKURA_DEFAULT_MIN_WIDTH_CHARS,
+				                            char_height * SAKURA_DEFAULT_MIN_HEIGHT_CHARS);
+		}
+		return;
+	}
+
+	if (tab->hbox != NULL)
+		gtk_widget_set_size_request(tab->hbox, -1, -1);
+	char_width = vte_terminal_get_char_width(VTE_TERMINAL(tab->vte));
+	char_height = vte_terminal_get_char_height(VTE_TERMINAL(tab->vte));
+	hints.base_width = char_width;
+	hints.base_height = char_height;
+	hints.min_width = char_width * SAKURA_DEFAULT_MIN_WIDTH_CHARS;
+	hints.min_height = char_height * SAKURA_DEFAULT_MIN_HEIGHT_CHARS;
+	hints.width_inc = char_width;
+	hints.height_inc = char_height;
+	gtk_window_set_geometry_hints(GTK_WINDOW(sakura.main_window), tab->vte,
+	                              &hints,
+	                              GDK_HINT_RESIZE_INC | GDK_HINT_MIN_SIZE |
+	                              GDK_HINT_BASE_SIZE);
+}
+
+
+void
 sakura_set_size (void)
 {
 	struct sakura_tab *sk_tab;
 	struct sakura_tab *scroll_tab;
+	SakuraPage *current_page;
 	gint pad_x, pad_y;
 	gint char_width, char_height;
 	gint min_width, natural_width;
 	gint page;
 
-
-	sk_tab = sakura_tab_at_page(0);
+	page = gtk_notebook_get_current_page(GTK_NOTEBOOK(sakura.notebook));
+	current_page = sakura.pages != NULL && page >= 0 &&
+	               (guint)page < sakura.pages->len
+	             ? g_ptr_array_index(sakura.pages, page) : NULL;
+	sk_tab = current_page != NULL ? current_page->active_tab : NULL;
+	if (sk_tab == NULL && page >= 0)
+		sk_tab = sakura_tab_at_page(page);
+	if (sk_tab == NULL)
+		sk_tab = sakura_tab_at_page(0);
 	if (sk_tab == NULL || sk_tab->vte == NULL)
 		return;
+	sakura_update_geometry_hints();
 	/* Mayhaps an user resize happened. Check if row and columns have changed */
 	if (sakura.resized) {
 		sakura.columns = vte_terminal_get_column_count(VTE_TERMINAL(sk_tab->vte));
@@ -3191,7 +3387,6 @@ sakura_set_size (void)
 		sakura.width += /* (hb*2)+*/ (pad_x*2);
 	}
 
-	page = gtk_notebook_get_current_page(GTK_NOTEBOOK(sakura.notebook));
 	scroll_tab = page >= 0 ? sakura_tab_at_page(page) : NULL;
 	if (scroll_tab == NULL)
 		scroll_tab = sk_tab;

@@ -16,8 +16,6 @@
 #include "sakura-private.h"
 
 #define _(String) gettext(String)
-#define SAKURA_DEFAULT_MIN_WIDTH_CHARS 20
-#define SAKURA_DEFAULT_MIN_HEIGHT_CHARS 1
 
 #define TAB_MAX_SIZE 40
 #define TAB_MIN_SIZE 6
@@ -514,7 +512,7 @@ sakura_tab_add_with_options (const gchar *restore_cwd,
 	if (split_into_page && sk_tab->layout_leaf != NULL &&
 	    sk_tab->layout_leaf->parent != NULL && config->target_ratio > 0.0 &&
 	    config->target_ratio <= 1.0)
-		sk_tab->layout_leaf->parent->data.split.ratio = config->target_ratio;
+		sakura_layout_set_ratio(sk_tab->layout_leaf->parent, config->target_ratio);
 	tab_title_hbox = sk_tab->tab_title_hbox;
 	event_box = sk_tab->tab_event_box;
 	close_button = sk_tab->tab_close_button;
@@ -613,19 +611,6 @@ sakura_tab_add_with_options (const gchar *restore_cwd,
 	npages = gtk_notebook_get_n_pages(GTK_NOTEBOOK(sakura.notebook));
 	if (!split_into_page && npages == 1) {
 		gtk_notebook_set_show_border(GTK_NOTEBOOK(sakura.notebook), FALSE);
-
-		/* Set geometry hints when the first tab is created */
-		GdkGeometry sk_hints;
-
-		sk_hints.base_width = vte_terminal_get_char_width(VTE_TERMINAL(sk_tab->vte));
-		sk_hints.base_height = vte_terminal_get_char_height(VTE_TERMINAL(sk_tab->vte));
-		sk_hints.min_width = vte_terminal_get_char_width(VTE_TERMINAL(sk_tab->vte)) * SAKURA_DEFAULT_MIN_WIDTH_CHARS;
-		sk_hints.min_height = vte_terminal_get_char_height(VTE_TERMINAL(sk_tab->vte)) * SAKURA_DEFAULT_MIN_HEIGHT_CHARS;
-		sk_hints.width_inc = vte_terminal_get_char_width(VTE_TERMINAL(sk_tab->vte));
-		sk_hints.height_inc = vte_terminal_get_char_height(VTE_TERMINAL(sk_tab->vte));
-
-		gtk_window_set_geometry_hints(GTK_WINDOW(sakura.main_window), GTK_WIDGET (sk_tab->vte), &sk_hints,
-		                              GDK_HINT_RESIZE_INC | GDK_HINT_MIN_SIZE | GDK_HINT_BASE_SIZE);
 
 		sakura_set_font();
 		sakura_set_colors();
@@ -786,6 +771,7 @@ sakura_tab_delete_pane(SakuraTab *tab)
 	sakura_sidebar_update_attention_count();
 	if (sakura.active_tab != NULL)
 		sakura_select_tab(sakura.active_tab, TRUE);
+	sakura_set_size();
 	sakura_session_mark_dirty();
 	sakura_session_flush();
 }
@@ -1481,6 +1467,11 @@ sakura_term_buttonpressed_cb (GtkWidget *widget,
 			gtk_widget_set_sensitive(sakura.pane_split_right, sakura_tab_can_split(tab));
 		if (sakura.pane_split_down != NULL)
 			gtk_widget_set_sensitive(sakura.pane_split_down, sakura_tab_can_split(tab));
+		if (sakura.pane_layout_menu != NULL)
+			gtk_widget_set_sensitive(sakura.pane_layout_menu,
+			                         tab->page != NULL && tab->page->panes != NULL &&
+			                         tab->page->panes->len == 1 &&
+			                         sakura_tab_can_split(tab));
 
 		if (sakura.item_select_text != NULL) {
 			gtk_check_menu_item_set_active(
