@@ -1478,9 +1478,11 @@ sakura_split_current_cb (GtkWidget *widget, void *data)
 	SakuraTabLaunchConfig config = { 0 };
 	SakuraPage *page = sakura.active_page;
 	SakuraTab *tab = sakura.active_tab;
+	SakuraSplitDirection direction = data != NULL
+	                              ? GPOINTER_TO_INT(data) : SAKURA_SPLIT_RIGHT;
 
 	(void)widget;
-	if (data == NULL)
+	if (direction < SAKURA_SPLIT_RIGHT || direction > SAKURA_SPLIT_DOWN)
 		return;
 	if (page == NULL || tab == NULL || tab->page != page ||
 	    tab->layout_leaf == NULL || page->container == NULL)
@@ -1489,7 +1491,7 @@ sakura_split_current_cb (GtkWidget *widget, void *data)
 	config.target_page = page;
 	config.target_layout = tab->layout_leaf;
 	config.target_ratio = 0.5;
-	config.split_direction = GPOINTER_TO_INT(data);
+	config.split_direction = direction;
 	sakura_session_accept_changes();
 	sakura_tab_add_with_options(NULL, NULL, NULL, FALSE,
 	                            SAKURA_TAB_SHELL, SAKURA_TOOL_NONE,
@@ -1566,7 +1568,8 @@ sakura_focus_direction_cb(GtkWidget *widget, void *data)
 
 	(void)widget;
 	if (page == NULL || active == NULL || active->hbox == NULL ||
-	    data == NULL || !gtk_widget_translate_coordinates(active->hbox,
+	    direction < SAKURA_FOCUS_LEFT || direction > SAKURA_FOCUS_DOWN ||
+	    !gtk_widget_translate_coordinates(active->hbox,
                                                         page->container, 0, 0,
                                                         &active_x, &active_y))
 		return;
