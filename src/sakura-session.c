@@ -605,6 +605,15 @@ sakura_session_snapshot_load_into(GKeyFile *key_file,
 	                                                  "codex_session_name", NULL);
 		tab->title_set_by_user = g_key_file_get_boolean(key_file, section,
 	                                                 "title_set_by_user", NULL);
+		if (g_key_file_has_key(key_file, section, "status", NULL)) {
+			gint status = g_key_file_get_integer(key_file, section, "status", NULL);
+			if (status >= SAKURA_TAB_STATUS_NONE && status <= SAKURA_TAB_STATUS_ERROR)
+				tab->status = status;
+		}
+		tab->attention = g_key_file_get_boolean(key_file, section, "attention", NULL);
+		if (g_key_file_has_key(key_file, section, "attention_timestamp", NULL))
+			tab->attention_timestamp = g_key_file_get_int64(
+				key_file, section, "attention_timestamp", NULL);
 		tab->kind = g_strcmp0(kind, "codex") == 0
 		          ? SAKURA_TAB_CODEX
 		          : g_strcmp0(kind, "tool") == 0 || g_strcmp0(kind, "gitui") == 0
@@ -701,6 +710,11 @@ sakura_session_snapshot_save(const SakuraSessionSnapshot *snapshot,
 		if (tab->codex_session_name != NULL && tab->codex_session_name[0] != '\0')
 			g_key_file_set_string(key_file, section, "codex_session_name", tab->codex_session_name);
 		g_key_file_set_boolean(key_file, section, "title_set_by_user", tab->title_set_by_user);
+		g_key_file_set_integer(key_file, section, "status", tab->status);
+		g_key_file_set_boolean(key_file, section, "attention", tab->attention);
+		if (tab->attention_timestamp > 0)
+			g_key_file_set_int64(key_file, section, "attention_timestamp",
+			                     tab->attention_timestamp);
 		if (tab->title_set_by_user)
 			g_key_file_set_string(key_file, section, "title", tab->title != NULL ? tab->title : "");
 		g_free(section);

@@ -7,7 +7,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: sakura 3.1.4\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-07-15 10:18+0100\n"
+"POT-Creation-Date: 2026-07-15 10:59+0100\n"
 "PO-Revision-Date: 2018-04-29 13:18+0000\n"
 "Last-Translator: David Gómez <david@pleyades.net>\n"
 "Language-Team: Rahut <genghiskhan@gmx.ca>\n"
@@ -319,8 +319,14 @@ msgid "Open pull request..."
 msgstr ""
 
 #, fuzzy
-msgid "New terminal in group"
+msgid "New terminal"
 msgstr "כרטיסייה חדשה"
+
+msgid "New Codex session"
+msgstr ""
+
+msgid "Resume session..."
+msgstr ""
 
 msgid "Open Here"
 msgstr ""
@@ -331,18 +337,8 @@ msgstr ""
 msgid "Move to group"
 msgstr ""
 
-msgid "New Codex session"
-msgstr ""
-
-msgid "Resume session..."
-msgstr ""
-
 msgid "Rename Codex session..."
 msgstr ""
-
-#, fuzzy
-msgid "New terminal"
-msgstr "כרטיסייה חדשה"
 
 #, fuzzy
 msgid "New terminal here"
@@ -648,6 +644,10 @@ msgstr "- vte-based terminal emulator"
 #, c-format
 msgid "sakura version is %s\n"
 msgstr "sakura version is %s\n"
+
+#, fuzzy
+#~ msgid "New terminal in group"
+#~ msgstr "כרטיסייה חדשה"
 
 #, fuzzy, c-format
 #~ msgid "%s (%u terminals)"

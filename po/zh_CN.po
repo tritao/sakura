@@ -7,7 +7,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: sakura 1.0.4\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-07-15 10:18+0100\n"
+"POT-Creation-Date: 2026-07-15 10:59+0100\n"
 "PO-Revision-Date: 2019-08-12 17:06+0000\n"
 "Last-Translator: David Gómez <david@pleyades.net>\n"
 "Language-Team: Chinese/Simplified <i18n-translation@lists.linux.net.cn>\n"
@@ -314,8 +314,14 @@ msgid "Open pull request..."
 msgstr ""
 
 #, fuzzy
-msgid "New terminal in group"
+msgid "New terminal"
 msgstr "新建标签"
+
+msgid "New Codex session"
+msgstr ""
+
+msgid "Resume session..."
+msgstr ""
 
 msgid "Open Here"
 msgstr ""
@@ -326,18 +332,8 @@ msgstr ""
 msgid "Move to group"
 msgstr ""
 
-msgid "New Codex session"
-msgstr ""
-
-msgid "Resume session..."
-msgstr ""
-
 msgid "Rename Codex session..."
 msgstr ""
-
-#, fuzzy
-msgid "New terminal"
-msgstr "新建标签"
 
 #, fuzzy
 msgid "New terminal here"
@@ -618,6 +614,10 @@ msgstr "- 基于 vte 的终端模拟器"
 #, c-format
 msgid "sakura version is %s\n"
 msgstr "sakura 版本是 %s\n"
+
+#, fuzzy
+#~ msgid "New terminal in group"
+#~ msgstr "新建标签"
 
 #, fuzzy, c-format
 #~ msgid "%s (%u terminals)"

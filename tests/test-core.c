@@ -67,6 +67,9 @@ test_session_snapshot_round_trip(void)
 	tab->tool_id = g_strdup("gitui");
 	tab->kind = SAKURA_TAB_TOOL;
 	tab->title_set_by_user = TRUE;
+	tab->status = SAKURA_TAB_STATUS_READY;
+	tab->attention = TRUE;
+	tab->attention_timestamp = 123456789;
 	g_ptr_array_add(source->tabs, tab);
 	source->selected_terminal = 0;
 	source->selected_terminal_id = g_strdup("terminal-1");
@@ -93,6 +96,9 @@ test_session_snapshot_round_trip(void)
 		g_assert_cmpstr(loaded_tab->cwd, ==, "/tmp");
 		g_assert_cmpstr(loaded_tab->tool_id, ==, "gitui");
 		g_assert_true(loaded_tab->title_set_by_user);
+		g_assert_cmpint(loaded_tab->status, ==, SAKURA_TAB_STATUS_READY);
+		g_assert_true(loaded_tab->attention);
+		g_assert_cmpint(loaded_tab->attention_timestamp, ==, 123456789);
 	}
 
 	g_key_file_free(key_file);

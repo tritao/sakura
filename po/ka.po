@@ -7,7 +7,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: sakura git\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-07-15 10:18+0100\n"
+"POT-Creation-Date: 2026-07-15 10:59+0100\n"
 "PO-Revision-Date: 2026-04-13 15:28+0200\n"
 "Last-Translator: Temuri Doghonadze <temuri.doghonadze@gmail.com>\n"
 "Language-Team: Georgian <(nothing)>\n"
@@ -313,8 +313,14 @@ msgid "Open pull request..."
 msgstr ""
 
 #, fuzzy
-msgid "New terminal in group"
+msgid "New terminal"
 msgstr "ახალი ჩანართი"
+
+msgid "New Codex session"
+msgstr ""
+
+msgid "Resume session..."
+msgstr ""
 
 msgid "Open Here"
 msgstr ""
@@ -325,18 +331,8 @@ msgstr ""
 msgid "Move to group"
 msgstr ""
 
-msgid "New Codex session"
-msgstr ""
-
-msgid "Resume session..."
-msgstr ""
-
 msgid "Rename Codex session..."
 msgstr ""
-
-#, fuzzy
-msgid "New terminal"
-msgstr "ახალი ჩანართი"
 
 #, fuzzy
 msgid "New terminal here"
@@ -620,6 +616,10 @@ msgstr "- vte-ზე დაფუძნებული ტერმინალ�
 #, c-format
 msgid "sakura version is %s\n"
 msgstr "sakura-ის ვერსიაა %s\n"
+
+#, fuzzy
+#~ msgid "New terminal in group"
+#~ msgstr "ახალი ჩანართი"
 
 #, fuzzy, c-format
 #~ msgid "%s (%u terminals)"

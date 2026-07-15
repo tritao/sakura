@@ -80,6 +80,8 @@ enum {
 	SAKURA_SIDEBAR_COLUMN_SUBTITLE,
 	SAKURA_SIDEBAR_COLUMN_MARKUP,
 	SAKURA_SIDEBAR_COLUMN_ICON,
+	SAKURA_SIDEBAR_COLUMN_ATTENTION_COLOR,
+	SAKURA_SIDEBAR_COLUMN_ATTENTION_VISIBLE,
 	SAKURA_SIDEBAR_COLUMN_STATUS_MARKUP,
 	SAKURA_SIDEBAR_COLUMN_STATUS_MARKER_VISIBLE,
 	SAKURA_SIDEBAR_COLUMN_STATUS_ACTIVE,
@@ -289,6 +291,7 @@ struct sakura_tab {
 	gboolean codex_interrupt_requested;
 	SakuraTabStatus status;
 	gboolean attention;
+	gint64 attention_timestamp;
 	gboolean text_selection_mode;
 	gboolean hold;
 	SakuraSidebarNode *sidebar_node;
@@ -367,6 +370,8 @@ void sakura_paste_primary(void);
 void sakura_tab_set_status(SakuraTab *tab, SakuraTabStatus status,
                            gboolean attention);
 void sakura_tab_clear_attention(SakuraTab *tab);
+void sakura_tab_restore_state(SakuraTab *tab, SakuraTabStatus status,
+                              gboolean attention, gint64 attention_timestamp);
 SakuraTab *sakura_tab_at_page(gint page);
 gint sakura_page_for_tab(SakuraTab *tab);
 gint sakura_find_tab_by_terminal_id(const gchar *terminal_id);
@@ -517,6 +522,9 @@ typedef struct {
 	gchar *codex_session_name;
 	SakuraTabKind kind;
 	gboolean title_set_by_user;
+	SakuraTabStatus status;
+	gboolean attention;
+	gint64 attention_timestamp;
 } SakuraSessionTabRecord;
 
 struct sakura_session_snapshot {

@@ -7,7 +7,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: sakura\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-07-15 10:18+0100\n"
+"POT-Creation-Date: 2026-07-15 10:59+0100\n"
 "PO-Revision-Date: 2019-09-30 05:48+0000\n"
 "Last-Translator: Minho Park <parkmino@gmail.com>\n"
 "Language-Team: Korean <ko@li.org>\n"
@@ -314,8 +314,14 @@ msgid "Open pull request..."
 msgstr ""
 
 #, fuzzy
-msgid "New terminal in group"
+msgid "New terminal"
 msgstr "새 탭"
+
+msgid "New Codex session"
+msgstr ""
+
+msgid "Resume session..."
+msgstr ""
 
 msgid "Open Here"
 msgstr ""
@@ -326,18 +332,8 @@ msgstr ""
 msgid "Move to group"
 msgstr ""
 
-msgid "New Codex session"
-msgstr ""
-
-msgid "Resume session..."
-msgstr ""
-
 msgid "Rename Codex session..."
 msgstr ""
-
-#, fuzzy
-msgid "New terminal"
-msgstr "새 탭"
 
 #, fuzzy
 msgid "New terminal here"
@@ -620,6 +616,10 @@ msgstr "- vte 기반의 터미널 에뮬레이터"
 #, c-format
 msgid "sakura version is %s\n"
 msgstr "sakura 버전은 %s 입니다\n"
+
+#, fuzzy
+#~ msgid "New terminal in group"
+#~ msgstr "새 탭"
 
 #, fuzzy, c-format
 #~ msgid "%s (%u terminals)"

@@ -1503,6 +1503,7 @@ sakura_tab_free(SakuraTab *tab)
 void
 sakura_tab_set_status(SakuraTab *tab, SakuraTabStatus status, gboolean attention)
 {
+	gboolean event_attention = attention;
 	gboolean visible_attention = attention;
 
 	if (tab == NULL)
@@ -1517,6 +1518,8 @@ sakura_tab_set_status(SakuraTab *tab, SakuraTabStatus status, gboolean attention
 
 	if (tab->status == status && tab->attention == visible_attention)
 		return;
+	if (event_attention && (tab->status != status || !tab->attention))
+		tab->attention_timestamp = g_get_real_time();
 
 	tab->status = status;
 	tab->attention = visible_attention;
@@ -1544,6 +1547,33 @@ sakura_tab_clear_attention(SakuraTab *tab)
 		return;
 
 	tab->attention = FALSE;
+	sakura_sidebar_update_tab(tab);
+	sakura_sidebar_update_attention_count();
+	sakura_session_mark_dirty();
+}
+
+
+void
+sakura_tab_restore_state(SakuraTab *tab, SakuraTabStatus status,
+                         gboolean attention, gint64 attention_timestamp)
+{
+	if (tab == NULL)
+		return;
+	if (status <= SAKURA_TAB_STATUS_NONE || status > SAKURA_TAB_STATUS_ERROR)
+		status = tab->status;
+
+	tab->status = status;
+	tab->attention = attention;
+	tab->attention_timestamp = attention_timestamp > 0 ? attention_timestamp : 0;
+	if (tab->spinner != NULL) {
+		if (status == SAKURA_TAB_STATUS_RUNNING) {
+			gtk_widget_show(tab->spinner);
+			gtk_spinner_start(GTK_SPINNER(tab->spinner));
+		} else {
+			gtk_spinner_stop(GTK_SPINNER(tab->spinner));
+			gtk_widget_hide(tab->spinner);
+		}
+	}
 	sakura_sidebar_update_tab(tab);
 	sakura_sidebar_update_attention_count();
 }

@@ -546,9 +546,19 @@ sakura_sidebar_context_menu_new (struct sakura_sidebar_node *node)
 
 	menu = gtk_menu_new();
 	if (context_node != NULL && context_node->type == SAKURA_SIDEBAR_TERMINAL) {
-		item = gtk_menu_item_new_with_label(_("New terminal in group"));
+		item = gtk_menu_item_new_with_label(_("New terminal"));
 		g_signal_connect(item, "activate", G_CALLBACK(sakura_new_tab_in_scope_cb),
 		                 context_node);
+		gtk_menu_shell_append(GTK_MENU_SHELL(menu), item);
+
+		item = gtk_menu_item_new_with_label(_("New Codex session"));
+		g_signal_connect(item, "activate",
+		                 G_CALLBACK(sakura_new_codex_in_scope_cb), context_node);
+		gtk_menu_shell_append(GTK_MENU_SHELL(menu), item);
+
+		item = gtk_menu_item_new_with_label(_("Resume session..."));
+		g_signal_connect(item, "activate",
+		                 G_CALLBACK(sakura_resume_codex_in_scope_cb), context_node);
 		gtk_menu_shell_append(GTK_MENU_SHELL(menu), item);
 
 		item = gtk_menu_item_new_with_label(_("Open Here"));
@@ -567,19 +577,6 @@ sakura_sidebar_context_menu_new (struct sakura_sidebar_node *node)
 			gtk_menu_item_set_submenu(GTK_MENU_ITEM(item), submenu);
 			gtk_menu_shell_append(GTK_MENU_SHELL(menu), item);
 		}
-
-		submenu = gtk_menu_new();
-		item = gtk_menu_item_new_with_label(_("New Codex session"));
-		g_signal_connect(item, "activate",
-		                 G_CALLBACK(sakura_new_codex_in_scope_cb), context_node);
-		gtk_menu_shell_append(GTK_MENU_SHELL(submenu), item);
-		item = gtk_menu_item_new_with_label(_("Resume session..."));
-		g_signal_connect(item, "activate",
-		                 G_CALLBACK(sakura_resume_codex_in_scope_cb), context_node);
-		gtk_menu_shell_append(GTK_MENU_SHELL(submenu), item);
-		item = gtk_menu_item_new_with_label(_("Codex"));
-		gtk_menu_item_set_submenu(GTK_MENU_ITEM(item), submenu);
-		gtk_menu_shell_append(GTK_MENU_SHELL(menu), item);
 
 		gtk_menu_shell_append(GTK_MENU_SHELL(menu), gtk_separator_menu_item_new());
 		item = gtk_menu_item_new_with_label(_("Rename terminal..."));
@@ -988,6 +985,7 @@ sakura_workspace_restore_snapshot (SakuraSessionSnapshot *snapshot)
 		SakuraTabKind tab_kind = record->kind;
 		SakuraToolKind tool_kind = SAKURA_TOOL_NONE;
 		gchar *cwd = g_strdup(record->cwd);
+		gint restored_page;
 		gboolean title_set = record->title_set_by_user &&
 		                     record->title != NULL && record->title[0] != '\0';
 
@@ -1013,6 +1011,11 @@ sakura_workspace_restore_snapshot (SakuraSessionSnapshot *snapshot)
 		                            tab_kind == SAKURA_TAB_TOOL ? record->tool_target : NULL,
 		                            sakura_terminal_id_is_valid(record->terminal_id)
 		                            ? record->terminal_id : NULL);
+		restored_page = sakura_find_tab_by_terminal_id(record->terminal_id);
+		if (tab_kind == SAKURA_TAB_CODEX && restored_page >= 0)
+			sakura_tab_restore_state(sakura_tab_at_page(restored_page),
+			                        record->status, record->attention,
+			                        record->attention_timestamp);
 		if (selected_terminal == (gint)i)
 			selected_terminal = restored;
 		restored++;
@@ -1105,6 +1108,9 @@ sakura_workspace_snapshot_new(void)
 		                          ? g_strdup(tab->codex_session_name) : NULL;
 		record->title_set_by_user = tab->label_set_byuser;
 		record->title = tab->label_set_byuser ? g_strdup(title != NULL ? title : "") : NULL;
+		record->status = tab->status;
+		record->attention = tab->attention;
+		record->attention_timestamp = tab->attention_timestamp;
 		g_ptr_array_add(snapshot->tabs, record);
 	}
 
@@ -1155,7 +1161,8 @@ sakura_sidebar_init (gboolean restore_session)
 	GtkWidget *tab_shell, *scope_label, *tab_scrolled, *tab_bar, *tab_new;
 	GtkWidget *empty_state, *empty_label, *empty_new;
 	GtkWidget *scrolled;
-	GtkCellRenderer *icon_renderer, *status_renderer, *spinner_renderer, *text_renderer;
+	GtkCellRenderer *icon_renderer, *attention_renderer, *status_renderer,
+	                *spinner_renderer, *text_renderer;
 	GtkTreeViewColumn *column;
 	gchar **group_ids, **group_parents, **group_titles;
 	gsize n_ids = 0, n_parents = 0, n_titles = 0;
@@ -1165,6 +1172,8 @@ sakura_sidebar_init (gboolean restore_session)
 	sakura.sidebar_model = gtk_tree_store_new(SAKURA_SIDEBAR_N_COLUMNS,
 	                                         G_TYPE_STRING, G_TYPE_STRING, G_TYPE_STRING,
 	                                         G_TYPE_STRING, G_TYPE_STRING, G_TYPE_BOOLEAN,
+	                                         G_TYPE_STRING,
+	                                         G_TYPE_BOOLEAN,
 	                                         G_TYPE_BOOLEAN,
 	                                         G_TYPE_UINT,
 	                                         G_TYPE_STRING,
@@ -1180,6 +1189,10 @@ sakura_sidebar_init (gboolean restore_session)
 	gtk_widget_set_name(sakura.sidebar_tree, "terminal-sidebar");
 
 	icon_renderer = gtk_cell_renderer_pixbuf_new();
+	attention_renderer = gtk_cell_renderer_text_new();
+	g_object_set(attention_renderer, "text", " ", "xalign", 0.5, "yalign", 0.5,
+	             "xpad", 0, "ypad", 0, NULL);
+	gtk_cell_renderer_set_fixed_size(attention_renderer, 4, -1);
 	status_renderer = gtk_cell_renderer_text_new();
 	g_object_set(status_renderer, "xalign", 0.5, "yalign", 0.5,
 	             "xpad", 0, "ypad", 0, NULL);
@@ -1192,6 +1205,13 @@ sakura_sidebar_init (gboolean restore_session)
 	g_object_set(text_renderer, "ellipsize", PANGO_ELLIPSIZE_END, NULL);
 	column = gtk_tree_view_column_new();
 	gtk_tree_view_column_set_spacing(column, 6);
+	gtk_tree_view_column_pack_start(column, attention_renderer, FALSE);
+	gtk_tree_view_column_add_attribute(column, attention_renderer, "background",
+	                                  SAKURA_SIDEBAR_COLUMN_ATTENTION_COLOR);
+	gtk_tree_view_column_add_attribute(column, attention_renderer, "background-set",
+	                                  SAKURA_SIDEBAR_COLUMN_ATTENTION_VISIBLE);
+	gtk_tree_view_column_add_attribute(column, attention_renderer, "visible",
+	                                  SAKURA_SIDEBAR_COLUMN_ATTENTION_VISIBLE);
 	gtk_tree_view_column_pack_start(column, icon_renderer, FALSE);
 	gtk_tree_view_column_add_attribute(column, icon_renderer, "icon-name", SAKURA_SIDEBAR_COLUMN_ICON);
 	gtk_tree_view_column_pack_start(column, status_renderer, FALSE);
@@ -1515,11 +1535,12 @@ void
 sakura_sidebar_set_node_row(SakuraSidebarNode *node, GtkTreeIter *iter)
 {
 	const gchar *icon_name;
-	const gchar *status_label, *status_color, *status_symbol;
+	const gchar *status_label, *status_color, *status_symbol, *attention_color = NULL;
 	GtkIconTheme *icon_theme;
-	gchar *escaped_title, *escaped_subtitle, *markup, *status_markup = NULL;
+	gchar *escaped_title, *escaped_subtitle, *title_markup, *markup;
+	gchar *status_markup = NULL;
 	gchar *tooltip_markup = NULL;
-	gboolean status_running, status_marker_visible;
+	gboolean status_running, status_marker_visible, attention_visible = FALSE;
 
 	icon_name = "utilities-terminal";
 	if (node->type == SAKURA_SIDEBAR_GROUP) {
@@ -1546,10 +1567,18 @@ sakura_sidebar_set_node_row(SakuraSidebarNode *node, GtkTreeIter *iter)
 		status_markup = g_strdup_printf("<span foreground=\"%s\">%s</span>",
 		                                status_color, status_symbol);
 	status_marker_visible = status_markup != NULL;
-	if (node->subtitle != NULL && node->subtitle[0] != '\0')
-		markup = g_strdup_printf("%s\n<small>%s</small>", escaped_title, escaped_subtitle);
+	if (node->tab != NULL && node->tab->attention) {
+		attention_color = status_color != NULL ? status_color : "#5b9bd5";
+		attention_visible = TRUE;
+	}
+	if (node->tab != NULL && node->tab->attention)
+		title_markup = g_strdup_printf("<b>%s</b>", escaped_title);
 	else
-		markup = g_strdup(escaped_title);
+		title_markup = g_strdup(escaped_title);
+	if (node->subtitle != NULL && node->subtitle[0] != '\0')
+		markup = g_strdup_printf("%s\n<small>%s</small>", title_markup, escaped_subtitle);
+	else
+		markup = g_strdup(title_markup);
 	{
 		const gchar *base_tooltip = node->tooltip != NULL ? node->tooltip : node->title;
 		base_tooltip = base_tooltip != NULL ? base_tooltip : "";
@@ -1565,6 +1594,8 @@ sakura_sidebar_set_node_row(SakuraSidebarNode *node, GtkTreeIter *iter)
 	                   SAKURA_SIDEBAR_COLUMN_SUBTITLE, node->subtitle,
 	                   SAKURA_SIDEBAR_COLUMN_MARKUP, markup,
 	                   SAKURA_SIDEBAR_COLUMN_ICON, icon_name,
+	                   SAKURA_SIDEBAR_COLUMN_ATTENTION_COLOR, attention_color,
+	                   SAKURA_SIDEBAR_COLUMN_ATTENTION_VISIBLE, attention_visible,
 	                   SAKURA_SIDEBAR_COLUMN_STATUS_MARKUP, status_markup,
 	                   SAKURA_SIDEBAR_COLUMN_STATUS_MARKER_VISIBLE,
 	                   status_marker_visible,
@@ -1577,6 +1608,7 @@ sakura_sidebar_set_node_row(SakuraSidebarNode *node, GtkTreeIter *iter)
 
 	g_free(escaped_title);
 	g_free(escaped_subtitle);
+	g_free(title_markup);
 	g_free(markup);
 	g_free(status_markup);
 	g_free(tooltip_markup);
