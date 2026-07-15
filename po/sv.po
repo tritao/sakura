@@ -7,7 +7,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: sakura\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-07-14 22:46+0100\n"
+"POT-Creation-Date: 2026-07-15 00:55+0100\n"
 "PO-Revision-Date: 2019-08-12 16:27+0000\n"
 "Last-Translator: Andreas Rönnquist <andreas@ronnquist.net>\n"
 "Language-Team: Swedish <sv@li.org>\n"
@@ -137,17 +137,26 @@ msgstr ""
 msgid "Terminal %d"
 msgstr "Terminal %d"
 
-#, fuzzy
-msgid "New terminal"
-msgstr "Ny flik"
+msgid "File Manager"
+msgstr ""
 
-msgid "Tools"
+msgid "Editor"
 msgstr ""
 
 msgid "Open pull request..."
 msgstr ""
 
+#, fuzzy
+msgid "New terminal in group"
+msgstr "Ny flik"
+
 msgid "Open Here"
+msgstr ""
+
+msgid "Tools"
+msgstr ""
+
+msgid "Move to group"
 msgstr ""
 
 msgid "New Codex session"
@@ -156,16 +165,27 @@ msgstr ""
 msgid "Resume session..."
 msgstr ""
 
-msgid "New group"
+msgid "Rename Codex session..."
 msgstr ""
 
-msgid "Rename Codex session..."
+#, fuzzy
+msgid "New terminal"
+msgstr "Ny flik"
+
+#, fuzzy
+msgid "New terminal here"
+msgstr "Ny flik"
+
+msgid "New subgroup"
 msgstr ""
 
 msgid "Rename group..."
 msgstr ""
 
 msgid "Delete group"
+msgstr ""
+
+msgid "New group"
 msgstr ""
 
 msgid "_Cancel"
@@ -299,12 +319,6 @@ msgid "the file manager"
 msgstr ""
 
 msgid "the editor"
-msgstr ""
-
-msgid "File Manager"
-msgstr ""
-
-msgid "Editor"
 msgstr ""
 
 msgid ""

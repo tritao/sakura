@@ -7,7 +7,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: sakura git\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-07-14 22:46+0100\n"
+"POT-Creation-Date: 2026-07-15 00:55+0100\n"
 "PO-Revision-Date: 2026-04-13 15:28+0200\n"
 "Last-Translator: Temuri Doghonadze <temuri.doghonadze@gmail.com>\n"
 "Language-Team: Georgian <(nothing)>\n"
@@ -136,17 +136,26 @@ msgstr ""
 msgid "Terminal %d"
 msgstr "ტერმინალი %d"
 
-#, fuzzy
-msgid "New terminal"
-msgstr "ახალი ჩანართი"
+msgid "File Manager"
+msgstr ""
 
-msgid "Tools"
+msgid "Editor"
 msgstr ""
 
 msgid "Open pull request..."
 msgstr ""
 
+#, fuzzy
+msgid "New terminal in group"
+msgstr "ახალი ჩანართი"
+
 msgid "Open Here"
+msgstr ""
+
+msgid "Tools"
+msgstr ""
+
+msgid "Move to group"
 msgstr ""
 
 msgid "New Codex session"
@@ -155,16 +164,27 @@ msgstr ""
 msgid "Resume session..."
 msgstr ""
 
-msgid "New group"
+msgid "Rename Codex session..."
 msgstr ""
 
-msgid "Rename Codex session..."
+#, fuzzy
+msgid "New terminal"
+msgstr "ახალი ჩანართი"
+
+#, fuzzy
+msgid "New terminal here"
+msgstr "ახალი ჩანართი"
+
+msgid "New subgroup"
 msgstr ""
 
 msgid "Rename group..."
 msgstr ""
 
 msgid "Delete group"
+msgstr ""
+
+msgid "New group"
 msgstr ""
 
 msgid "_Cancel"
@@ -298,12 +318,6 @@ msgid "the file manager"
 msgstr ""
 
 msgid "the editor"
-msgstr ""
-
-msgid "File Manager"
-msgstr ""
-
-msgid "Editor"
 msgstr ""
 
 msgid ""

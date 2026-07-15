@@ -292,9 +292,33 @@ struct scheme predefined_schemes[NUM_SCHEMES] = {
 #sakura-tab-bar button {\
 min-height: 24px;\
 padding: 2px 6px;\
+background-image: none;\
+background-color: transparent;\
+border: 0;\
+box-shadow: none;\
 }\
-#sakura-tab-bar button.selected {\
+#sakura-tab-bar .sakura-tab {\
+min-height: 24px;\
+border-radius: 4px;\
+background-color: transparent;\
+}\
+#sakura-tab-bar .sakura-tab:hover {\
+background-color: alpha(@theme_fg_color, 0.08);\
+}\
+#sakura-tab-bar .sakura-tab.selected {\
 background-color: alpha(@theme_selected_bg_color, 0.22);\
+}\
+#sakura-tab-bar .sakura-tab > button:hover {\
+background-image: none;\
+background-color: transparent;\
+}\
+#sakura-tab-bar .sakura-tab > button.sakura-tab-close {\
+min-width: 22px;\
+padding-left: 2px;\
+padding-right: 2px;\
+}\
+#sakura-tab-bar .sakura-tab > button.sakura-tab-close:hover {\
+background-color: alpha(@theme_fg_color, 0.14);\
 }"
 
 enum {
@@ -413,6 +437,7 @@ static struct {
 	bool session_ready;
 	bool session_shutting_down;
 	bool session_restore_failed;
+	bool session_dirty;
 	guint session_save_source_id;
 	guint codex_tracking_source_id;
 	guint cwd_tracking_source_id;
@@ -428,6 +453,7 @@ static struct {
 	GtkWidget *item_open_link;
 	GtkWidget *item_open_mail;
 	GtkWidget *open_link_separator;
+	GtkWidget *item_select_text;
 	GKeyFile *cfg;
 	GKeyFile *session_cfg;
 	char *configfile;
@@ -561,6 +587,7 @@ struct sakura_tab {
 	guint codex_name_retry_count;
 	SakuraTabStatus status;
 	gboolean attention;
+	gboolean text_selection_mode;
 	struct sakura_sidebar_node *sidebar_node;
 };
 
@@ -661,6 +688,8 @@ void sakura_spawn_callback (VteTerminal *, GPid, GError *, gpointer);
 /* VTE callbacks */
 static gboolean sakura_term_buttonpressed_cb (GtkWidget *, GdkEventButton *, gpointer);
 static gboolean sakura_term_buttonreleased_cb (GtkWidget *, GdkEventButton *, gpointer);
+static gboolean sakura_term_keypress_cb (GtkWidget *, GdkEventKey *, gpointer);
+static void     sakura_set_text_selection_mode (struct sakura_tab *, gboolean);
 static void     sakura_beep_cb (GtkWidget *, void *);
 static void     sakura_increase_font_cb (GtkWidget *, void *);
 static void     sakura_decrease_font_cb (GtkWidget *, void *);
@@ -722,6 +751,7 @@ static void     sakura_open_mail_cb (GtkWidget *, void *);
 static void     sakura_copy_url_cb (GtkWidget *, void *);
 static void     sakura_copy_cb (GtkWidget *, void *);
 static void     sakura_paste_cb (GtkWidget *, void *);
+static void     sakura_select_text_cb (GtkWidget *, void *);
 static void     sakura_new_tool_cb (GtkWidget *, void *);
 static void     sakura_open_pr_cb (GtkWidget *, void *);
 static void     sakura_open_here_cb (GtkWidget *, void *);
@@ -758,10 +788,20 @@ static void     sakura_sidebar_delete_group_cb (GtkWidget *, void *);
 static void     sakura_sidebar_toggle_cb (GtkWidget *, void *);
 static void     sakura_sidebar_selection_changed_cb (GtkTreeSelection *, void *);
 static gboolean sakura_sidebar_button_press_cb (GtkWidget *, GdkEventButton *, void *);
+static GtkWidget *sakura_sidebar_context_menu_new (struct sakura_sidebar_node *);
+static GtkWidget *sakura_sidebar_tools_menu_new (struct sakura_sidebar_node *);
+static void     sakura_sidebar_prepare_context (struct sakura_sidebar_node *);
+static void     sakura_new_tab_in_scope_cb (GtkWidget *, void *);
+static void     sakura_new_codex_in_scope_cb (GtkWidget *, void *);
+static void     sakura_resume_codex_in_scope_cb (GtkWidget *, void *);
+static void     sakura_open_here_context_cb (GtkWidget *, void *);
+static void     sakura_open_pr_context_cb (GtkWidget *, void *);
+static void     sakura_new_tool_context_cb (GtkWidget *, void *);
 static void     sakura_sidebar_paned_position_cb (GObject *, GParamSpec *, void *);
 static void     sakura_session_load (void);
-static void     sakura_session_save (void);
-static void     sakura_session_schedule_save (void);
+static void     sakura_session_mark_dirty (void);
+static void     sakura_session_flush (void);
+static gboolean sakura_session_write (void);
 static void     sakura_session_accept_changes (void);
 static gboolean sakura_session_restore (void);
 static int      sakura_session_lock_acquire (const char *sessionfile);
@@ -888,10 +928,17 @@ sakura_key_press_cb (GtkWidget *widget, GdkEventKey *event, gpointer user_data)
 {
 	gint page;
 	guint topage = 0;
+	struct sakura_tab *current_tab;
 
 	if (event->type != GDK_KEY_PRESS) return FALSE;
 
 	page = gtk_notebook_get_current_page(GTK_NOTEBOOK(sakura.notebook));
+	current_tab = page >= 0 ? sakura_get_sktab(sakura, page) : NULL;
+	if (current_tab != NULL && current_tab->text_selection_mode &&
+	    event->keyval == GDK_KEY_Escape) {
+		sakura_set_text_selection_mode(current_tab, FALSE);
+		return TRUE;
+	}
 
 	/* Use keycodes instead of keyvals. With keyvals, key bindings work only in US/ISO8859-1 and similar locales */
 	guint keycode = event->hardware_keycode;
@@ -1932,10 +1979,8 @@ sakura_tab_bar_refresh (void)
 		if (sk_tab->tab_item != NULL) {
 			gtk_widget_set_visible(sk_tab->tab_item, visible);
 			gtk_box_reorder_child(GTK_BOX(sakura.tab_bar), sk_tab->tab_item, order++);
-		}
-		if (sk_tab->tab_button != NULL) {
 			GtkStyleContext *style_context =
-				gtk_widget_get_style_context(sk_tab->tab_button);
+				gtk_widget_get_style_context(sk_tab->tab_item);
 			if (visible && page == current_page)
 				gtk_style_context_add_class(style_context, "selected");
 			else
@@ -2118,12 +2163,16 @@ sakura_tab_bar_add_tab (struct sakura_tab *sk_tab)
 	sk_tab->tab_button_label = label;
 	sk_tab->tab_button_status = status;
 	sk_tab->tab_button_spinner = spinner;
+	gtk_style_context_add_class(gtk_widget_get_style_context(sk_tab->tab_item),
+	                            "sakura-tab");
 	gtk_box_pack_start(GTK_BOX(sk_tab->tab_item), button, FALSE, FALSE, 0);
 
 	if (sakura.show_closebutton) {
 		close_button = gtk_button_new();
 		gtk_button_set_relief(GTK_BUTTON(close_button), GTK_RELIEF_NONE);
 		gtk_widget_set_name(close_button, "closebutton");
+		gtk_style_context_add_class(gtk_widget_get_style_context(close_button),
+		                            "sakura-tab-close");
 		gtk_widget_set_tooltip_text(close_button, _("Close terminal"));
 		image = gtk_image_new_from_icon_name("window-close", GTK_ICON_SIZE_MENU);
 		gtk_container_add(GTK_CONTAINER(close_button), image);
@@ -2255,7 +2304,7 @@ sakura_sidebar_set_scope (struct sakura_sidebar_node *scope)
 	sakura_tab_bar_refresh();
 	if (sakura.notebook != NULL && gtk_notebook_get_n_pages(GTK_NOTEBOOK(sakura.notebook)) > 0)
 		sakura_set_size();
-	sakura_session_schedule_save();
+	sakura_session_mark_dirty();
 }
 
 
@@ -2358,7 +2407,7 @@ sakura_sidebar_update_tab (struct sakura_tab *sk_tab)
 	sakura_sidebar_set_node_row(node, &iter);
 	sakura_tab_bar_update_tab(sk_tab);
 	g_free(display_path);
-	sakura_session_schedule_save();
+	sakura_session_mark_dirty();
 }
 
 
@@ -2519,7 +2568,350 @@ sakura_sidebar_selection_changed_cb (GtkTreeSelection *selection, void *data)
 		return;
 
 	sakura_select_tab(node->tab, TRUE);
-	sakura_session_schedule_save();
+	sakura_session_mark_dirty();
+}
+
+
+struct sakura_sidebar_tool_target {
+	struct sakura_sidebar_node *node;
+	SakuraToolKind tool;
+};
+
+
+struct sakura_sidebar_move_target {
+	struct sakura_tab *tab;
+	struct sakura_sidebar_node *group;
+};
+
+
+static void
+sakura_sidebar_tool_target_free (gpointer data, GClosure *closure)
+{
+	(void)closure;
+	g_free(data);
+}
+
+
+static void
+sakura_sidebar_move_target_free (gpointer data, GClosure *closure)
+{
+	(void)closure;
+	g_free(data);
+}
+
+
+static void
+sakura_sidebar_prepare_context (struct sakura_sidebar_node *node)
+{
+	struct sakura_sidebar_node *scope;
+
+	if (node == NULL)
+		node = sakura.sidebar_root;
+	if (node->type == SAKURA_SIDEBAR_TERMINAL)
+		scope = node->parent != NULL ? node->parent : sakura.sidebar_root;
+	else
+		scope = node;
+	if (scope == NULL)
+		return;
+
+	if (sakura.active_group_scope != scope) {
+		sakura_sidebar_set_scope(scope);
+		sakura_select_scope_default();
+	}
+	if (node->type == SAKURA_SIDEBAR_TERMINAL && node->tab != NULL)
+		sakura_select_tab(node->tab, FALSE);
+}
+
+
+static void
+sakura_new_tab_in_scope_cb (GtkWidget *widget, void *data)
+{
+	sakura_sidebar_prepare_context(data);
+	sakura_new_tab_cb(widget, NULL);
+}
+
+
+static void
+sakura_new_codex_in_scope_cb (GtkWidget *widget, void *data)
+{
+	sakura_sidebar_prepare_context(data);
+	sakura_new_codex_cb(widget, NULL);
+}
+
+
+static void
+sakura_resume_codex_in_scope_cb (GtkWidget *widget, void *data)
+{
+	sakura_sidebar_prepare_context(data);
+	sakura_resume_codex_cb(widget, NULL);
+}
+
+
+static void
+sakura_open_here_context_cb (GtkWidget *widget, void *data)
+{
+	SakuraOpenHereKind kind = GPOINTER_TO_INT(
+		g_object_get_data(G_OBJECT(widget), "sakura-open-here-kind"));
+
+	sakura_sidebar_prepare_context(data);
+	sakura_open_here_cb(widget, GINT_TO_POINTER(kind));
+}
+
+
+static void
+sakura_open_pr_context_cb (GtkWidget *widget, void *data)
+{
+	sakura_sidebar_prepare_context(data);
+	sakura_open_pr_cb(widget, NULL);
+}
+
+
+static void
+sakura_new_tool_context_cb (GtkWidget *widget, void *data)
+{
+	struct sakura_sidebar_tool_target *target = data;
+
+	if (target == NULL)
+		return;
+	sakura_sidebar_prepare_context(target->node);
+	sakura_new_tool_cb(widget, GINT_TO_POINTER(target->tool));
+}
+
+
+static void
+sakura_sidebar_move_terminal_cb (GtkWidget *widget, void *data)
+{
+	struct sakura_sidebar_move_target *target = data;
+	struct sakura_sidebar_node *node, *old_parent;
+	GtkTreeIter old_iter, parent_iter, new_iter;
+	GtkTreePath *path;
+
+	if (target == NULL || target->tab == NULL || target->group == NULL ||
+	    target->tab->sidebar_node == NULL ||
+	    target->tab->sidebar_node->parent == target->group)
+		return;
+	node = target->tab->sidebar_node;
+	old_parent = node->parent;
+	if (!sakura_sidebar_get_iter(node, &old_iter) ||
+	    !sakura_sidebar_get_iter(target->group, &parent_iter))
+		return;
+
+	sakura_sidebar_cancel_pending_selection();
+	sakura.sidebar_syncing = TRUE;
+	if (node->row != NULL) {
+		gtk_tree_row_reference_free(node->row);
+		node->row = NULL;
+	}
+	gtk_tree_store_remove(sakura.sidebar_model, &old_iter);
+	if (old_parent != NULL &&
+	    g_strcmp0(old_parent->last_terminal_id, node->tab->terminal_id) == 0)
+		g_clear_pointer(&old_parent->last_terminal_id, g_free);
+	node->parent = target->group;
+	gtk_tree_store_append(sakura.sidebar_model, &new_iter,
+		                  &parent_iter);
+	path = gtk_tree_model_get_path(GTK_TREE_MODEL(sakura.sidebar_model), &new_iter);
+	node->row = gtk_tree_row_reference_new(GTK_TREE_MODEL(sakura.sidebar_model), path);
+	gtk_tree_path_free(path);
+	sakura_sidebar_set_node_row(node, &new_iter);
+	sakura.sidebar_syncing = FALSE;
+
+	if (sakura.active_tab == target->tab)
+		sakura_select_tab(target->tab, TRUE);
+	else
+		sakura_tab_bar_refresh();
+	sakura_sidebar_save_groups();
+}
+
+
+static GtkWidget *
+sakura_sidebar_open_here_menu_new (struct sakura_sidebar_node *node)
+{
+	GtkWidget *menu, *item;
+	SakuraOpenHereKind kind;
+
+	menu = gtk_menu_new();
+	for (kind = SAKURA_OPEN_HERE_FILE_MANAGER;
+	     kind <= SAKURA_OPEN_HERE_EDITOR; kind++) {
+		item = gtk_menu_item_new_with_label(
+			kind == SAKURA_OPEN_HERE_FILE_MANAGER ? _("File Manager") : _("Editor"));
+		g_object_set_data(G_OBJECT(item), "sakura-open-here-kind",
+		                  GINT_TO_POINTER(kind));
+		g_signal_connect(item, "activate",
+		                 G_CALLBACK(sakura_open_here_context_cb), node);
+		gtk_menu_shell_append(GTK_MENU_SHELL(menu), item);
+	}
+	return menu;
+}
+
+
+static GtkWidget *
+sakura_sidebar_move_terminal_menu_new (struct sakura_tab *sk_tab)
+{
+	GtkWidget *menu, *item;
+	GList *group;
+
+	menu = gtk_menu_new();
+	for (group = sakura.sidebar_groups; group != NULL; group = group->next) {
+		struct sakura_sidebar_node *node = group->data;
+		struct sakura_sidebar_move_target *target;
+
+		if (node == NULL || node == sk_tab->sidebar_node->parent)
+			continue;
+		item = gtk_menu_item_new_with_label(
+			node == sakura.sidebar_root ? _("All terminals") : node->title);
+		target = g_new0(struct sakura_sidebar_move_target, 1);
+		target->tab = sk_tab;
+		target->group = node;
+		g_signal_connect_data(item, "activate",
+		                      G_CALLBACK(sakura_sidebar_move_terminal_cb), target,
+		                      sakura_sidebar_move_target_free, 0);
+		gtk_menu_shell_append(GTK_MENU_SHELL(menu), item);
+	}
+	{
+		GList *items = gtk_container_get_children(GTK_CONTAINER(menu));
+		if (items == NULL) {
+			gtk_widget_destroy(menu);
+			return NULL;
+		}
+		g_list_free(items);
+	}
+	return menu;
+}
+
+
+static GtkWidget *
+sakura_sidebar_tools_menu_new (struct sakura_sidebar_node *node)
+{
+	GtkWidget *menu, *item;
+	const SakuraToolKind tools[] = {
+		SAKURA_TOOL_GITUI, SAKURA_TOOL_GIT_COLA, SAKURA_TOOL_GH_DASH
+	};
+	guint tool_index;
+	SakuraToolKind tool;
+	const gchar *label;
+
+	menu = gtk_menu_new();
+	for (tool_index = 0; tool_index < G_N_ELEMENTS(tools); tool_index++) {
+		tool = tools[tool_index];
+		label = sakura_tool_label(tool);
+		item = gtk_menu_item_new_with_label(label);
+		{
+			struct sakura_sidebar_tool_target *target = g_new0(
+				struct sakura_sidebar_tool_target, 1);
+			target->node = node;
+			target->tool = tool;
+			g_signal_connect_data(item, "activate",
+			                      G_CALLBACK(sakura_new_tool_context_cb), target,
+			                      sakura_sidebar_tool_target_free, 0);
+		}
+		gtk_menu_shell_append(GTK_MENU_SHELL(menu), item);
+	}
+	item = gtk_menu_item_new_with_label(_("Open pull request..."));
+	g_signal_connect(item, "activate", G_CALLBACK(sakura_open_pr_context_cb), node);
+	gtk_menu_shell_append(GTK_MENU_SHELL(menu), item);
+	return menu;
+}
+
+
+static GtkWidget *
+sakura_sidebar_context_menu_new (struct sakura_sidebar_node *node)
+{
+	GtkWidget *menu, *item, *submenu;
+	struct sakura_sidebar_node *context_node = node != NULL
+	                                           ? node : sakura.sidebar_root;
+
+	menu = gtk_menu_new();
+	if (context_node != NULL && context_node->type == SAKURA_SIDEBAR_TERMINAL) {
+		item = gtk_menu_item_new_with_label(_("New terminal in group"));
+		g_signal_connect(item, "activate", G_CALLBACK(sakura_new_tab_in_scope_cb),
+		                 context_node);
+		gtk_menu_shell_append(GTK_MENU_SHELL(menu), item);
+
+		item = gtk_menu_item_new_with_label(_("Open Here"));
+		gtk_menu_item_set_submenu(GTK_MENU_ITEM(item),
+		                          sakura_sidebar_open_here_menu_new(context_node));
+		gtk_menu_shell_append(GTK_MENU_SHELL(menu), item);
+
+		item = gtk_menu_item_new_with_label(_("Tools"));
+		gtk_menu_item_set_submenu(GTK_MENU_ITEM(item),
+		                          sakura_sidebar_tools_menu_new(context_node));
+		gtk_menu_shell_append(GTK_MENU_SHELL(menu), item);
+
+		submenu = sakura_sidebar_move_terminal_menu_new(context_node->tab);
+		if (submenu != NULL) {
+			item = gtk_menu_item_new_with_label(_("Move to group"));
+			gtk_menu_item_set_submenu(GTK_MENU_ITEM(item), submenu);
+			gtk_menu_shell_append(GTK_MENU_SHELL(menu), item);
+		}
+
+		submenu = gtk_menu_new();
+		item = gtk_menu_item_new_with_label(_("New Codex session"));
+		g_signal_connect(item, "activate",
+		                 G_CALLBACK(sakura_new_codex_in_scope_cb), context_node);
+		gtk_menu_shell_append(GTK_MENU_SHELL(submenu), item);
+		item = gtk_menu_item_new_with_label(_("Resume session..."));
+		g_signal_connect(item, "activate",
+		                 G_CALLBACK(sakura_resume_codex_in_scope_cb), context_node);
+		gtk_menu_shell_append(GTK_MENU_SHELL(submenu), item);
+		item = gtk_menu_item_new_with_label(_("Codex"));
+		gtk_menu_item_set_submenu(GTK_MENU_ITEM(item), submenu);
+		gtk_menu_shell_append(GTK_MENU_SHELL(menu), item);
+
+		gtk_menu_shell_append(GTK_MENU_SHELL(menu), gtk_separator_menu_item_new());
+		item = gtk_menu_item_new_with_label(_("Rename terminal..."));
+		g_signal_connect(item, "activate", G_CALLBACK(sakura_set_name_dialog_cb),
+		                 context_node->tab);
+		gtk_menu_shell_append(GTK_MENU_SHELL(menu), item);
+		if (context_node->tab != NULL && context_node->tab->kind == SAKURA_TAB_CODEX) {
+			item = gtk_menu_item_new_with_label(_("Rename Codex session..."));
+			g_signal_connect(item, "activate",
+			                 G_CALLBACK(sakura_rename_codex_session_cb),
+			                 context_node->tab);
+			gtk_menu_shell_append(GTK_MENU_SHELL(menu), item);
+		}
+		gtk_menu_shell_append(GTK_MENU_SHELL(menu), gtk_separator_menu_item_new());
+		item = gtk_menu_item_new_with_label(_("Close terminal"));
+		g_signal_connect(item, "activate", G_CALLBACK(sakura_close_tab_cb),
+		                 context_node->tab);
+		gtk_menu_shell_append(GTK_MENU_SHELL(menu), item);
+	} else if (context_node != NULL && context_node->type == SAKURA_SIDEBAR_GROUP) {
+		item = gtk_menu_item_new_with_label(
+			context_node == sakura.sidebar_root ? _("New terminal") : _("New terminal here"));
+		g_signal_connect(item, "activate", G_CALLBACK(sakura_new_tab_in_scope_cb),
+		                 context_node);
+		gtk_menu_shell_append(GTK_MENU_SHELL(menu), item);
+
+		item = gtk_menu_item_new_with_label(_("New subgroup"));
+		g_signal_connect(item, "activate", G_CALLBACK(sakura_sidebar_new_group_cb),
+		                 context_node);
+		gtk_menu_shell_append(GTK_MENU_SHELL(menu), item);
+
+		if (context_node != sakura.sidebar_root) {
+			item = gtk_menu_item_new_with_label(_("Open Here"));
+			gtk_menu_item_set_submenu(GTK_MENU_ITEM(item),
+			                          sakura_sidebar_open_here_menu_new(context_node));
+			gtk_menu_shell_append(GTK_MENU_SHELL(menu), item);
+		}
+
+		if (context_node == sakura.sidebar_root) {
+			item = gtk_menu_item_new_with_label(_("Tools"));
+			gtk_menu_item_set_submenu(GTK_MENU_ITEM(item),
+			                          sakura_sidebar_tools_menu_new(context_node));
+			gtk_menu_shell_append(GTK_MENU_SHELL(menu), item);
+		} else {
+			gtk_menu_shell_append(GTK_MENU_SHELL(menu), gtk_separator_menu_item_new());
+			item = gtk_menu_item_new_with_label(_("Rename group..."));
+			g_signal_connect(item, "activate",
+			                 G_CALLBACK(sakura_sidebar_rename_group_cb), context_node);
+			gtk_menu_shell_append(GTK_MENU_SHELL(menu), item);
+			gtk_menu_shell_append(GTK_MENU_SHELL(menu), gtk_separator_menu_item_new());
+			item = gtk_menu_item_new_with_label(_("Delete group"));
+			g_signal_connect(item, "activate",
+			                 G_CALLBACK(sakura_sidebar_delete_group_cb), context_node);
+			gtk_menu_shell_append(GTK_MENU_SHELL(menu), item);
+		}
+	}
+	return menu;
 }
 
 
@@ -2529,7 +2921,7 @@ sakura_sidebar_button_press_cb (GtkWidget *widget, GdkEventButton *event, void *
 	GtkTreePath *path = NULL;
 	GtkTreeViewColumn *column = NULL;
 	GtkTreeIter iter;
-	GtkWidget *menu, *item, *tools_menu, *tool_item;
+	GtkWidget *menu;
 	struct sakura_sidebar_node *node;
 
 	/* A folder label is a row, not the expander itself. GTK therefore does
@@ -2564,73 +2956,21 @@ sakura_sidebar_button_press_cb (GtkWidget *widget, GdkEventButton *event, void *
 	if (GTK_IS_TREE_VIEW(widget) &&
 	    gtk_tree_view_get_path_at_pos(GTK_TREE_VIEW(widget), event->x, event->y,
 	                                  &path, &column, NULL, NULL)) {
+		/* Resolve the menu target from the row under the pointer. The selection
+		 * change callback may run asynchronously, so the selected row can still
+		 * refer to the previous group at this point. */
+		if (gtk_tree_model_get_iter(GTK_TREE_MODEL(sakura.sidebar_model), &iter, path))
+			gtk_tree_model_get(GTK_TREE_MODEL(sakura.sidebar_model), &iter,
+			                   SAKURA_SIDEBAR_COLUMN_NODE, &node, -1);
+		else
+			node = NULL;
 		gtk_tree_selection_select_path(sakura.sidebar_selection, path);
-		node = sakura_sidebar_selected_node();
 	} else {
 		gtk_tree_selection_unselect_all(sakura.sidebar_selection);
-		node = NULL;
+		node = sakura.sidebar_root;
 	}
 
-	menu = gtk_menu_new();
-
-	item = gtk_menu_item_new_with_label(_("New terminal"));
-	g_signal_connect(item, "activate", G_CALLBACK(sakura_new_tab_cb), NULL);
-	gtk_menu_shell_append(GTK_MENU_SHELL(menu), item);
-	item = gtk_menu_item_new_with_label(_("Tools"));
-	tools_menu = gtk_menu_new();
-	tool_item = gtk_menu_item_new_with_label(_("GitUI"));
-	g_signal_connect(tool_item, "activate", G_CALLBACK(sakura_new_tool_cb),
-	                 GINT_TO_POINTER(SAKURA_TOOL_GITUI));
-	gtk_menu_shell_append(GTK_MENU_SHELL(tools_menu), tool_item);
-	tool_item = gtk_menu_item_new_with_label(_("Git Cola"));
-	g_signal_connect(tool_item, "activate", G_CALLBACK(sakura_new_tool_cb),
-	                 GINT_TO_POINTER(SAKURA_TOOL_GIT_COLA));
-	gtk_menu_shell_append(GTK_MENU_SHELL(tools_menu), tool_item);
-	tool_item = gtk_menu_item_new_with_label(_("GitHub Dashboard"));
-	g_signal_connect(tool_item, "activate", G_CALLBACK(sakura_new_tool_cb),
-	                 GINT_TO_POINTER(SAKURA_TOOL_GH_DASH));
-	gtk_menu_shell_append(GTK_MENU_SHELL(tools_menu), tool_item);
-	tool_item = gtk_menu_item_new_with_label(_("Open pull request..."));
-	g_signal_connect(tool_item, "activate", G_CALLBACK(sakura_open_pr_cb), NULL);
-	gtk_menu_shell_append(GTK_MENU_SHELL(tools_menu), tool_item);
-	gtk_menu_item_set_submenu(GTK_MENU_ITEM(item), tools_menu);
-	gtk_menu_shell_append(GTK_MENU_SHELL(menu), item);
-	item = gtk_menu_item_new_with_label(_("Open Here"));
-	gtk_menu_item_set_submenu(GTK_MENU_ITEM(item), sakura_open_here_menu_new());
-	gtk_menu_shell_append(GTK_MENU_SHELL(menu), item);
-	item = gtk_menu_item_new_with_label(_("New Codex session"));
-	g_signal_connect(item, "activate", G_CALLBACK(sakura_new_codex_cb), NULL);
-	gtk_menu_shell_append(GTK_MENU_SHELL(menu), item);
-	item = gtk_menu_item_new_with_label(_("Resume session..."));
-	g_signal_connect(item, "activate", G_CALLBACK(sakura_resume_codex_cb), NULL);
-	gtk_menu_shell_append(GTK_MENU_SHELL(menu), item);
-	item = gtk_menu_item_new_with_label(_("New group"));
-	g_signal_connect(item, "activate", G_CALLBACK(sakura_sidebar_new_group_cb), NULL);
-	gtk_menu_shell_append(GTK_MENU_SHELL(menu), item);
-
-	if (node != NULL && node->type == SAKURA_SIDEBAR_TERMINAL) {
-		gtk_menu_shell_append(GTK_MENU_SHELL(menu), gtk_separator_menu_item_new());
-		item = gtk_menu_item_new_with_label(_("Rename terminal..."));
-		g_signal_connect(item, "activate", G_CALLBACK(sakura_set_name_dialog_cb), node->tab);
-		gtk_menu_shell_append(GTK_MENU_SHELL(menu), item);
-		if (node->tab->kind == SAKURA_TAB_CODEX) {
-			item = gtk_menu_item_new_with_label(_("Rename Codex session..."));
-			g_signal_connect(item, "activate",
-			                 G_CALLBACK(sakura_rename_codex_session_cb), NULL);
-			gtk_menu_shell_append(GTK_MENU_SHELL(menu), item);
-		}
-		item = gtk_menu_item_new_with_label(_("Close terminal"));
-		g_signal_connect(item, "activate", G_CALLBACK(sakura_close_tab_cb), NULL);
-		gtk_menu_shell_append(GTK_MENU_SHELL(menu), item);
-	} else if (node != NULL && node != sakura.sidebar_root) {
-		gtk_menu_shell_append(GTK_MENU_SHELL(menu), gtk_separator_menu_item_new());
-		item = gtk_menu_item_new_with_label(_("Rename group..."));
-		g_signal_connect(item, "activate", G_CALLBACK(sakura_sidebar_rename_group_cb), node);
-		gtk_menu_shell_append(GTK_MENU_SHELL(menu), item);
-		item = gtk_menu_item_new_with_label(_("Delete group"));
-		g_signal_connect(item, "activate", G_CALLBACK(sakura_sidebar_delete_group_cb), node);
-		gtk_menu_shell_append(GTK_MENU_SHELL(menu), item);
-	}
+	menu = sakura_sidebar_context_menu_new(node);
 
 	gtk_widget_show_all(menu);
 	gtk_menu_popup_at_pointer(GTK_MENU(menu), (GdkEvent *)event);
@@ -2647,10 +2987,15 @@ sakura_sidebar_new_group_cb (GtkWidget *widget, void *data)
 	GtkWidget *dialog, *entry;
 	GtkTreeIter iter;
 	struct sakura_sidebar_node *parent, *node;
+	struct sakura_sidebar_node *context_node = data;
 	const gchar *title;
 
-	parent = sakura.active_group_scope != NULL
-	       ? sakura.active_group_scope : sakura_sidebar_selected_group();
+	if (context_node != NULL && context_node->type == SAKURA_SIDEBAR_TERMINAL)
+		context_node = context_node->parent;
+	parent = context_node != NULL
+	       ? context_node
+	       : (sakura.active_group_scope != NULL
+	          ? sakura.active_group_scope : sakura_sidebar_selected_group());
 	dialog = gtk_dialog_new_with_buttons(_("New group"),
 	                                     GTK_WINDOW(sakura.main_window),
 	                                     GTK_DIALOG_MODAL | GTK_DIALOG_USE_HEADER_BAR,
@@ -2865,7 +3210,7 @@ sakura_sidebar_save_groups (void)
 		                           (const gchar * const *)titles->pdata, titles->len);
 	}
 	sakura.config_modified = TRUE;
-	sakura_session_schedule_save();
+	sakura_session_mark_dirty();
 	g_ptr_array_free(ids, TRUE);
 	g_ptr_array_free(parents, TRUE);
 	g_ptr_array_free(titles, TRUE);
@@ -2898,7 +3243,7 @@ static gboolean
 sakura_session_save_timeout_cb (gpointer data)
 {
 	sakura.session_save_source_id = 0;
-	sakura_session_save();
+	sakura_session_flush();
 	return G_SOURCE_REMOVE;
 }
 
@@ -3206,11 +3551,12 @@ sakura_session_version_supported (void)
 
 
 static void
-sakura_session_schedule_save (void)
+sakura_session_mark_dirty (void)
 {
+	sakura.session_dirty = TRUE;
 	if (sakura.sessionfile == NULL || option_new_window ||
 	    !sakura.session_ready || sakura.session_restoring || sakura.dont_save ||
-	    sakura.session_restore_failed)
+	    sakura.session_restore_failed || sakura.session_shutting_down)
 		return;
 
 	if (sakura.session_save_source_id == 0)
@@ -3219,7 +3565,19 @@ sakura_session_schedule_save (void)
 
 
 static void
-sakura_session_save (void)
+sakura_session_flush (void)
+{
+	if (sakura.session_save_source_id != 0) {
+		g_source_remove(sakura.session_save_source_id);
+		sakura.session_save_source_id = 0;
+	}
+	if (sakura.session_dirty)
+		sakura_session_write();
+}
+
+
+static gboolean
+sakura_session_write (void)
 {
 	GKeyFile *session;
 	GPtrArray *group_ids, *group_parents, *group_titles, *terminals;
@@ -3228,16 +3586,13 @@ sakura_session_save (void)
 	gsize data_length;
 	gint selected_page, selected_terminal = -1;
 	guint i;
+	gboolean saved = FALSE;
 
 	if (sakura.sessionfile == NULL || option_new_window || sakura.dont_save || sakura.session_shutting_down ||
 	    sakura.session_restore_failed ||
 	    sakura.sidebar_model == NULL)
-		return;
+		return FALSE;
 
-	if (sakura.session_save_source_id != 0) {
-		g_source_remove(sakura.session_save_source_id);
-		sakura.session_save_source_id = 0;
-	}
 	sakura_sidebar_sync_parents();
 	session = g_key_file_new();
 	group_ids = g_ptr_array_new_with_free_func(g_free);
@@ -3319,8 +3674,9 @@ sakura_session_save (void)
 
 	data = g_key_file_to_data(session, &data_length, &error);
 	if (data == NULL) {
-		SAY("Could not serialize session: %s", error->message);
-		g_error_free(error);
+		SAY("Could not serialize session: %s",
+		    error != NULL ? error->message : _("unknown error"));
+		g_clear_error(&error);
 	} else {
 		temporary_file = g_strdup_printf("%s.tmp.%d", sakura.sessionfile, (int)getpid());
 		if (!g_file_set_contents(temporary_file, data, data_length, &error) ||
@@ -3331,7 +3687,8 @@ sakura_session_save (void)
 			if (error != NULL)
 				g_error_free(error);
 			g_remove(temporary_file);
-		}
+		} else
+			saved = TRUE;
 		g_free(temporary_file);
 		g_free(data);
 	}
@@ -3341,6 +3698,9 @@ sakura_session_save (void)
 	g_ptr_array_free(group_parents, TRUE);
 	g_ptr_array_free(group_titles, TRUE);
 	g_ptr_array_free(terminals, TRUE);
+	if (saved)
+		sakura.session_dirty = FALSE;
+	return saved;
 }
 
 
@@ -3595,7 +3955,7 @@ sakura_codex_tracking_poll_cb (gpointer data)
 	g_dir_close(dir);
 
 	if (changed)
-		sakura_session_schedule_save();
+		sakura_session_mark_dirty();
 
 	return G_SOURCE_CONTINUE;
 }
@@ -3631,7 +3991,7 @@ sakura_sidebar_model_reordered_cb (GtkTreeModel *model, GtkTreePath *path,
 {
 	sakura_sidebar_save_groups();
 	sakura_tab_bar_refresh();
-	sakura_session_schedule_save();
+	sakura_session_mark_dirty();
 }
 
 
@@ -3642,7 +4002,7 @@ sakura_sidebar_toggle_cb (GtkWidget *widget, void *data)
 	if (sakura.sidebar != NULL)
 		gtk_widget_set_visible(sakura.sidebar, sakura.sidebar_visible);
 	sakura_set_config_boolean("sidebar_visible", sakura.sidebar_visible);
-	sakura_session_schedule_save();
+	sakura_session_mark_dirty();
 }
 
 
@@ -3653,7 +4013,7 @@ sakura_sidebar_paned_position_cb (GObject *object, GParamSpec *pspec, void *data
 		sakura.sidebar_width = gtk_paned_get_position(GTK_PANED(sakura.sidebar_paned));
 		sakura_set_config_integer("sidebar_width", sakura.sidebar_width);
 	}
-	sakura_session_schedule_save();
+	sakura_session_mark_dirty();
 }
 
 
@@ -3975,6 +4335,37 @@ sakura_label_clicked_cb (GtkWidget *widget, GdkEventButton *button_event, void *
 /*****************/
 
 
+static void
+sakura_set_text_selection_mode (struct sakura_tab *sk_tab, gboolean enabled)
+{
+	if (sk_tab == NULL || sk_tab->vte == NULL ||
+	    sk_tab->text_selection_mode == enabled)
+		return;
+
+	sk_tab->text_selection_mode = enabled;
+	/* VTE normally forwards mouse events to applications which enable mouse
+	 * reporting. During selection mode, keep the child alive but let VTE own
+	 * the pointer events so drag selection works in interactive TUIs. */
+	vte_terminal_set_input_enabled(VTE_TERMINAL(sk_tab->vte), !enabled);
+	if (enabled)
+		gtk_widget_grab_focus(sk_tab->vte);
+}
+
+
+static gboolean
+sakura_term_keypress_cb (GtkWidget *widget, GdkEventKey *event, gpointer data)
+{
+	struct sakura_tab *sk_tab = data;
+
+	if (sk_tab != NULL && sk_tab->text_selection_mode &&
+	    event->keyval == GDK_KEY_Escape) {
+		sakura_set_text_selection_mode(sk_tab, FALSE);
+		return TRUE;
+	}
+	return FALSE;
+}
+
+
 /* Callback for button release on the vte terminal. Used for copy-on-selection to clipboard */
 static gboolean
 sakura_term_buttonreleased_cb (GtkWidget *widget, GdkEventButton *button_event, gpointer user_data)
@@ -4040,6 +4431,12 @@ sakura_term_buttonpressed_cb (GtkWidget *widget, GdkEventButton *button_event, g
 		GtkMenu *menu;
 
 		menu = GTK_MENU (user_data);
+		if (sakura.item_select_text != NULL) {
+			gtk_check_menu_item_set_active(
+				GTK_CHECK_MENU_ITEM(sakura.item_select_text),
+				sk_tab->text_selection_mode);
+			gtk_widget_set_sensitive(sakura.item_select_text, TRUE);
+		}
 
 		if (sakura.current_match) {
 			/* Show the extra options in the menu */
@@ -4194,7 +4591,8 @@ sakura_title_changed_cb (GtkWidget *widget, void *data)
 	/* User set values overrides any other one */
 	if (!sk_tab->label_set_byuser && sk_tab->kind != SAKURA_TAB_TOOL) {
 		sakura_set_tab_label_text(tabtitle, modified_page);
-		if (!sakura.main_title) sakura_set_window_title(tabtitle);
+		if (!sakura.main_title && sk_tab == sakura.active_tab)
+			sakura_set_window_title(tabtitle);
 	}
 
 }
@@ -4233,7 +4631,7 @@ sakura_delete_event_cb (GtkWidget *widget, void *data)
 				gtk_widget_destroy(dialog);
 
 				if (response==GTK_RESPONSE_YES) {
-					sakura_session_save();
+					sakura_session_flush();
 					sakura_config_done();
 					return FALSE;
 				} else {
@@ -4244,7 +4642,7 @@ sakura_delete_event_cb (GtkWidget *widget, void *data)
 		}
 	}
 
-	sakura_session_save();
+	sakura_session_flush();
 	sakura_config_done();
 	return FALSE;
 }
@@ -5016,6 +5414,21 @@ sakura_paste_cb (GtkWidget *widget, void *data)
 
 
 static void
+sakura_select_text_cb (GtkWidget *widget, void *data)
+{
+	gint page;
+	struct sakura_tab *sk_tab;
+
+	page = gtk_notebook_get_current_page(GTK_NOTEBOOK(sakura.notebook));
+	if (page < 0)
+		return;
+	sk_tab = sakura_get_sktab(sakura, page);
+	sakura_set_text_selection_mode(sk_tab,
+		gtk_check_menu_item_get_active(GTK_CHECK_MENU_ITEM(widget)));
+}
+
+
+static void
 sakura_new_tab_cb (GtkWidget *widget, void *data)
 {
 	sakura_session_accept_changes();
@@ -5433,7 +5846,8 @@ sakura_attach_codex_cb (GtkWidget *widget, void *data)
 			sk_tab->kind = SAKURA_TAB_CODEX;
 			sakura_sidebar_update_tab(sk_tab);
 			sakura_codex_sync_name(sk_tab);
-			sakura_session_save();
+			sakura_session_mark_dirty();
+			sakura_session_flush();
 		} else {
 			g_free(session);
 		}
@@ -5465,10 +5879,14 @@ sakura_rename_codex_session_cb (GtkWidget *widget, void *data)
 	const gchar *current_name;
 	gchar *name;
 
-	page = gtk_notebook_get_current_page(GTK_NOTEBOOK(sakura.notebook));
+	sk_tab = data;
+	page = sk_tab != NULL
+		? gtk_notebook_page_num(GTK_NOTEBOOK(sakura.notebook), sk_tab->hbox)
+		: gtk_notebook_get_current_page(GTK_NOTEBOOK(sakura.notebook));
 	if (page < 0)
 		return;
-	sk_tab = sakura_get_sktab(sakura, page);
+	if (sk_tab == NULL)
+		sk_tab = sakura_get_sktab(sakura, page);
 	if (sk_tab == NULL || sk_tab->kind != SAKURA_TAB_CODEX ||
 	    sk_tab->codex_session_id == NULL || sk_tab->codex_session_id[0] == '\0') {
 		sakura_error(_("The current tab is not attached to a Codex session."));
@@ -5558,7 +5976,7 @@ sakura_codex_set_name_done (GObject *source_object,
 		sk_tab->codex_session_name = g_strdup(update->name);
 		if (!sk_tab->label_set_byuser)
 			sakura_sidebar_update_tab(sk_tab);
-		sakura_session_save();
+		sakura_session_mark_dirty();
 	}
 
 	g_clear_error(&error);
@@ -5741,11 +6159,15 @@ sakura_install_codex_hook_cb (GtkWidget *widget, void *data)
 static void
 sakura_close_tab_cb (GtkWidget *widget, void *data)
 {
+	struct sakura_tab *sk_tab = data;
 	gint page;
 
-	page = gtk_notebook_get_current_page(GTK_NOTEBOOK(sakura.notebook));
+	page = sk_tab != NULL
+	     ? gtk_notebook_page_num(GTK_NOTEBOOK(sakura.notebook), sk_tab->hbox)
+	     : gtk_notebook_get_current_page(GTK_NOTEBOOK(sakura.notebook));
 
-	sakura_close_tab(page);
+	if (page >= 0)
+		sakura_close_tab(page);
 }
 
 
@@ -6650,7 +7072,8 @@ sakura_init_popup()
 	GtkWidget *item_new_tab, *item_tools, *item_open_here,
 	          *item_gitui, *item_git_cola, *item_gh_dash, *item_open_pr,
 	          *item_set_name, *item_close_tab, *item_copy,
-	          *item_paste, *item_fullscreen, *item_select_font, *item_select_colors,
+	          *item_paste, *item_select_text, *item_fullscreen,
+	          *item_select_font, *item_select_colors,
 	          *item_show_tab_bar, *item_sidebar,
 	          *item_show_tab_bar_always, *item_show_tab_bar_multiple, *item_show_tab_bar_never,
 	          *item_toggle_scrollbar, *item_options,
@@ -6686,6 +7109,8 @@ sakura_init_popup()
 	item_fullscreen = gtk_menu_item_new_with_label(_("Full screen"));
 	item_copy = gtk_menu_item_new_with_label(_("Copy"));
 	item_paste = gtk_menu_item_new_with_label(_("Paste"));
+	item_select_text = gtk_check_menu_item_new_with_label(_("Select text mode"));
+	sakura.item_select_text = item_select_text;
 
 	item_options = gtk_menu_item_new_with_label(_("Options"));
 
@@ -6800,6 +7225,7 @@ sakura_init_popup()
 	gtk_menu_shell_append(GTK_MENU_SHELL(sakura.menu), sakura.open_link_separator);
 	gtk_menu_shell_append(GTK_MENU_SHELL(sakura.menu), item_copy);
 	gtk_menu_shell_append(GTK_MENU_SHELL(sakura.menu), item_paste);
+	gtk_menu_shell_append(GTK_MENU_SHELL(sakura.menu), item_select_text);
 	gtk_menu_shell_append(GTK_MENU_SHELL(sakura.menu), gtk_separator_menu_item_new());
 	gtk_menu_shell_append(GTK_MENU_SHELL(sakura.menu), item_new_tab);
 	gtk_menu_shell_append(GTK_MENU_SHELL(sakura.menu), item_tools);
@@ -6882,6 +7308,7 @@ sakura_init_popup()
 	g_signal_connect(G_OBJECT(item_select_font), "activate", G_CALLBACK(sakura_font_dialog_cb), NULL);
 	g_signal_connect(G_OBJECT(item_copy), "activate", G_CALLBACK(sakura_copy_cb), NULL);
 	g_signal_connect(G_OBJECT(item_paste), "activate", G_CALLBACK(sakura_paste_cb), NULL);
+	g_signal_connect(G_OBJECT(item_select_text), "activate", G_CALLBACK(sakura_select_text_cb), NULL);
 	g_signal_connect(G_OBJECT(item_select_colors), "activate", G_CALLBACK(sakura_color_dialog_cb), NULL);
 
 	g_signal_connect(G_OBJECT(item_show_tab_bar_always), "activate", G_CALLBACK(sakura_show_tab_bar_cb), "always");
@@ -6923,7 +7350,7 @@ sakura_destroy()
 	    !option_new_window && !sakura.dont_save) {
 		sakura_codex_tracking_poll_cb(NULL);
 		if (sakura.session_ready)
-			sakura_session_save();
+			sakura_session_flush();
 	}
 	sakura.session_shutting_down = TRUE;
 
@@ -7663,7 +8090,7 @@ sakura_codex_name_query_complete (struct sakura_codex_name_query *query,
 			sk_tab->codex_session_name = clean_name[0] != '\0' ? g_strdup(clean_name) : NULL;
 			if (!sk_tab->label_set_byuser)
 				sakura_sidebar_update_tab(sk_tab);
-			sakura_session_schedule_save();
+			sakura_session_mark_dirty();
 		}
 		if (clean_name[0] == '\0')
 			sakura_codex_schedule_name_retry(sk_tab);
@@ -8092,6 +8519,7 @@ sakura_add_tab_with_options (const gchar *restore_cwd,
 	g_signal_connect(G_OBJECT(sk_tab->vte), "window-title-changed", G_CALLBACK(sakura_title_changed_cb), NULL);
 	g_signal_connect(G_OBJECT(sk_tab->vte), "button-press-event", G_CALLBACK(sakura_term_buttonpressed_cb), sakura.menu);
 	g_signal_connect_swapped(G_OBJECT(sk_tab->vte), "button-release-event", G_CALLBACK(sakura_term_buttonreleased_cb), sakura.menu);
+	g_signal_connect(G_OBJECT(sk_tab->vte), "key-press-event", G_CALLBACK(sakura_term_keypress_cb), sk_tab);
 
 	/* Label & button signals */
 	/* We need the hbox to know which label/button was clicked */
@@ -8303,7 +8731,7 @@ sakura_add_tab_with_options (const gchar *restore_cwd,
 	sakura_sidebar_add_terminal(sk_tab, sidebar_parent);
 	if (sk_tab->kind == SAKURA_TAB_CODEX)
 		sakura_codex_sync_name(sk_tab);
-	sakura_session_schedule_save();
+	sakura_session_mark_dirty();
 	for (guint env_index = 0; command_env[env_index] != NULL; env_index++)
 		g_free(command_env[env_index]);
 
@@ -8399,7 +8827,8 @@ sakura_del_tab(gint page)
 		sakura_select_scope_default();
 	else
 		sakura_tab_bar_refresh();
-	sakura_session_save();
+	sakura_session_mark_dirty();
+	sakura_session_flush();
 }
 
 
@@ -8933,8 +9362,10 @@ main(int argc, char **argv)
 	}
 	sakura.session_restoring = FALSE;
 	sakura.session_ready = TRUE;
-	if (!option_new_window && !preserve_failed_session)
-		sakura_session_save();
+	if (!option_new_window && !preserve_failed_session) {
+		sakura_session_mark_dirty();
+		sakura_session_flush();
+	}
 	/* Start maximized after session restoration and initial layout. This keeps
 	 * the default launch state consistent and prevents restored sizing from
 	 * overriding it. Fullscreen remains the stronger window state. */

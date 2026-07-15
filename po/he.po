@@ -7,7 +7,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: sakura 3.1.4\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-07-14 22:46+0100\n"
+"POT-Creation-Date: 2026-07-15 00:55+0100\n"
 "PO-Revision-Date: 2018-04-29 13:18+0000\n"
 "Last-Translator: David Gómez <david@pleyades.net>\n"
 "Language-Team: Rahut <genghiskhan@gmx.ca>\n"
@@ -157,17 +157,26 @@ msgstr ""
 msgid "Terminal %d"
 msgstr "מסוף %d"
 
-#, fuzzy
-msgid "New terminal"
-msgstr "כרטיסייה חדשה"
+msgid "File Manager"
+msgstr ""
 
-msgid "Tools"
+msgid "Editor"
 msgstr ""
 
 msgid "Open pull request..."
 msgstr ""
 
+#, fuzzy
+msgid "New terminal in group"
+msgstr "כרטיסייה חדשה"
+
 msgid "Open Here"
+msgstr ""
+
+msgid "Tools"
+msgstr ""
+
+msgid "Move to group"
 msgstr ""
 
 msgid "New Codex session"
@@ -176,16 +185,27 @@ msgstr ""
 msgid "Resume session..."
 msgstr ""
 
-msgid "New group"
+msgid "Rename Codex session..."
 msgstr ""
 
-msgid "Rename Codex session..."
+#, fuzzy
+msgid "New terminal"
+msgstr "כרטיסייה חדשה"
+
+#, fuzzy
+msgid "New terminal here"
+msgstr "כרטיסייה חדשה"
+
+msgid "New subgroup"
 msgstr ""
 
 msgid "Rename group..."
 msgstr ""
 
 msgid "Delete group"
+msgstr ""
+
+msgid "New group"
 msgstr ""
 
 msgid "_Cancel"
@@ -323,12 +343,6 @@ msgid "the file manager"
 msgstr ""
 
 msgid "the editor"
-msgstr ""
-
-msgid "File Manager"
-msgstr ""
-
-msgid "Editor"
 msgstr ""
 
 msgid ""
