@@ -16,6 +16,14 @@ static void sakura_sidebar_show_page_panes(SakuraPage *page);
 static void sakura_sidebar_hide_page_panes(SakuraPage *page);
 static void sakura_sidebar_add_page(SakuraPage *page, SakuraSidebarNode *parent);
 static void sakura_sidebar_remove_node_row(SakuraSidebarNode *node);
+static gboolean sakura_sidebar_drag_motion_cb(GtkWidget *widget,
+                                               GdkDragContext *context,
+                                               gint x, gint y, guint time,
+                                               gpointer data);
+static gboolean sakura_sidebar_drag_drop_cb(GtkWidget *widget,
+                                             GdkDragContext *context,
+                                             gint x, gint y, guint time,
+                                             gpointer data);
 static gchar *sakura_pending_restore_terminal_id = NULL;
 
 static SakuraSidebarNode *
@@ -875,6 +883,53 @@ sakura_sidebar_context_menu_new (struct sakura_sidebar_node *node)
 }
 
 
+static gboolean
+sakura_sidebar_drop_target_is_group(GtkWidget *widget, gint x, gint y)
+{
+	GtkTreeView *tree = GTK_TREE_VIEW(widget);
+	GtkTreeModel *model = gtk_tree_view_get_model(tree);
+	GtkTreePath *path = NULL;
+	GtkTreeViewDropPosition position;
+	GtkTreeIter iter;
+	SakuraSidebarNode *node = NULL;
+	gboolean valid;
+
+	valid = gtk_tree_view_get_dest_row_at_pos(tree, x, y, &path, &position);
+	if (valid && path != NULL &&
+	    gtk_tree_model_get_iter(model, &iter, path))
+		gtk_tree_model_get(model, &iter, SAKURA_SIDEBAR_COLUMN_NODE, &node, -1);
+	if (path != NULL)
+		gtk_tree_path_free(path);
+	return node != NULL && node->type == SAKURA_SIDEBAR_GROUP;
+}
+
+
+static gboolean
+sakura_sidebar_drag_motion_cb(GtkWidget *widget, GdkDragContext *context,
+                              gint x, gint y, guint time, gpointer data)
+{
+	(void)data;
+	if (sakura_sidebar_drop_target_is_group(widget, x, y))
+		return FALSE;
+	/* Prevent GtkTreeView's reorderable default handler from accepting a
+	 * terminal/page row as a drop target. */
+	gdk_drag_status(context, 0, time);
+	return TRUE;
+}
+
+
+static gboolean
+sakura_sidebar_drag_drop_cb(GtkWidget *widget, GdkDragContext *context,
+                            gint x, gint y, guint time, gpointer data)
+{
+	(void)data;
+	if (sakura_sidebar_drop_target_is_group(widget, x, y))
+		return FALSE;
+	gdk_drag_status(context, 0, time);
+	return TRUE;
+}
+
+
 gboolean
 sakura_sidebar_button_press_cb (GtkWidget *widget, GdkEventButton *event, void *data)
 {
@@ -1711,6 +1766,10 @@ sakura_sidebar_init (gboolean restore_session)
 	gtk_tree_view_set_enable_tree_lines(GTK_TREE_VIEW(sakura.sidebar_tree), TRUE);
 	gtk_tree_view_set_activate_on_single_click(GTK_TREE_VIEW(sakura.sidebar_tree), TRUE);
 	gtk_tree_view_set_reorderable(GTK_TREE_VIEW(sakura.sidebar_tree), TRUE);
+	g_signal_connect(sakura.sidebar_tree, "drag-motion",
+	                 G_CALLBACK(sakura_sidebar_drag_motion_cb), NULL);
+	g_signal_connect(sakura.sidebar_tree, "drag-drop",
+	                 G_CALLBACK(sakura_sidebar_drag_drop_cb), NULL);
 	gtk_tree_view_set_tooltip_column(GTK_TREE_VIEW(sakura.sidebar_tree), SAKURA_SIDEBAR_COLUMN_TOOLTIP);
 	gtk_widget_set_name(sakura.sidebar_tree, "terminal-sidebar");
 
