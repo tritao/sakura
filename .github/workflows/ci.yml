@@ -1,0 +1,37 @@
+name: Build and test
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  linux:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install build and UI test dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes \
+            build-essential cmake pkg-config python3 gettext \
+            libglib2.0-dev libgtk-3-dev libvte-2.91-dev libx11-dev \
+            xvfb xdotool
+
+      - name: Configure debug preset
+        run: cmake --preset debug
+
+      - name: Build debug preset
+        run: cmake --build --preset debug --parallel
+
+      - name: Test debug preset
+        run: ctest --preset debug --output-on-failure
+
+      - name: Configure sanitizer preset
+        run: cmake --preset asan
+
+      - name: Build sanitizer preset
+        run: cmake --build --preset asan --parallel
+
+      - name: Test sanitizer preset
+        run: ctest --preset asan --output-on-failure

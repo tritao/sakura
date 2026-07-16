@@ -451,7 +451,7 @@ sakura_tab_add_with_options (const gchar *restore_cwd,
 	GtkWidget *tab_title_hbox; GtkWidget *close_button; /* We could put them inside struct sakura_tab, but it is not necessary */
 	GtkWidget *event_box;
 	gint index, page, npages;
-	gchar *cwd = NULL; gchar *default_label_text = NULL;
+	gchar *cwd = NULL; gchar *group_cwd = NULL; gchar *default_label_text = NULL;
 	struct sakura_sidebar_node *sidebar_parent;
 	const SakuraTabLaunchConfig default_config = {
 		.execute_command = NULL,
@@ -541,9 +541,14 @@ sakura_tab_add_with_options (const gchar *restore_cwd,
 	page = gtk_notebook_get_current_page(GTK_NOTEBOOK(sakura.notebook));
 
 	/* Use the restored directory when reopening a workspace. Otherwise use the
-	 * previous terminal (if there is one) cwd and colorset. */
+	 * configured group directory, then the previous terminal (if there is one)
+	 * cwd and colorset. */
+	if (restore_cwd == NULL || restore_cwd[0] == '\0')
+		group_cwd = sakura_sidebar_directory_for_node(sidebar_parent);
 	if (restore_cwd != NULL && restore_cwd[0] != '\0') {
 		cwd = g_strdup(restore_cwd);
+	} else if (group_cwd != NULL) {
+		cwd = g_strdup(group_cwd);
 	} else if (page >= 0) {
 		struct sakura_tab *prev_term;
 		prev_term = sakura_tab_at_page(page);
@@ -557,6 +562,7 @@ sakura_tab_add_with_options (const gchar *restore_cwd,
 
 	if (!cwd)
 		cwd = g_get_current_dir();
+	g_free(group_cwd);
 
 	if (!split_into_page) {
 		if (!sakura.new_tab_after_current) {
@@ -760,6 +766,7 @@ sakura_tab_delete_pane(SakuraTab *tab)
 	SakuraPage *page;
 	gint page_index;
 	gboolean was_active;
+	gboolean was_representative;
 
 	if (tab == NULL || tab->page == NULL || tab->layout_leaf == NULL)
 		return;
@@ -774,6 +781,7 @@ sakura_tab_delete_pane(SakuraTab *tab)
 		return;
 
 	was_active = sakura.active_tab == tab;
+	was_representative = page->tab_bar_tab == tab;
 	sakura_sidebar_remove_tab(tab);
 	sakura_remove_history_file(tab);
 	if (tab->vte != NULL && tab->exit_handler_id != 0 &&
@@ -782,6 +790,10 @@ sakura_tab_delete_pane(SakuraTab *tab)
 	if (sakura.panes != NULL)
 		g_ptr_array_remove_fast(sakura.panes, tab);
 	sakura_layout_remove_leaf(tab->layout_leaf);
+	if (was_representative) {
+		page->tab_bar_tab = page->active_tab;
+		sakura_notebook_sync_page_order();
+	}
 	if (was_active)
 		sakura.active_tab = page->active_tab;
 	if (sakura.active_tab == NULL)

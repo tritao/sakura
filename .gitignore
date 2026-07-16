@@ -3,6 +3,8 @@ CMakeFiles
 CMakeCache.txt
 Makefile
 build/
+build-debug/
+build-asan/
 *.gmo
 *.mo
 po/sakura.pot

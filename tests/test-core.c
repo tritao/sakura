@@ -74,6 +74,7 @@ test_session_snapshot_round_trip(void)
 	group->id = g_strdup("group-a");
 	group->parent_id = g_strdup("root");
 	group->title = g_strdup("Alpha");
+	group->directory = g_strdup("/tmp/sakura-group");
 	g_ptr_array_add(source->groups, group);
 
 	tab->parent_id = g_strdup("group-a");
@@ -94,6 +95,7 @@ test_session_snapshot_round_trip(void)
 	source->selected_terminal_id = g_strdup("terminal-1");
 	g_free(source->active_group_id);
 	source->active_group_id = g_strdup("group-a");
+	source->root_directory = g_strdup("/tmp");
 	source->sidebar_visible = FALSE;
 	source->sidebar_width = 280;
 
@@ -105,6 +107,7 @@ test_session_snapshot_round_trip(void)
 	g_assert_cmpint(loaded->selected_terminal, ==, 0);
 	g_assert_cmpstr(loaded->selected_terminal_id, ==, "terminal-1");
 	g_assert_cmpstr(loaded->active_group_id, ==, "group-a");
+	g_assert_cmpstr(loaded->root_directory, ==, "/tmp");
 	g_assert_false(loaded->sidebar_visible);
 	g_assert_cmpint(loaded->sidebar_width, ==, 280);
 
@@ -112,6 +115,7 @@ test_session_snapshot_round_trip(void)
 		SakuraSessionGroupRecord *loaded_group = g_ptr_array_index(loaded->groups, 0);
 		SakuraSessionTabRecord *loaded_tab = g_ptr_array_index(loaded->tabs, 0);
 		g_assert_cmpstr(loaded_group->title, ==, "Alpha");
+		g_assert_cmpstr(loaded_group->directory, ==, "/tmp/sakura-group");
 		g_assert_cmpstr(loaded_tab->cwd, ==, "/tmp");
 		g_assert_cmpstr(loaded_tab->tool_id, ==, "gitui");
 		g_assert_cmpstr(loaded_tab->codex_session_id, ==, "session-1");

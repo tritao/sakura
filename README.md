@@ -165,6 +165,28 @@ symbols instead. When a background Codex turn finishes or needs approval,
 Sakura marks that terminal as needing attention and updates the sidebar count.
 Ordinary terminals use bell and process-exit signals as a fallback.
 
+### Reproducible test presets
+
+The repository includes CMake presets for the normal and sanitizer test
+configurations. From a clean checkout:
+
+```bash
+cmake --preset debug
+cmake --build --preset debug --parallel
+ctest --preset debug --output-on-failure
+
+cmake --preset asan
+cmake --build --preset asan --parallel
+ctest --preset asan --output-on-failure
+```
+
+The sanitizer preset enables AddressSanitizer and UBSan for every build and
+runs the core plus in-process GTK tests. It leaves out the process-level X11
+smoke test because its external timing is inherently noisy under sanitizers;
+the smoke test remains part of the normal debug preset. Leak detection is
+disabled for sanitizer runs because GTK/VTE/font backends retain allocations
+until process shutdown.
+
 ## Keybindings
 
 **sakura** supports keyboard bindings in its config file (`~/.config/sakura/sakura.conf`), but there's no GUI to edit them, so please use your favourite editor to change the following values. Keybindings are a combination of an accelerator+key.

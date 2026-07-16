@@ -517,6 +517,10 @@ sakura_layout_remove_leaf_widgets(SakuraLayoutNode *leaf)
 
 	/* Keep the surviving surface alive while the split widget is removed. */
 	g_object_ref(sibling_widget);
+	/* Detach the surviving branch first. Removing the parent paned directly
+	 * would destroy a nested GtkPaned together with its children, leaving the
+	 * model pointing at an empty widget when that branch is reparented. */
+	gtk_container_remove(GTK_CONTAINER(parent_widget), sibling_widget);
 	if (grandparent == NULL) {
 		container = leaf->page->container;
 		gtk_container_remove(GTK_CONTAINER(container), parent_widget);

@@ -361,6 +361,7 @@ sakura_session_group_record_free(gpointer data)
 	g_free(record->id);
 	g_free(record->parent_id);
 	g_free(record->title);
+	g_free(record->directory);
 	g_free(record);
 }
 
@@ -447,6 +448,7 @@ sakura_session_snapshot_free(SakuraSessionSnapshot *snapshot)
 	g_free(snapshot->selected_terminal_id);
 	g_free(snapshot->selected_page_id);
 	g_free(snapshot->active_group_id);
+	g_free(snapshot->root_directory);
 	g_free(snapshot);
 }
 
@@ -729,6 +731,9 @@ sakura_session_snapshot_load_into(GKeyFile *key_file,
 	                                                  "active_group_id", NULL);
 	if (snapshot->active_group_id == NULL)
 		snapshot->active_group_id = g_strdup("root");
+	g_free(snapshot->root_directory);
+	snapshot->root_directory = g_key_file_get_string(key_file, "Session",
+	                                                 "root_directory", NULL);
 	if (g_key_file_has_key(key_file, "Session", "sidebar_visible", NULL))
 		snapshot->sidebar_visible = g_key_file_get_boolean(key_file, "Session",
 	                                                   "sidebar_visible", NULL);
@@ -746,6 +751,7 @@ sakura_session_snapshot_load_into(GKeyFile *key_file,
 		group->id = g_key_file_get_string(key_file, section, "id", NULL);
 		group->parent_id = g_key_file_get_string(key_file, section, "parent", NULL);
 		group->title = g_key_file_get_string(key_file, section, "title", NULL);
+		group->directory = g_key_file_get_string(key_file, section, "directory", NULL);
 		if (group->parent_id == NULL)
 			group->parent_id = g_strdup("root");
 		if (group->title == NULL)
@@ -886,6 +892,10 @@ sakura_session_snapshot_save(const SakuraSessionSnapshot *snapshot,
 		                      snapshot->selected_page_id);
 	g_key_file_set_string(key_file, "Session", "active_group_id",
 	                      snapshot->active_group_id != NULL ? snapshot->active_group_id : "root");
+	if (snapshot->root_directory != NULL && snapshot->root_directory[0] != '\0')
+		g_key_file_set_string(key_file, "Session", "root_directory", snapshot->root_directory);
+	else
+		g_key_file_remove_key(key_file, "Session", "root_directory", NULL);
 	g_key_file_set_boolean(key_file, "Session", "sidebar_visible", snapshot->sidebar_visible);
 	g_key_file_set_integer(key_file, "Session", "sidebar_width", snapshot->sidebar_width);
 
@@ -896,6 +906,10 @@ sakura_session_snapshot_save(const SakuraSessionSnapshot *snapshot,
 		g_key_file_set_string(key_file, section, "parent",
 		                      group->parent_id != NULL ? group->parent_id : "root");
 		g_key_file_set_string(key_file, section, "title", group->title != NULL ? group->title : "");
+		if (group->directory != NULL && group->directory[0] != '\0')
+			g_key_file_set_string(key_file, section, "directory", group->directory);
+		else
+			g_key_file_remove_key(key_file, section, "directory", NULL);
 		g_free(section);
 	}
 	for (index = 0; index < snapshot->pages->len; index++) {

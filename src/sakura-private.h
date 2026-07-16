@@ -308,6 +308,7 @@ struct sakura_sidebar_node {
 	gchar *title;
 	gchar *subtitle;
 	gchar *tooltip;
+	gchar *directory;
 	gchar *last_terminal_id;
 	SakuraSidebarNode *parent;
 	SakuraPage *page;
@@ -559,7 +560,8 @@ void sakura_sidebar_collect_terminals(GtkTreeModel *model, GtkTreeIter *parent,
 SakuraSidebarNode *sakura_sidebar_find_group_by_id(const gchar *id);
 void sakura_sidebar_collect_groups(GtkTreeModel *model, GtkTreeIter *parent,
                                    GPtrArray *ids, GPtrArray *parents,
-                                   GPtrArray *titles);
+                                   GPtrArray *titles, GPtrArray *directories);
+gchar *sakura_sidebar_directory_for_node(SakuraSidebarNode *node);
 void sakura_sidebar_sync_parents(void);
 SakuraSessionSnapshot *sakura_workspace_snapshot_new(void);
 gboolean sakura_workspace_restore_snapshot(SakuraSessionSnapshot *snapshot);
@@ -667,6 +669,7 @@ typedef struct {
 	gchar *id;
 	gchar *parent_id;
 	gchar *title;
+	gchar *directory;
 } SakuraSessionGroupRecord;
 
 typedef struct {
@@ -715,6 +718,7 @@ struct sakura_session_snapshot {
 	gchar *selected_terminal_id;
 	gchar *selected_page_id;
 	gchar *active_group_id;
+	gchar *root_directory;
 	gboolean sidebar_visible;
 	gint sidebar_width;
 };

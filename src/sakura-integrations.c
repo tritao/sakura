@@ -227,6 +227,15 @@ sakura_current_tab_cwd(void)
 }
 
 
+static gchar *
+sakura_context_cwd(void)
+{
+	gchar *cwd = sakura_sidebar_directory_for_node(sakura.active_group_scope);
+
+	return cwd != NULL ? cwd : sakura_current_tab_cwd();
+}
+
+
 void
 sakura_open_here_cb(GtkWidget *widget, void *data)
 {
@@ -245,7 +254,7 @@ sakura_open_here_cb(GtkWidget *widget, void *data)
 	guint i;
 
 	(void)widget;
-	cwd = sakura_current_tab_cwd();
+	cwd = sakura_context_cwd();
 	if (cwd == NULL || !g_file_test(cwd, G_FILE_TEST_IS_DIR)) {
 		sakura_error(_("Could not determine the current directory."));
 		g_free(cwd);
@@ -372,7 +381,7 @@ sakura_new_tool_cb(GtkWidget *widget, void *data)
 		return;
 	}
 
-	cwd = sakura_current_tab_cwd();
+	cwd = sakura_context_cwd();
 	tool_cwd = cwd;
 	if (sakura_tool_requires_git_repository(tool)) {
 		git_argv[0] = (gchar *)"git";
@@ -526,7 +535,7 @@ sakura_open_pr_cb(GtkWidget *widget, void *data)
 		return;
 	}
 
-	cwd = sakura_current_tab_cwd();
+	cwd = sakura_context_cwd();
 	sakura_session_accept_changes();
 	sakura_add_tab_with_options(cwd, NULL, NULL, FALSE,
 	                            SAKURA_TAB_TOOL, SAKURA_TOOL_GH_PR,

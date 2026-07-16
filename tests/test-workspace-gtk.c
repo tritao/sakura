@@ -11,12 +11,306 @@ test_page_new(const gchar *page_id, const gchar *terminal_id)
 	page->container = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
 	tab->terminal_id = g_strdup(terminal_id);
 	tab->hbox = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
+	tab->label = gtk_label_new("Terminal");
 	g_assert_nonnull(sakura_layout_leaf_new(page, tab));
 	tab->layout_leaf->widget = tab->hbox;
 	gtk_box_pack_start(GTK_BOX(page->container), tab->hbox, TRUE, TRUE, 0);
 	gtk_widget_show_all(page->container);
 	page->tab_bar_tab = tab;
 	return page;
+}
+
+
+static void
+test_sidebar_add_page(SakuraPage *page)
+{
+	SakuraSidebarNode *node = g_new0(SakuraSidebarNode, 1);
+
+	node->type = SAKURA_SIDEBAR_PAGE;
+	node->id = g_strdup(page->id);
+	node->title = g_strdup("Terminal");
+	node->subtitle = g_strdup("");
+	node->tooltip = g_strdup("Terminal");
+	node->parent = sakura.sidebar_root;
+	node->page = page;
+	page->sidebar_node = node;
+	sakura_sidebar_insert_node(node);
+}
+
+
+static void
+test_sidebar_add_tab(SakuraTab *tab)
+{
+	SakuraSidebarNode *node;
+
+	if (tab == NULL || tab->page == NULL || tab->sidebar_node != NULL)
+		return;
+	node = g_new0(SakuraSidebarNode, 1);
+	node->type = SAKURA_SIDEBAR_TERMINAL;
+	node->id = g_strdup(tab->terminal_id);
+	node->title = g_strdup("Terminal");
+	node->subtitle = g_strdup("");
+	node->tooltip = g_strdup("Terminal");
+	node->parent = tab->page->sidebar_node;
+	node->tab = tab;
+	tab->sidebar_node = node;
+	sakura_sidebar_insert_node(node);
+}
+
+
+static void
+setup_sidebar_fixture(void)
+{
+	SakuraSidebarNode *root;
+	GType columns[] = {
+		G_TYPE_STRING, G_TYPE_STRING, G_TYPE_STRING, G_TYPE_STRING,
+		G_TYPE_STRING, G_TYPE_BOOLEAN, G_TYPE_STRING, G_TYPE_BOOLEAN,
+		G_TYPE_BOOLEAN, G_TYPE_UINT, G_TYPE_STRING, G_TYPE_POINTER
+	};
+	guint index, pane_index;
+
+	sakura.sidebar_model = gtk_tree_store_newv(G_N_ELEMENTS(columns), columns);
+	sakura.sidebar_tree = gtk_tree_view_new_with_model(
+		GTK_TREE_MODEL(sakura.sidebar_model));
+	sakura.sidebar_selection = gtk_tree_view_get_selection(
+		GTK_TREE_VIEW(sakura.sidebar_tree));
+	root = g_new0(SakuraSidebarNode, 1);
+	root->type = SAKURA_SIDEBAR_GROUP;
+	root->id = g_strdup("root");
+	root->title = g_strdup("All terminals");
+	root->subtitle = g_strdup("");
+	root->tooltip = g_strdup("All terminals");
+	sakura.sidebar_root = root;
+	sakura.sidebar_groups = g_list_append(NULL, root);
+	sakura.active_group_scope = root;
+	sakura_sidebar_insert_node(root);
+
+	for (index = 0; index < sakura.pages->len; index++) {
+		SakuraPage *page = g_ptr_array_index(sakura.pages, index);
+		test_sidebar_add_page(page);
+		for (pane_index = 0; pane_index < page->panes->len; pane_index++)
+			test_sidebar_add_tab(g_ptr_array_index(page->panes, pane_index));
+	}
+}
+
+
+static void
+teardown_sidebar_fixture(void)
+{
+	guint index, pane_index;
+
+	if (sakura.pages != NULL) {
+		for (index = 0; index < sakura.pages->len; index++) {
+			SakuraPage *page = g_ptr_array_index(sakura.pages, index);
+			for (pane_index = 0; page->panes != NULL &&
+			     pane_index < page->panes->len; pane_index++) {
+				SakuraTab *tab = g_ptr_array_index(page->panes, pane_index);
+				if (tab != NULL && tab->sidebar_node != NULL) {
+					sakura_sidebar_free_node(tab->sidebar_node);
+					tab->sidebar_node = NULL;
+				}
+			}
+			if (page->sidebar_node != NULL) {
+				sakura_sidebar_free_node(page->sidebar_node);
+				page->sidebar_node = NULL;
+			}
+		}
+	}
+	if (sakura.sidebar_root != NULL) {
+		sakura_sidebar_free_node(sakura.sidebar_root);
+		sakura.sidebar_root = NULL;
+	}
+	g_list_free(sakura.sidebar_groups);
+	sakura.sidebar_groups = NULL;
+	if (sakura.sidebar_tree != NULL)
+		gtk_widget_destroy(sakura.sidebar_tree);
+	if (sakura.sidebar_model != NULL)
+		g_object_unref(sakura.sidebar_model);
+	sakura.sidebar_tree = NULL;
+	sakura.sidebar_model = NULL;
+	sakura.sidebar_selection = NULL;
+	sakura.active_group_scope = NULL;
+}
+
+
+static SakuraSessionLayoutRecord *
+test_snapshot_layout_record(const SakuraSessionSnapshot *snapshot,
+                            const gchar *id)
+{
+	guint index;
+
+	for (index = 0; snapshot != NULL && index < snapshot->layouts->len; index++) {
+		SakuraSessionLayoutRecord *record = g_ptr_array_index(snapshot->layouts, index);
+		if (g_strcmp0(record->id, id) == 0)
+			return record;
+	}
+	return NULL;
+}
+
+
+static SakuraSessionTabRecord *
+test_snapshot_tab_record(const SakuraSessionSnapshot *snapshot,
+                         const gchar *terminal_id)
+{
+	guint index;
+
+	for (index = 0; snapshot != NULL && index < snapshot->tabs->len; index++) {
+		SakuraSessionTabRecord *record = g_ptr_array_index(snapshot->tabs, index);
+		if (g_strcmp0(record->terminal_id, terminal_id) == 0)
+			return record;
+	}
+	return NULL;
+}
+
+
+static SakuraSessionLayoutRecord *
+test_snapshot_leftmost_layout(const SakuraSessionSnapshot *snapshot,
+                              SakuraSessionLayoutRecord *record)
+{
+	while (record != NULL && g_strcmp0(record->type, "split") == 0)
+		record = test_snapshot_layout_record(snapshot, record->first_id);
+	return record;
+}
+
+
+static gchar *
+test_live_layout_signature(const SakuraLayoutNode *node)
+{
+	gchar *first, *second, *signature;
+
+	if (node == NULL)
+		return g_strdup("missing");
+	if (node->kind == SAKURA_LAYOUT_LEAF)
+		return g_strdup_printf("leaf:%s", node->data.leaf.tab->terminal_id);
+	first = test_live_layout_signature(node->data.split.first);
+	second = test_live_layout_signature(node->data.split.second);
+	signature = g_strdup_printf("split:%d(%s,%s)",
+	                            node->data.split.direction, first, second);
+	g_free(first);
+	g_free(second);
+	return signature;
+}
+
+
+static gchar *
+test_snapshot_layout_signature(const SakuraSessionSnapshot *snapshot,
+                               SakuraSessionLayoutRecord *record)
+{
+	gchar *first, *second, *signature;
+
+	if (record == NULL)
+		return g_strdup("missing");
+	if (g_strcmp0(record->type, "leaf") == 0)
+		return g_strdup_printf("leaf:%s", record->terminal_id);
+	first = test_snapshot_layout_signature(
+		snapshot, test_snapshot_layout_record(snapshot, record->first_id));
+	second = test_snapshot_layout_signature(
+		snapshot, test_snapshot_layout_record(snapshot, record->second_id));
+	signature = g_strdup_printf("split:%d(%s,%s)", record->direction, first, second);
+	g_free(first);
+	g_free(second);
+	return signature;
+}
+
+
+static SakuraTab *
+test_page_pane_by_id(SakuraPage *page, const gchar *terminal_id)
+{
+	guint index;
+
+	for (index = 0; page != NULL && index < page->panes->len; index++) {
+		SakuraTab *tab = g_ptr_array_index(page->panes, index);
+		if (g_strcmp0(tab->terminal_id, terminal_id) == 0)
+			return tab;
+	}
+	return NULL;
+}
+
+
+static SakuraLayoutNode *
+test_restore_layout_subtree(SakuraPage *page,
+                            const SakuraSessionSnapshot *snapshot,
+                            SakuraSessionLayoutRecord *record,
+                            SakuraTab *anchor)
+{
+	SakuraSessionLayoutRecord *first_record, *second_record, *second_leaf;
+	SakuraSessionTabRecord *tab_record;
+	SakuraTab *second_tab;
+	SakuraLayoutNode *first_node, *split;
+
+	if (record == NULL || g_strcmp0(record->type, "leaf") == 0)
+		return anchor->layout_leaf;
+	first_record = test_snapshot_layout_record(snapshot, record->first_id);
+	second_record = test_snapshot_layout_record(snapshot, record->second_id);
+	first_node = test_restore_layout_subtree(page, snapshot, first_record, anchor);
+	second_leaf = test_snapshot_leftmost_layout(snapshot, second_record);
+	tab_record = test_snapshot_tab_record(snapshot, second_leaf->terminal_id);
+	second_tab = g_new0(SakuraTab, 1);
+	second_tab->terminal_id = g_strdup(tab_record->terminal_id);
+	second_tab->hbox = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
+	second_tab->label = gtk_label_new("Terminal");
+	g_assert_true(sakura_layout_split_node_widgets(first_node, record->direction,
+	                                               second_tab));
+	split = second_tab->layout_leaf->parent;
+	if (g_strcmp0(second_record->type, "split") == 0)
+		g_assert_true(test_restore_layout_subtree(page, snapshot, second_record,
+		                                          second_tab) != NULL);
+	return split;
+}
+
+
+static void
+setup_workspace_from_snapshot(const SakuraSessionSnapshot *snapshot)
+{
+	guint index;
+
+	memset(&sakura, 0, sizeof(sakura));
+	sakura.notebook = gtk_notebook_new();
+	sakura.pages = g_ptr_array_new();
+	sakura.tabs = g_ptr_array_new();
+	for (index = 0; index < snapshot->pages->len; index++) {
+		SakuraSessionPageRecord *page_record = g_ptr_array_index(snapshot->pages, index);
+		SakuraSessionLayoutRecord *root_record = test_snapshot_layout_record(
+			snapshot, page_record->root_layout_id);
+		SakuraSessionLayoutRecord *root_leaf = test_snapshot_leftmost_layout(
+			snapshot, root_record);
+		SakuraPage *page = test_page_new(page_record->id, root_leaf->terminal_id);
+		SakuraTab *tab = page->tab_bar_tab;
+
+		page->title = g_strdup(page_record->title);
+		page->title_set_by_user = page_record->title_set_by_user;
+		g_ptr_array_add(sakura.pages, page);
+		g_ptr_array_add(sakura.tabs, tab);
+		gtk_notebook_append_page(GTK_NOTEBOOK(sakura.notebook), page->container, NULL);
+		if (g_strcmp0(root_record->type, "split") == 0)
+			test_restore_layout_subtree(page, snapshot, root_record, tab);
+		if (page_record->active_terminal_id != NULL) {
+			SakuraTab *active = test_page_pane_by_id(page,
+			                                         page_record->active_terminal_id);
+			if (active != NULL)
+				page->active_tab = active;
+		}
+	}
+	gtk_widget_show_all(sakura.notebook);
+	if (snapshot->selected_page_id != NULL) {
+		for (index = 0; index < sakura.pages->len; index++) {
+			SakuraPage *page = g_ptr_array_index(sakura.pages, index);
+			if (g_strcmp0(page->id, snapshot->selected_page_id) == 0) {
+				gtk_notebook_set_current_page(GTK_NOTEBOOK(sakura.notebook), index);
+				sakura.active_page = page;
+				sakura.active_tab = snapshot->selected_terminal_id != NULL
+				                ? test_page_pane_by_id(page,
+				                                      snapshot->selected_terminal_id)
+				                : page->active_tab;
+				break;
+			}
+		}
+	}
+	if (sakura.active_page == NULL && sakura.pages->len > 0) {
+		sakura.active_page = g_ptr_array_index(sakura.pages, 0);
+		sakura.active_tab = sakura.active_page->active_tab;
+		gtk_notebook_set_current_page(GTK_NOTEBOOK(sakura.notebook), 0);
+	}
 }
 
 
@@ -46,8 +340,12 @@ assert_workspace_consistent(void)
 {
 	gint count, index, current;
 	GError *workspace_error = NULL;
+	gboolean valid;
 
-	g_assert_true(sakura_workspace_validate(&workspace_error));
+	valid = sakura_workspace_validate(&workspace_error);
+	if (!valid && workspace_error != NULL)
+		g_test_message("workspace validation failed: %s", workspace_error->message);
+	g_assert_true(valid);
 	g_assert_no_error(workspace_error);
 	g_assert_nonnull(sakura.notebook);
 	g_assert_nonnull(sakura.pages);
@@ -121,6 +419,8 @@ teardown_workspace(void)
 
 	for (index = 0; index < sakura.pages->len; index++)
 		g_ptr_array_add(pages, g_ptr_array_index(sakura.pages, index));
+	if (sakura.sidebar_model != NULL)
+		teardown_sidebar_fixture();
 	gtk_widget_destroy(sakura.notebook);
 	for (index = 0; index < pages->len; index++)
 		test_page_free(g_ptr_array_index(pages, index));
@@ -200,6 +500,70 @@ test_select_and_detach_by_identity(void)
 
 
 static void
+test_snapshot_destroy_restore_equivalence(void)
+{
+	SakuraSessionSnapshot *source, *loaded;
+	SakuraPage *split_page;
+	SakuraTab *split_tab;
+	GKeyFile *key_file;
+	GError *error = NULL;
+	guint index;
+
+	setup_workspace();
+	split_page = sakura_page_at_page(1);
+	split_tab = g_new0(SakuraTab, 1);
+	split_tab->terminal_id = g_strdup("terminal-roundtrip-split");
+	split_tab->hbox = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
+	split_tab->label = gtk_label_new("Terminal");
+	g_assert_true(sakura_layout_split_node_widgets(
+		split_page->active_tab->layout_leaf, SAKURA_SPLIT_DOWN, split_tab));
+	split_page->active_tab = split_tab;
+	sakura.active_page = split_page;
+	sakura.active_tab = split_tab;
+	setup_sidebar_fixture();
+	assert_workspace_consistent();
+
+	source = sakura_workspace_snapshot_new();
+	g_assert_cmpuint(source->pages->len, ==, 3);
+	g_assert_cmpuint(source->tabs->len, ==, 4);
+	g_assert_cmpuint(source->layouts->len, ==, 5);
+	g_assert_cmpstr(source->selected_terminal_id, ==, "terminal-roundtrip-split");
+	key_file = g_key_file_new();
+	sakura_session_snapshot_save(source, key_file);
+	loaded = sakura_session_snapshot_new();
+	g_assert_true(sakura_session_snapshot_load(key_file, loaded, &error));
+	g_assert_no_error(error);
+	g_assert_cmpuint(loaded->pages->len, ==, source->pages->len);
+	g_assert_cmpuint(loaded->tabs->len, ==, source->tabs->len);
+	g_assert_cmpuint(loaded->layouts->len, ==, source->layouts->len);
+	g_assert_cmpstr(loaded->selected_terminal_id, ==, source->selected_terminal_id);
+
+	teardown_workspace();
+	setup_workspace_from_snapshot(loaded);
+	setup_sidebar_fixture();
+	assert_workspace_consistent();
+	for (index = 0; index < loaded->pages->len; index++) {
+		SakuraSessionPageRecord *record = g_ptr_array_index(loaded->pages, index);
+		SakuraPage *page = g_ptr_array_index(sakura.pages, index);
+		gchar *expected = test_snapshot_layout_signature(
+			loaded, test_snapshot_layout_record(loaded, record->root_layout_id));
+		gchar *actual = test_live_layout_signature(page->layout_root);
+		g_assert_cmpstr(page->id, ==, record->id);
+		g_assert_cmpstr(actual, ==, expected);
+		g_free(actual);
+		g_free(expected);
+	}
+	g_assert_cmpstr(sakura.active_tab->terminal_id, ==,
+	                loaded->selected_terminal_id);
+
+	g_key_file_free(key_file);
+	sakura_session_snapshot_free(source);
+	sakura_session_snapshot_free(loaded);
+	teardown_workspace();
+}
+
+
+static void
 test_restore_order_reconciliation(void)
 {
 	SakuraPage *first, *second, *third;
@@ -229,6 +593,31 @@ test_restore_order_reconciliation(void)
 
 
 static void
+test_remove_random_pane(SakuraPage *page, GRand *random)
+{
+	SakuraTab *pane;
+	guint pane_index;
+
+	if (page == NULL || page->panes == NULL || page->panes->len < 2)
+		return;
+	pane_index = g_rand_int_range(random, 0, page->panes->len);
+	pane = g_ptr_array_index(page->panes, pane_index);
+	if (pane == page->active_tab)
+		page->active_tab = g_ptr_array_index(page->panes,
+		                                     pane_index == 0 ? 1 : 0);
+	if (page->tab_bar_tab == pane)
+		page->tab_bar_tab = page->active_tab;
+	g_assert_true(sakura_layout_remove_leaf_widgets(pane->layout_leaf));
+	g_assert_true(sakura_layout_remove_leaf(pane->layout_leaf));
+	g_assert_true(sakura_notebook_sync_page_order());
+	if (sakura.active_tab == pane)
+		sakura.active_tab = page->active_tab;
+	g_free(pane->terminal_id);
+	g_free(pane);
+}
+
+
+static void
 test_seeded_workspace_operations(void)
 {
 	GRand *random = g_rand_new_with_seed(20260716);
@@ -236,10 +625,9 @@ test_seeded_workspace_operations(void)
 	guint step;
 
 	setup_workspace();
-	for (step = 0; step < 40; step++) {
+	for (step = 0; step < 120; step++) {
 		guint count = sakura.pages->len;
-		guint operation = g_rand_int_range(random, 0, 4);
-
+		guint operation = g_rand_int_range(random, 0, 7);
 		if (operation == 0 && count > 1) {
 			guint from = g_rand_int_range(random, 0, count);
 			guint to = g_rand_int_range(random, 0, count);
@@ -266,13 +654,36 @@ test_seeded_workspace_operations(void)
 					? SAKURA_SPLIT_RIGHT : SAKURA_SPLIT_DOWN,
 					pane));
 			}
-		} else if (count > 1) {
+		} else if (operation == 3) {
+			guint target = g_rand_int_range(random, 0, count);
+			SakuraPage *page = sakura_page_at_page((gint)target);
+			if (page->panes->len > 1)
+				test_remove_random_pane(page, random);
+		} else if (operation == 4 && count > 1) {
 			guint target = g_rand_int_range(random, 0, count);
 			SakuraPage *page = sakura_page_at_page((gint)target);
 			if (page == sakura.active_page)
 				continue;
 			g_assert_true(sakura_notebook_detach_page(page));
 			g_ptr_array_add(detached, page);
+		} else if (operation == 5 && count > 1) {
+			/* Exercise the restore path's cache reconciliation: GTK remains the
+			 * source of truth while the arrays briefly hold a stale order. */
+			gpointer cached_page = g_ptr_array_remove_index(sakura.pages, count - 1);
+			gpointer cached_tab = g_ptr_array_remove_index(sakura.tabs, count - 1);
+			g_ptr_array_insert(sakura.pages, 0, cached_page);
+			g_ptr_array_insert(sakura.tabs, 0, cached_tab);
+			g_assert_true(sakura_notebook_sync_page_order());
+		} else if (operation == 6) {
+			SakuraPage *page = sakura_page_at_page(
+				g_rand_int_range(random, 0, count));
+			SakuraTab *pane = g_ptr_array_index(
+				page->panes, g_rand_int_range(random, 0, page->panes->len));
+			page->active_tab = pane;
+			sakura.active_page = page;
+			sakura.active_tab = pane;
+			gtk_notebook_set_current_page(GTK_NOTEBOOK(sakura.notebook),
+			                              sakura_page_for_tab(pane));
 		}
 		assert_workspace_consistent();
 	}
@@ -294,6 +705,8 @@ main(int argc, char **argv)
 	g_test_add_func("/workspace/leaf-widget-split", test_leaf_widget_can_split);
 	g_test_add_func("/workspace/select-detach-identity",
 	                test_select_and_detach_by_identity);
+	g_test_add_func("/workspace/snapshot-destroy-restore",
+	                test_snapshot_destroy_restore_equivalence);
 	g_test_add_func("/workspace/restore-order-reconciliation",
 	                test_restore_order_reconciliation);
 	g_test_add_func("/workspace/seeded-operations",
