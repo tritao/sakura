@@ -17,6 +17,11 @@ STATE_BY_EVENT = {
     "UserPromptSubmit": "running",
     "PreToolUse": "running",
     "PermissionRequest": "needs-approval",
+    # Goal-driven work can enter through subagent lifecycle events instead of
+    # a new user prompt. Keep the parent session working until its turn emits
+    # the authoritative Stop event.
+    "SubagentStart": "running",
+    "SubagentStop": "running",
     "Stop": "ready",
 }
 
@@ -56,6 +61,8 @@ def install() -> int:
         "UserPromptSubmit": None,
         "PreToolUse": None,
         "PermissionRequest": None,
+        "SubagentStart": None,
+        "SubagentStop": None,
         "Stop": None,
     }
     changed = False

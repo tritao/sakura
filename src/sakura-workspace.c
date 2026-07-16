@@ -15,6 +15,7 @@ static void sakura_sidebar_show_page_panes(SakuraPage *page);
 static void sakura_sidebar_hide_page_panes(SakuraPage *page);
 static void sakura_sidebar_add_page(SakuraPage *page, SakuraSidebarNode *parent);
 static void sakura_sidebar_remove_node_row(SakuraSidebarNode *node);
+static gchar *sakura_pending_restore_terminal_id = NULL;
 
 static SakuraSidebarNode *
 sakura_sidebar_group_ancestor(SakuraSidebarNode *node)
@@ -34,6 +35,33 @@ sakura_sidebar_page_active_tab(SakuraPage *page)
 	if (page->panes != NULL && page->panes->len > 0)
 		return g_ptr_array_index(page->panes, 0);
 	return NULL;
+}
+
+static const gchar *
+sakura_sidebar_tab_icon_name(SakuraTab *tab)
+{
+	GtkIconTheme *icon_theme;
+	const gchar *icon_name;
+
+	if (tab == NULL)
+		return "utilities-terminal";
+
+	if (tab->kind == SAKURA_TAB_CODEX) {
+		icon_theme = gtk_icon_theme_get_default();
+		if (icon_theme != NULL &&
+		    gtk_icon_theme_has_icon(icon_theme, CODEX_ICON_NAME))
+			return CODEX_ICON_NAME;
+		return "utilities-terminal";
+	}
+
+	if (tab->kind != SAKURA_TAB_TOOL)
+		return "utilities-terminal";
+
+	icon_name = sakura_tool_icon_name(tab->tool);
+	icon_theme = gtk_icon_theme_get_default();
+	if (icon_theme != NULL && gtk_icon_theme_has_icon(icon_theme, icon_name))
+		return icon_name;
+	return "utilities-terminal";
 }
 
 static void
@@ -123,6 +151,8 @@ sakura_select_tab (struct sakura_tab *sk_tab, gboolean focus)
 
 	sakura.active_tab = sk_tab;
 	sakura.active_page = sk_tab->page;
+	if (sk_tab->page != NULL)
+		sk_tab->page->active_tab = sk_tab;
 	current_page = gtk_notebook_get_current_page(GTK_NOTEBOOK(sakura.notebook));
 	if (current_page != page)
 		gtk_notebook_set_current_page(GTK_NOTEBOOK(sakura.notebook), page);
@@ -604,6 +634,26 @@ sakura_sidebar_tools_menu_new (struct sakura_sidebar_node *node)
 
 
 static GtkWidget *
+sakura_sidebar_codex_reasoning_menu_new(struct sakura_sidebar_node *node)
+{
+	static const gchar *efforts[] = { "low", "medium", "high", "xhigh" };
+	const gchar *labels[] = { _("Fast"), _("Balanced"), _("Deep"), _("Max") };
+	GtkWidget *menu = gtk_menu_new();
+	guint index;
+
+	for (index = 0; index < G_N_ELEMENTS(efforts); index++) {
+		GtkWidget *item = gtk_menu_item_new_with_label(labels[index]);
+		g_object_set_data(G_OBJECT(item), SAKURA_CODEX_REASONING_EFFORT_DATA_KEY,
+		                  (gpointer)efforts[index]);
+		g_signal_connect(item, "activate",
+		                 G_CALLBACK(sakura_new_codex_in_scope_cb), node);
+		gtk_menu_shell_append(GTK_MENU_SHELL(menu), item);
+	}
+	return menu;
+}
+
+
+static GtkWidget *
 sakura_sidebar_context_menu_new (struct sakura_sidebar_node *node)
 {
 	GtkWidget *menu, *item, *submenu;
@@ -624,6 +674,11 @@ sakura_sidebar_context_menu_new (struct sakura_sidebar_node *node)
 		item = gtk_menu_item_new_with_label(_("New Codex session"));
 		g_signal_connect(item, "activate",
 		                 G_CALLBACK(sakura_new_codex_in_scope_cb), context_node);
+		gtk_menu_shell_append(GTK_MENU_SHELL(menu), item);
+
+		item = gtk_menu_item_new_with_label(_("New Codex session with reasoning"));
+		gtk_menu_item_set_submenu(GTK_MENU_ITEM(item),
+		                          sakura_sidebar_codex_reasoning_menu_new(context_node));
 		gtk_menu_shell_append(GTK_MENU_SHELL(menu), item);
 
 		item = gtk_menu_item_new_with_label(_("Resume session..."));
@@ -677,6 +732,11 @@ sakura_sidebar_context_menu_new (struct sakura_sidebar_node *node)
 			? _("New Codex session") : _("New Codex session here"));
 		g_signal_connect(item, "activate", G_CALLBACK(sakura_new_codex_in_scope_cb),
 		                 context_node);
+		gtk_menu_shell_append(GTK_MENU_SHELL(menu), item);
+
+		item = gtk_menu_item_new_with_label(_("New Codex session with reasoning"));
+		gtk_menu_item_set_submenu(GTK_MENU_ITEM(item),
+		                          sakura_sidebar_codex_reasoning_menu_new(context_node));
 		gtk_menu_shell_append(GTK_MENU_SHELL(menu), item);
 
 		item = gtk_menu_item_new_with_label(_("New subgroup"));
@@ -1119,6 +1179,20 @@ sakura_workspace_tab_record(GHashTable *records, const gchar *terminal_id)
 }
 
 
+void
+sakura_workspace_finish_restore(void)
+{
+	SakuraTab *tab;
+
+	if (sakura_pending_restore_terminal_id == NULL)
+		return;
+	tab = sakura_find_pane_by_terminal_id(sakura_pending_restore_terminal_id);
+	if (tab != NULL)
+		sakura_select_tab(tab, FALSE);
+	g_clear_pointer(&sakura_pending_restore_terminal_id, g_free);
+}
+
+
 static SakuraSessionLayoutRecord *
 sakura_workspace_layout_leftmost(GHashTable *records,
                                  SakuraSessionLayoutRecord *record)
@@ -1175,6 +1249,7 @@ sakura_workspace_restore_layout_subtree(SakuraPage *page,
 	                            sakura_tool_from_id(second_tab_record->tool_id),
 	                            second_tab_record->codex_session_id,
 	                            second_tab_record->codex_session_name,
+	                            second_tab_record->codex_reasoning_effort,
 	                            second_tab_record->tool_target,
 	                            second_tab_record->terminal_id, &config);
 	second_tab = sakura_find_pane_by_terminal_id(second_tab_record->terminal_id);
@@ -1240,6 +1315,7 @@ sakura_workspace_restore_layout_snapshot(SakuraSessionSnapshot *snapshot)
 		                            sakura_tool_from_id(tab_record->tool_id),
 		                            tab_record->codex_session_id,
 		                            tab_record->codex_session_name,
+		                            tab_record->codex_reasoning_effort,
 		                            tab_record->tool_target,
 		                            tab_record->terminal_id, NULL);
 		tab = sakura_find_pane_by_terminal_id(tab_record->terminal_id);
@@ -1258,11 +1334,18 @@ sakura_workspace_restore_layout_snapshot(SakuraSessionSnapshot *snapshot)
 			sakura_workspace_restore_layout_subtree(tab->page, layout_records,
 			                                       tab_records, root, tab, NULL);
 	}
+	/* Restoration may insert pages relative to the current GTK page. Rebuild
+	 * the persistence caches from the notebook widgets before resolving the
+	 * saved selection. */
+	sakura_notebook_sync_page_order();
 
 	if (snapshot->selected_terminal_id != NULL) {
 		SakuraTab *selected = sakura_find_pane_by_terminal_id(snapshot->selected_terminal_id);
-		if (selected != NULL)
+		if (selected != NULL) {
 			sakura_select_tab(selected, FALSE);
+			g_free(sakura_pending_restore_terminal_id);
+			sakura_pending_restore_terminal_id = g_strdup(selected->terminal_id);
+		}
 	}
 	g_hash_table_destroy(layout_records);
 	g_hash_table_destroy(tab_records);
@@ -1317,6 +1400,7 @@ sakura_workspace_restore_snapshot (SakuraSessionSnapshot *snapshot)
 		                            title_set, tab_kind, tool_kind,
 		                            tab_kind == SAKURA_TAB_CODEX ? record->codex_session_id : NULL,
 		                            tab_kind == SAKURA_TAB_CODEX ? record->codex_session_name : NULL,
+		                            tab_kind == SAKURA_TAB_CODEX ? record->codex_reasoning_effort : NULL,
 		                            tab_kind == SAKURA_TAB_TOOL ? record->tool_target : NULL,
 		                            sakura_terminal_id_is_valid(record->terminal_id)
 		                            ? record->terminal_id : NULL);
@@ -1432,6 +1516,8 @@ sakura_workspace_snapshot_new(void)
 		                        ? g_strdup(tab->codex_session_id) : NULL;
 		record->codex_session_name = tab->kind == SAKURA_TAB_CODEX
 		                          ? g_strdup(tab->codex_session_name) : NULL;
+		record->codex_reasoning_effort = tab->kind == SAKURA_TAB_CODEX
+		                              ? g_strdup(tab->codex_reasoning_effort) : NULL;
 		record->title_set_by_user = tab->label_set_byuser;
 		record->title = tab->label_set_byuser ? g_strdup(title != NULL ? title : "") : NULL;
 		record->status = tab->status;
@@ -1771,6 +1857,7 @@ void
 sakura_switch_page_cb (GtkWidget *widget, GtkWidget *widget_page,
                        guint page_num, void *data)
 {
+	SakuraPage *page;
 	SakuraTab *tab;
 
 	(void)widget;
@@ -1781,9 +1868,11 @@ sakura_switch_page_cb (GtkWidget *widget, GtkWidget *widget_page,
 	tab = sakura_tab_at_page(page_num);
 	if (tab == NULL)
 		return;
+	page = tab->page;
+	if (page != NULL && page->active_tab != NULL)
+		tab = page->active_tab;
 	sakura.active_tab = tab;
-	sakura.active_page = sakura.pages != NULL && page_num < sakura.pages->len
-	                   ? g_ptr_array_index(sakura.pages, page_num) : tab->page;
+	sakura.active_page = page;
 	sakura_remember_current_scope_tab(tab);
 	sakura_tab_clear_attention(tab);
 	/* A notebook switch can be triggered while a sidebar click is still being
@@ -1805,6 +1894,7 @@ sakura_switch_page_cb (GtkWidget *widget, GtkWidget *widget_page,
 			sakura_set_window_title(title);
 	}
 	sakura_tab_bar_refresh();
+	sakura_session_mark_dirty();
 }
 
 
@@ -1924,7 +2014,7 @@ sakura_sidebar_set_node_row(SakuraSidebarNode *node, GtkTreeIter *iter)
 {
 	const gchar *icon_name;
 	const gchar *status_label, *status_color, *status_symbol, *attention_color = NULL;
-	GtkIconTheme *icon_theme;
+	const gchar *reasoning_effort = NULL;
 	gchar *escaped_title, *escaped_subtitle, *title_markup, *markup;
 	gchar *status_markup = NULL;
 	gchar *tooltip_markup = NULL;
@@ -1940,21 +2030,23 @@ sakura_sidebar_set_node_row(SakuraSidebarNode *node, GtkTreeIter *iter)
 	} else if (node->type == SAKURA_SIDEBAR_PAGE) {
 		icon_name = "tab-new";
 		status = sakura_sidebar_page_status(page);
-	} else if (node->tab != NULL && node->tab->kind == SAKURA_TAB_CODEX) {
-		/* Keep a stock-terminal fallback for uninstalled/source-tree runs. */
-		icon_theme = gtk_icon_theme_get_default();
-		if (icon_theme != NULL && gtk_icon_theme_has_icon(icon_theme, CODEX_ICON_NAME))
-			icon_name = CODEX_ICON_NAME;
-	} else if (node->tab != NULL && node->tab->kind == SAKURA_TAB_TOOL) {
-		icon_theme = gtk_icon_theme_get_default();
-		if (icon_theme != NULL &&
-		    gtk_icon_theme_has_icon(icon_theme, sakura_tool_icon_name(node->tab->tool)))
-			icon_name = sakura_tool_icon_name(node->tab->tool);
+		/* A single-pane page is represented by its page row, so preserve the
+		 * pane's semantic icon there. Split pages keep the page icon and expose
+		 * each pane as a child row below it. */
+		if (page != NULL && page->panes != NULL && page->panes->len <= 1)
+			icon_name = sakura_sidebar_tab_icon_name(
+				sakura_sidebar_page_active_tab(page));
+	} else {
+		icon_name = sakura_sidebar_tab_icon_name(node->tab);
 	}
 
 	escaped_title = g_markup_escape_text(node->title != NULL ? node->title : "", -1);
 	escaped_subtitle = g_markup_escape_text(node->subtitle != NULL ? node->subtitle : "", -1);
 	status_label = status != SAKURA_TAB_STATUS_NONE ? sakura_tab_status_label(status) : NULL;
+	if (node->tab != NULL && node->tab->kind == SAKURA_TAB_CODEX &&
+	    sakura_codex_reasoning_effort_is_valid(node->tab->codex_reasoning_effort))
+		reasoning_effort = sakura_codex_reasoning_effort_label(
+			node->tab->codex_reasoning_effort);
 	status_running = status == SAKURA_TAB_STATUS_RUNNING;
 	status_color = status != SAKURA_TAB_STATUS_NONE ? sakura_tab_status_color(status) : NULL;
 	status_symbol = status != SAKURA_TAB_STATUS_NONE ? sakura_tab_status_symbol(status) : NULL;
@@ -1987,9 +2079,17 @@ sakura_sidebar_set_node_row(SakuraSidebarNode *node, GtkTreeIter *iter)
 	{
 		const gchar *base_tooltip = node->tooltip != NULL ? node->tooltip : node->title;
 		base_tooltip = base_tooltip != NULL ? base_tooltip : "";
-		if (status_label != NULL)
+		if (status_label != NULL && reasoning_effort != NULL)
+			tooltip_markup = g_markup_printf_escaped("%s\n%s\n%s: %s",
+			                                        base_tooltip, status_label,
+			                                        _("Reasoning"), reasoning_effort);
+		else if (status_label != NULL)
 			tooltip_markup = g_markup_printf_escaped("%s\n%s",
 			                                        base_tooltip, status_label);
+		else if (reasoning_effort != NULL)
+			tooltip_markup = g_markup_printf_escaped("%s\n%s: %s",
+			                                        base_tooltip, _("Reasoning"),
+			                                        reasoning_effort);
 		else
 			tooltip_markup = g_markup_escape_text(base_tooltip, -1);
 	}

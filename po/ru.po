@@ -2,7 +2,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: sakura\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-07-15 10:59+0100\n"
+"POT-Creation-Date: 2026-07-15 16:22+0100\n"
 "PO-Revision-Date: 2018-04-29 13:18+0000\n"
 "Last-Translator: ManDrive <roman_romul@mail.ru>\n"
 "Language-Team: Evgenij Vdovin <evdovin@pochta.ru>\n"
@@ -28,6 +28,24 @@ msgid "Git Cola"
 msgstr ""
 
 msgid "Tool"
+msgstr ""
+
+msgid "Minimal"
+msgstr ""
+
+msgid "Fast"
+msgstr ""
+
+msgid "Balanced"
+msgstr ""
+
+msgid "Deep"
+msgstr ""
+
+msgid "Max"
+msgstr ""
+
+msgid "Default"
 msgstr ""
 
 msgid "Could not determine the current directory."
@@ -257,6 +275,10 @@ msgstr ""
 msgid "Error"
 msgstr ""
 
+#, fuzzy
+msgid "Terminal"
+msgstr "Терминал %d"
+
 #, c-format
 msgid "Terminal %d"
 msgstr "Терминал %d"
@@ -290,10 +312,6 @@ msgid "%s (%u)"
 msgstr ""
 
 #, fuzzy
-msgid "Terminal"
-msgstr "Терминал %d"
-
-#, fuzzy
 msgid "Copy pull request URL"
 msgstr "Полноэкранный режим"
 
@@ -315,6 +333,10 @@ msgstr "Новая вкладка"
 msgid "New Codex session"
 msgstr ""
 
+#, fuzzy
+msgid "New Codex session with reasoning"
+msgstr "Новая вкладка"
+
 msgid "Resume session..."
 msgstr ""
 
@@ -324,7 +346,7 @@ msgstr ""
 msgid "Tools"
 msgstr ""
 
-msgid "Move to group"
+msgid "Move page to group"
 msgstr ""
 
 msgid "Rename Codex session..."
@@ -367,6 +389,13 @@ msgstr ""
 
 msgid "No terminals in this group"
 msgstr ""
+
+msgid "Reasoning"
+msgstr ""
+
+#, fuzzy, c-format
+msgid "%s (%u panes)"
+msgstr "Закрыть вкладку"
 
 #, c-format
 msgid "Workspace (%u need attention)"
@@ -500,6 +529,56 @@ msgstr "Копировать ссылку"
 msgid "New tab"
 msgstr "Новая вкладка"
 
+msgid "Pane"
+msgstr ""
+
+msgid "Split Right"
+msgstr ""
+
+msgid "Split Down"
+msgstr ""
+
+msgid "Focus Left"
+msgstr ""
+
+msgid "Focus Right"
+msgstr ""
+
+msgid "Focus Up"
+msgstr ""
+
+msgid "Focus Down"
+msgstr ""
+
+#, fuzzy
+msgid "Close pane"
+msgstr "Закрыть вкладку"
+
+msgid "Equalize split"
+msgstr ""
+
+msgid "Zoom pane"
+msgstr ""
+
+msgid "Layout preset"
+msgstr ""
+
+msgid "Two columns"
+msgstr ""
+
+msgid "Two rows"
+msgstr ""
+
+msgid "2 × 2 grid"
+msgstr ""
+
+msgid "Main + stack"
+msgstr ""
+
+#, fuzzy
+msgid "New session with reasoning"
+msgstr "Новая вкладка"
+
 msgid "Attach current tab..."
 msgstr ""
 
@@ -615,10 +694,6 @@ msgstr "Версия sakura %s\n"
 #, fuzzy
 #~ msgid "New terminal in group"
 #~ msgstr "Новая вкладка"
-
-#, fuzzy, c-format
-#~ msgid "%s (%u terminals)"
-#~ msgstr "Закрыть вкладку"
 
 #, fuzzy
 #~ msgid "Terminals"

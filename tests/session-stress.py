@@ -92,6 +92,94 @@ def write_fixture(config_file, session_file):
     session_file.write_text("\n".join(lines), encoding="utf-8")
 
 
+def write_pane_switch_fixture(config_file, session_file):
+    config_file.write_text(
+        "[sakura]\nless_questions=true\ndont_save=false\nsidebar_visible=true\n",
+        encoding="utf-8",
+    )
+    session_file.write_text(
+        """[Session]
+version=4
+group_count=0
+terminal_count=3
+page_count=2
+layout_count=4
+selected_terminal=2
+selected_terminal_id=switch-terminal-c
+selected_page_id=switch-page-2
+active_group_id=root
+
+[Page0]
+id=switch-page-1
+parent=root
+title=Split page
+title_set_by_user=true
+root_layout=switch-root
+active_terminal_id=switch-terminal-b
+
+[Page1]
+id=switch-page-2
+parent=root
+title=Other page
+title_set_by_user=true
+root_layout=switch-leaf-c
+active_terminal_id=switch-terminal-c
+
+[Layout0]
+id=switch-root
+page=switch-page-1
+type=split
+direction=right
+ratio=0.5
+first=switch-leaf-a
+second=switch-leaf-b
+
+[Layout1]
+id=switch-leaf-a
+page=switch-page-1
+type=leaf
+terminal_id=switch-terminal-a
+
+[Layout2]
+id=switch-leaf-b
+page=switch-page-1
+type=leaf
+terminal_id=switch-terminal-b
+
+[Layout3]
+id=switch-leaf-c
+page=switch-page-2
+type=leaf
+terminal_id=switch-terminal-c
+
+[Terminal0]
+parent=root
+cwd=/tmp
+terminal_id=switch-terminal-a
+kind=shell
+title_set_by_user=true
+title=Pane A
+
+[Terminal1]
+parent=root
+cwd=/tmp
+terminal_id=switch-terminal-b
+kind=shell
+title_set_by_user=true
+title=Pane B
+
+[Terminal2]
+parent=root
+cwd=/tmp
+terminal_id=switch-terminal-c
+kind=shell
+title_set_by_user=true
+title=Page C
+""",
+        encoding="utf-8",
+    )
+
+
 def read_session(session_file):
     parser = configparser.ConfigParser(interpolation=None)
     parser.read(session_file, encoding="utf-8")
@@ -356,6 +444,10 @@ def drag_terminal_into_group(window, rows, source_row, target_row, env, row_top,
 
 def close_window(process, window, env):
     if process.poll() is None:
+        # Allow queued GTK focus/selection idles to finish before asking X11
+        # to close the window. Closing while one of those callbacks is still
+        # dispatching can produce a nondeterministic BadWindow in Xvfb.
+        time.sleep(0.25)
         run(["xdotool", "windowclose", window], env, timeout=5, check=False)
         try:
             process.wait(timeout=12)
@@ -399,6 +491,154 @@ def run_failed_restore_case(binary, config_file, session_file, env, log_file):
     close_window(process, window, env)
     if session_file.read_text(encoding="utf-8") != invalid_session:
         raise AssertionError("failed restore overwrote the original session file")
+
+
+def run_pane_switch_case(binary, config_file, session_file, env, log_file):
+    """Verify that real terminal key events change pages in both directions."""
+    write_fixture(config_file, session_file)
+    process, window = launch_sakura(binary, config_file, env, log_file)
+    try:
+        wait_for_session(session_file,
+                         lambda value: len(value[2]) == len(TERMINAL_PARENTS))
+
+        run(["xdotool", "windowfocus", "--sync", window], env)
+        window_x, window_y, _, height = window_geometry(window, env)
+        run(["xdotool", "mousemove", "--sync", str(window_x + 500),
+             str(window_y + height // 2), "click", "1"], env)
+
+        original_title = TERMINAL_TITLES[SELECTED_TERMINAL_INDEX]
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline:
+            title = run(["xdotool", "getwindowname", window], env).stdout.strip()
+            if title == original_title:
+                break
+            time.sleep(0.1)
+        if title != original_title:
+            raise AssertionError(f"restored terminal title is {title}, expected {original_title}")
+
+        run(["xdotool", "key", "alt+Right"], env)
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline:
+            title = run(["xdotool", "getwindowname", window], env).stdout.strip()
+            if title != original_title:
+                break
+            time.sleep(0.1)
+        if title == original_title:
+            raise AssertionError("Alt+Right did not change the active terminal")
+
+        process.terminate()
+        process.wait(timeout=5)
+    except Exception:
+        if process.poll() is None:
+            process.kill()
+            process.wait(timeout=3)
+        raise
+
+
+def run_visible_terminal_case(binary, config_file, session_file, env, log_file):
+    """Verify sidebar selection focuses the VTE belonging to the selected page."""
+    write_fixture(config_file, session_file)
+    with config_file.open("a", encoding="utf-8") as handle:
+        handle.write("new_tab_after_current=true\n")
+    process, window = launch_sakura(binary, config_file, env, log_file)
+    try:
+        groups, terminals, _ = wait_for_session(
+            session_file,
+            lambda value: len(value[2]) == len(TERMINAL_PARENTS),
+        )
+        rows = visible_rows(groups, terminals)
+        window_x, window_y, _, _ = window_geometry(window, env)
+        run(["xdotool", "windowfocus", "--sync", window], env)
+
+        expected_restored_title = TERMINAL_TITLES[SELECTED_TERMINAL_INDEX]
+        deadline = time.monotonic() + 5
+        title = ""
+        while time.monotonic() < deadline:
+            title = run(["xdotool", "getwindowname", window], env).stdout.strip()
+            if title == expected_restored_title:
+                break
+            time.sleep(0.1)
+        if title != expected_restored_title:
+            raise AssertionError(
+                f"restored selection is {expected_restored_title}, but GTK displayed {title}"
+            )
+
+        # Select the ninth restored page, a shell whose saved cwd is /tmp,
+        # then execute a command through the focused VTE. Logical selection
+        # and window titles can change even when GtkNotebook retains an
+        # invisible page; successful terminal input proves the selected page
+        # is actually rendered and mapped.
+        marker_file = config_file.parent / "rendered-terminal-cwd"
+        marker_file.unlink(missing_ok=True)
+        run(["xdotool", "mousemove", "--sync", str(window_x + 500),
+             str(window_y + 400), "click", "1"], env)
+        run(["xdotool", "key", "alt+9"], env)
+        time.sleep(0.3)
+        run(["xdotool", "type", "--delay", "1",
+             f"pwd > {marker_file}"], env)
+        run(["xdotool", "key", "Return"], env)
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline and not marker_file.exists():
+            time.sleep(0.1)
+        if not marker_file.exists():
+            raise AssertionError("selected notebook page was not mapped to the input VTE")
+        rendered_cwd = os.path.realpath(marker_file.read_text(encoding="utf-8").strip())
+        expected_cwd = os.path.realpath(TERMINAL_CWDS[8])
+        if rendered_cwd != expected_cwd:
+            raise AssertionError(
+                f"selected page rendered cwd {rendered_cwd}, expected {expected_cwd}"
+            )
+
+        # Exercise the actual split shortcut on the rendered shell. A missing
+        # leaf-to-widget link used to make every first split fail with
+        # "Cannot split the current terminal pane".
+        before_count = len(read_session(session_file)[2])
+        run(["xdotool", "key", "ctrl+shift+e"], env)
+        deadline = time.monotonic() + 5
+        after_count = before_count
+        while time.monotonic() < deadline:
+            after_count = len(read_session(session_file)[2])
+            if after_count == before_count + 1:
+                break
+            time.sleep(0.1)
+        if after_count != before_count + 1:
+            raise AssertionError("splitting the rendered terminal did not create a pane")
+
+        # Keep the targets near the top of the tree; these are the same rows
+        # whose pixel geometry is exercised by the drag portion of this test.
+        for terminal_index in (1,):
+            row_index = rows.index(("page", terminal_index))
+            row_y = 73
+            for row in rows[:row_index]:
+                row_y += 25 if row[0] == "group" else 41
+            row_y -= 21
+
+            run(["xdotool", "mousemove", "--sync", str(window_x + 80),
+                 str(window_y + 83)], env)
+            run(["xdotool", "click", "--repeat", "30", "--delay", "10", "4"], env)
+            run(["xdotool", "mousemove", "--sync", str(window_x + 100),
+                 str(window_y + row_y), "click", "1"], env)
+
+            deadline = time.monotonic() + 5
+            expected_title = TERMINAL_TITLES[terminal_index]
+            title = ""
+            while time.monotonic() < deadline:
+                title = run(["xdotool", "getwindowname", window], env).stdout.strip()
+                if title == expected_title:
+                    break
+                time.sleep(0.1)
+            if title != expected_title:
+                raise AssertionError(
+                    f"sidebar selected {expected_title}, but GTK displayed {title}"
+                )
+
+        process.terminate()
+        process.wait(timeout=5)
+    except Exception:
+        if process.poll() is None:
+            process.kill()
+            process.wait(timeout=3)
+        raise
 
 
 def main():
@@ -445,6 +685,11 @@ def main():
         env = os.environ.copy()
         env["DISPLAY"] = display
         env["GDK_BACKEND"] = "x11"
+        # GTK's XI2 backend can query the pointer while xdotool is closing the
+        # Xvfb window, producing a fatal BadWindow during test cleanup. Use
+        # core device events for deterministic Xvfb shutdown; real desktop
+        # launches retain the normal XI2 backend.
+        env["GDK_CORE_DEVICE_EVENTS"] = "1"
         env["SHELL"] = "/bin/sh"
         fake_bin = root / "bin"
         fake_bin.mkdir()
@@ -544,6 +789,10 @@ def main():
                 print(f"iteration {iteration + 1}/{args.iterations}: "
                       f"{len(restored[0])} groups, {len(restored[1])} terminals")
 
+            run_pane_switch_case(binary, config_file, session_file, env, log_file)
+            print("terminal key switching: passed")
+            run_visible_terminal_case(binary, config_file, session_file, env, log_file)
+            print("restored sidebar-to-VTE mapping: passed")
             run_failed_restore_case(binary, config_file, session_file, env, log_file)
             print("failed-restore preservation: passed")
         except Exception:

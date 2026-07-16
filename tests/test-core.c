@@ -46,6 +46,22 @@ test_tool_scope(void)
 
 
 static void
+test_codex_reasoning_efforts(void)
+{
+	static const gchar *valid[] = { "minimal", "low", "medium", "high", "xhigh" };
+	guint index;
+
+	for (index = 0; index < G_N_ELEMENTS(valid); index++) {
+		g_assert_true(sakura_codex_reasoning_effort_is_valid(valid[index]));
+		g_assert_nonnull(sakura_codex_reasoning_effort_label(valid[index]));
+	}
+	g_assert_false(sakura_codex_reasoning_effort_is_valid(NULL));
+	g_assert_false(sakura_codex_reasoning_effort_is_valid("turbo"));
+	g_assert_nonnull(sakura_codex_reasoning_effort_label(NULL));
+}
+
+
+static void
 test_session_snapshot_round_trip(void)
 {
 	SakuraSessionSnapshot *source = sakura_session_snapshot_new();
@@ -65,6 +81,9 @@ test_session_snapshot_round_trip(void)
 	tab->title = g_strdup("Working");
 	tab->terminal_id = g_strdup("terminal-1");
 	tab->tool_id = g_strdup("gitui");
+	tab->codex_session_id = g_strdup("session-1");
+	tab->codex_session_name = g_strdup("Planning");
+	tab->codex_reasoning_effort = g_strdup("high");
 	tab->kind = SAKURA_TAB_TOOL;
 	tab->title_set_by_user = TRUE;
 	tab->status = SAKURA_TAB_STATUS_READY;
@@ -95,6 +114,9 @@ test_session_snapshot_round_trip(void)
 		g_assert_cmpstr(loaded_group->title, ==, "Alpha");
 		g_assert_cmpstr(loaded_tab->cwd, ==, "/tmp");
 		g_assert_cmpstr(loaded_tab->tool_id, ==, "gitui");
+		g_assert_cmpstr(loaded_tab->codex_session_id, ==, "session-1");
+		g_assert_cmpstr(loaded_tab->codex_session_name, ==, "Planning");
+		g_assert_cmpstr(loaded_tab->codex_reasoning_effort, ==, "high");
 		g_assert_true(loaded_tab->title_set_by_user);
 		g_assert_cmpint(loaded_tab->status, ==, SAKURA_TAB_STATUS_READY);
 		g_assert_true(loaded_tab->attention);
@@ -324,6 +346,7 @@ main(int argc, char **argv)
 	g_test_add_func("/tools/ids/round-trip", test_tool_ids_round_trip);
 	g_test_add_func("/tools/ids/unknown", test_tool_ids_reject_unknown_values);
 	g_test_add_func("/tools/scope", test_tool_scope);
+	g_test_add_func("/codex/reasoning-efforts", test_codex_reasoning_efforts);
 	g_test_add_func("/session/snapshot/round-trip", test_session_snapshot_round_trip);
 	g_test_add_func("/session/snapshot/reject-cycle", test_session_snapshot_rejects_group_cycle);
 	g_test_add_func("/session/snapshot/layout-round-trip", test_session_layout_round_trip);

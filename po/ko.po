@@ -7,7 +7,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: sakura\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-07-15 10:59+0100\n"
+"POT-Creation-Date: 2026-07-15 16:22+0100\n"
 "PO-Revision-Date: 2019-09-30 05:48+0000\n"
 "Last-Translator: Minho Park <parkmino@gmail.com>\n"
 "Language-Team: Korean <ko@li.org>\n"
@@ -33,6 +33,24 @@ msgid "Git Cola"
 msgstr ""
 
 msgid "Tool"
+msgstr ""
+
+msgid "Minimal"
+msgstr ""
+
+msgid "Fast"
+msgstr ""
+
+msgid "Balanced"
+msgstr ""
+
+msgid "Deep"
+msgstr ""
+
+msgid "Max"
+msgstr ""
+
+msgid "Default"
 msgstr ""
 
 msgid "Could not determine the current directory."
@@ -262,6 +280,10 @@ msgstr ""
 msgid "Error"
 msgstr ""
 
+#, fuzzy
+msgid "Terminal"
+msgstr "터미널 %d"
+
 #, c-format
 msgid "Terminal %d"
 msgstr "터미널 %d"
@@ -295,10 +317,6 @@ msgid "%s (%u)"
 msgstr ""
 
 #, fuzzy
-msgid "Terminal"
-msgstr "터미널 %d"
-
-#, fuzzy
 msgid "Copy pull request URL"
 msgstr "전체 화면"
 
@@ -320,6 +338,10 @@ msgstr "새 탭"
 msgid "New Codex session"
 msgstr ""
 
+#, fuzzy
+msgid "New Codex session with reasoning"
+msgstr "새 탭"
+
 msgid "Resume session..."
 msgstr ""
 
@@ -329,7 +351,7 @@ msgstr ""
 msgid "Tools"
 msgstr ""
 
-msgid "Move to group"
+msgid "Move page to group"
 msgstr ""
 
 msgid "Rename Codex session..."
@@ -372,6 +394,13 @@ msgstr ""
 
 msgid "No terminals in this group"
 msgstr ""
+
+msgid "Reasoning"
+msgstr ""
+
+#, fuzzy, c-format
+msgid "%s (%u panes)"
+msgstr "탭 닫기"
 
 #, c-format
 msgid "Workspace (%u need attention)"
@@ -505,6 +534,56 @@ msgstr "링크 복사"
 msgid "New tab"
 msgstr "새 탭"
 
+msgid "Pane"
+msgstr ""
+
+msgid "Split Right"
+msgstr ""
+
+msgid "Split Down"
+msgstr ""
+
+msgid "Focus Left"
+msgstr ""
+
+msgid "Focus Right"
+msgstr ""
+
+msgid "Focus Up"
+msgstr ""
+
+msgid "Focus Down"
+msgstr ""
+
+#, fuzzy
+msgid "Close pane"
+msgstr "탭 닫기"
+
+msgid "Equalize split"
+msgstr ""
+
+msgid "Zoom pane"
+msgstr ""
+
+msgid "Layout preset"
+msgstr ""
+
+msgid "Two columns"
+msgstr ""
+
+msgid "Two rows"
+msgstr ""
+
+msgid "2 × 2 grid"
+msgstr ""
+
+msgid "Main + stack"
+msgstr ""
+
+#, fuzzy
+msgid "New session with reasoning"
+msgstr "새 탭"
+
 msgid "Attach current tab..."
 msgstr ""
 
@@ -620,10 +699,6 @@ msgstr "sakura 버전은 %s 입니다\n"
 #, fuzzy
 #~ msgid "New terminal in group"
 #~ msgstr "새 탭"
-
-#, fuzzy, c-format
-#~ msgid "%s (%u terminals)"
-#~ msgstr "탭 닫기"
 
 #, fuzzy
 #~ msgid "Terminals"

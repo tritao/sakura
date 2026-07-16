@@ -8,7 +8,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: Sakura 2.3.4\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-07-15 10:59+0100\n"
+"POT-Creation-Date: 2026-07-15 16:22+0100\n"
 "PO-Revision-Date: 2020-05-06 05:00+0000\n"
 "Last-Translator: Milo Ivir <Unknown>\n"
 "Language-Team: Deutsch <de@li.org>\n"
@@ -34,6 +34,24 @@ msgid "Git Cola"
 msgstr ""
 
 msgid "Tool"
+msgstr ""
+
+msgid "Minimal"
+msgstr ""
+
+msgid "Fast"
+msgstr ""
+
+msgid "Balanced"
+msgstr ""
+
+msgid "Deep"
+msgstr ""
+
+msgid "Max"
+msgstr ""
+
+msgid "Default"
 msgstr ""
 
 msgid "Could not determine the current directory."
@@ -263,6 +281,10 @@ msgstr ""
 msgid "Error"
 msgstr ""
 
+#, fuzzy
+msgid "Terminal"
+msgstr "Terminal %d"
+
 #, c-format
 msgid "Terminal %d"
 msgstr "Terminal %d"
@@ -296,10 +318,6 @@ msgid "%s (%u)"
 msgstr ""
 
 #, fuzzy
-msgid "Terminal"
-msgstr "Terminal %d"
-
-#, fuzzy
 msgid "Copy pull request URL"
 msgstr "Vollbild"
 
@@ -321,6 +339,10 @@ msgstr "Neuer Reiter"
 msgid "New Codex session"
 msgstr ""
 
+#, fuzzy
+msgid "New Codex session with reasoning"
+msgstr "Neuer Reiter"
+
 msgid "Resume session..."
 msgstr ""
 
@@ -330,7 +352,7 @@ msgstr ""
 msgid "Tools"
 msgstr ""
 
-msgid "Move to group"
+msgid "Move page to group"
 msgstr ""
 
 msgid "Rename Codex session..."
@@ -373,6 +395,13 @@ msgstr ""
 
 msgid "No terminals in this group"
 msgstr ""
+
+msgid "Reasoning"
+msgstr ""
+
+#, fuzzy, c-format
+msgid "%s (%u panes)"
+msgstr "Reiter schließen"
 
 #, c-format
 msgid "Workspace (%u need attention)"
@@ -506,6 +535,56 @@ msgstr "Verweis kopieren"
 msgid "New tab"
 msgstr "Neuer Reiter"
 
+msgid "Pane"
+msgstr ""
+
+msgid "Split Right"
+msgstr ""
+
+msgid "Split Down"
+msgstr ""
+
+msgid "Focus Left"
+msgstr ""
+
+msgid "Focus Right"
+msgstr ""
+
+msgid "Focus Up"
+msgstr ""
+
+msgid "Focus Down"
+msgstr ""
+
+#, fuzzy
+msgid "Close pane"
+msgstr "Reiter schließen"
+
+msgid "Equalize split"
+msgstr ""
+
+msgid "Zoom pane"
+msgstr ""
+
+msgid "Layout preset"
+msgstr ""
+
+msgid "Two columns"
+msgstr ""
+
+msgid "Two rows"
+msgstr ""
+
+msgid "2 × 2 grid"
+msgstr ""
+
+msgid "Main + stack"
+msgstr ""
+
+#, fuzzy
+msgid "New session with reasoning"
+msgstr "Neuer Reiter"
+
 msgid "Attach current tab..."
 msgstr ""
 
@@ -622,10 +701,6 @@ msgstr "Sakura-Version ist %s\n"
 #, fuzzy
 #~ msgid "New terminal in group"
 #~ msgstr "Neuer Reiter"
-
-#, fuzzy, c-format
-#~ msgid "%s (%u terminals)"
-#~ msgstr "Reiter schließen"
 
 #, fuzzy
 #~ msgid "Terminals"

@@ -437,7 +437,7 @@ void            sakura_eof_cb (GtkWidget *, void *);
 static gboolean sakura_delete_event_cb (GtkWidget *, void *);
 static void     sakura_destroy_window_cb (GtkWidget *, void *);
 /* Main window callbacks */
-static gboolean sakura_key_press_cb (GtkWidget *, GdkEventKey *, gpointer);
+gboolean        sakura_key_press_cb (GtkWidget *, GdkEventKey *, gpointer);
 static gboolean sakura_resized_window_cb (GtkWidget *, GdkEventConfigure *, void *);
 static gboolean sakura_focus_in_cb (GtkWidget *, GdkEvent *, void *);
 static gboolean sakura_focus_out_cb (GtkWidget *, GdkEvent *, void *);
@@ -515,7 +515,7 @@ static void     sakura_add_tab ();
 void            sakura_add_tab_with_options (const gchar *, struct sakura_sidebar_node *,
                                              const gchar *, gboolean, SakuraTabKind,
                                              SakuraToolKind, const gchar *, const gchar *,
-                                             const gchar *, const gchar *);
+                                             const gchar *, const gchar *, const gchar *);
 void            sakura_close_tab (gint); /* Save config, del tab and destroy sakura */
 void            sakura_destroy ();
 void            sakura_set_font ();
@@ -581,7 +581,7 @@ static GOptionEntry entries[] = {
 /* Main window callbacks */
 /*************************/
 
-static gboolean
+gboolean
 sakura_key_press_cb (GtkWidget *widget, GdkEventKey *event, gpointer user_data)
 {
 	gint page;
@@ -1518,7 +1518,7 @@ sakura_split_current_cb (GtkWidget *widget, void *data)
 	sakura_session_accept_changes();
 	sakura_tab_add_with_options(NULL, NULL, NULL, FALSE,
 	                            SAKURA_TAB_SHELL, SAKURA_TOOL_NONE,
-	                            NULL, NULL, NULL, NULL, &config);
+	                            NULL, NULL, NULL, NULL, NULL, &config);
 }
 
 
@@ -1540,7 +1540,7 @@ sakura_layout_preset_add_pane(SakuraPage *page, SakuraLayoutNode *target,
 	config.split_direction = direction;
 	sakura_tab_add_with_options(NULL, NULL, NULL, FALSE,
 	                            SAKURA_TAB_SHELL, SAKURA_TOOL_NONE,
-	                            NULL, NULL, NULL, NULL, &config);
+	                            NULL, NULL, NULL, NULL, NULL, &config);
 	if (page->panes->len != old_len + 1)
 		return FALSE;
 	new_tab = g_ptr_array_index(page->panes, old_len);
@@ -2738,6 +2738,9 @@ sakura_init()
 	}
 
 	gtk_container_add(GTK_CONTAINER(sakura.main_window), sakura.sidebar_paned);
+	/* Restored pages are built before the workspace is mounted. Apply the
+	 * saved visible selection now that GTK can honor set_current_page(). */
+	sakura_workspace_finish_restore();
 
 	sakura_init_popup();
 
@@ -2789,6 +2792,25 @@ sakura_codex_tracking_menu_show_cb (GtkWidget *widget, void *data)
 }
 
 
+static GtkWidget *
+sakura_codex_reasoning_menu_new(void)
+{
+	static const gchar *efforts[] = { "low", "medium", "high", "xhigh" };
+	const gchar *labels[] = { _("Fast"), _("Balanced"), _("Deep"), _("Max") };
+	GtkWidget *menu = gtk_menu_new();
+	guint index;
+
+	for (index = 0; index < G_N_ELEMENTS(efforts); index++) {
+		GtkWidget *item = gtk_menu_item_new_with_label(labels[index]);
+		g_object_set_data(G_OBJECT(item), SAKURA_CODEX_REASONING_EFFORT_DATA_KEY,
+		                  (gpointer)efforts[index]);
+		g_signal_connect(item, "activate", G_CALLBACK(sakura_new_codex_cb), NULL);
+		gtk_menu_shell_append(GTK_MENU_SHELL(menu), item);
+	}
+	return menu;
+}
+
+
 static void
 sakura_init_popup()
 {
@@ -2810,7 +2832,8 @@ sakura_init_popup()
 	GtkWidget *pane_split_right, *pane_split_down, *pane_focus_left,
 	          *pane_focus_right, *pane_focus_up, *pane_focus_down,
 	          *pane_close, *pane_equalize, *pane_zoom;
-	GtkWidget *codex_menu, *item_codex, *item_new_codex, *item_resume_codex,
+	GtkWidget *codex_menu, *item_codex, *item_new_codex, *item_new_codex_reasoning,
+	          *item_resume_codex,
 	          *item_attach_codex, *item_rename_codex, *item_refresh_codex_name, *item_codex_status,
 	          *item_install_codex;
 
@@ -2841,6 +2864,8 @@ sakura_init_popup()
 	item_open_pr = gtk_menu_item_new_with_label(_("Open pull request..."));
 	item_codex = gtk_menu_item_new_with_label(_("Codex"));
 	item_new_codex = gtk_menu_item_new_with_label(_("New Codex session"));
+	item_new_codex_reasoning = gtk_menu_item_new_with_label(
+		_("New session with reasoning"));
 	item_resume_codex = gtk_menu_item_new_with_label(_("Resume session..."));
 	item_attach_codex = gtk_menu_item_new_with_label(_("Attach current tab..."));
 	item_rename_codex = gtk_menu_item_new_with_label(_("Rename session..."));
@@ -3007,6 +3032,9 @@ sakura_init_popup()
 	gtk_menu_item_set_submenu(GTK_MENU_ITEM(item_tools), tools_menu);
 	gtk_menu_item_set_submenu(GTK_MENU_ITEM(item_open_here), sakura_open_here_menu_new());
 	gtk_menu_shell_append(GTK_MENU_SHELL(codex_menu), item_new_codex);
+	gtk_menu_item_set_submenu(GTK_MENU_ITEM(item_new_codex_reasoning),
+	                          sakura_codex_reasoning_menu_new());
+	gtk_menu_shell_append(GTK_MENU_SHELL(codex_menu), item_new_codex_reasoning);
 	gtk_menu_shell_append(GTK_MENU_SHELL(codex_menu), item_resume_codex);
 	gtk_menu_shell_append(GTK_MENU_SHELL(codex_menu), item_attach_codex);
 	gtk_menu_shell_append(GTK_MENU_SHELL(codex_menu), item_rename_codex);
@@ -3283,9 +3311,7 @@ sakura_update_geometry_hints(void)
 	if (sakura.main_window == NULL || sakura.notebook == NULL)
 		return;
 	page_index = gtk_notebook_get_current_page(GTK_NOTEBOOK(sakura.notebook));
-	page = sakura.pages != NULL && page_index >= 0 &&
-	       (guint)page_index < sakura.pages->len
-	     ? g_ptr_array_index(sakura.pages, page_index) : NULL;
+	page = sakura_page_at_page(page_index);
 	tab = page != NULL ? page->active_tab : NULL;
 	if (tab == NULL && page_index >= 0)
 		tab = sakura_tab_at_page(page_index);
@@ -3340,9 +3366,7 @@ sakura_set_size (void)
 	gint page;
 
 	page = gtk_notebook_get_current_page(GTK_NOTEBOOK(sakura.notebook));
-	current_page = sakura.pages != NULL && page >= 0 &&
-	               (guint)page < sakura.pages->len
-	             ? g_ptr_array_index(sakura.pages, page) : NULL;
+	current_page = sakura_page_at_page(page);
 	sk_tab = current_page != NULL ? current_page->active_tab : NULL;
 	if (sk_tab == NULL && page >= 0)
 		sk_tab = sakura_tab_at_page(page);
@@ -3478,7 +3502,7 @@ static void
 sakura_add_tab (void)
 {
 	sakura_add_tab_with_options(NULL, NULL, NULL, FALSE, SAKURA_TAB_SHELL,
-                            SAKURA_TOOL_NONE, NULL, NULL, NULL, NULL);
+                            SAKURA_TOOL_NONE, NULL, NULL, NULL, NULL, NULL);
 }
 
 
@@ -3493,6 +3517,7 @@ sakura_add_tab_with_options (const gchar *restore_cwd,
                               SakuraToolKind restore_tool,
                               const gchar *restore_codex_session_id,
                               const gchar *restore_codex_session_name,
+                              const gchar *restore_codex_reasoning_effort,
                               const gchar *restore_tool_target,
                               const gchar *restore_terminal_id)
 {
@@ -3511,6 +3536,7 @@ sakura_add_tab_with_options (const gchar *restore_cwd,
 	sakura_tab_add_with_options(restore_cwd, restore_parent, restore_title,
 	                            restore_title_set, restore_kind, restore_tool,
 	                            restore_codex_session_id, restore_codex_session_name,
+	                            restore_codex_reasoning_effort,
 	                            restore_tool_target, restore_terminal_id,
 	                            &launch_config);
 }
@@ -3875,7 +3901,7 @@ main(int argc, char **argv)
 	if (option_codex_session != NULL) {
 		sakura_add_tab_with_options(NULL, NULL, NULL, FALSE,
 		                            SAKURA_TAB_CODEX, SAKURA_TOOL_NONE,
-		                            option_codex_session, NULL, NULL, NULL);
+		                            option_codex_session, NULL, NULL, NULL, NULL);
 	} else if (option_new_session || option_new_window || option_ntabs > 1) {
 		for (i=0; i<option_ntabs; i++)
 			sakura_add_tab();

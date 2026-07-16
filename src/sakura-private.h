@@ -13,6 +13,7 @@
 
 #define PALETTE_SIZE 16
 #define NUM_COLORSETS 6
+#define SAKURA_CODEX_REASONING_EFFORT_DATA_KEY "sakura-codex-reasoning-effort"
 
 typedef struct sakura_app SakuraApp;
 typedef struct sakura_page SakuraPage;
@@ -381,6 +382,7 @@ struct sakura_tab {
 	gchar *tool_target;
 	gchar *codex_session_id;
 	gchar *codex_session_name;
+	gchar *codex_reasoning_effort;
 	gchar *codex_tracking_token;
 	gboolean codex_name_query_active;
 	guint codex_name_retry_source_id;
@@ -465,6 +467,8 @@ gboolean sakura_tab_spawn_command(SakuraTab *tab, const gchar *cwd,
 void sakura_set_text_selection_mode(SakuraTab *tab, gboolean enabled);
 gboolean sakura_tab_keypress_cb(GtkWidget *widget, GdkEventKey *event,
                                 gpointer data);
+gboolean sakura_key_press_cb(GtkWidget *widget, GdkEventKey *event,
+                             gpointer user_data);
 void sakura_tab_title_changed_cb(GtkWidget *widget, void *data);
 gboolean sakura_pane_focus_in_cb(GtkWidget *widget, GdkEventFocus *event,
                                  gpointer data);
@@ -511,7 +515,9 @@ void sakura_tab_clear_attention(SakuraTab *tab);
 void sakura_tab_restore_state(SakuraTab *tab, SakuraTabStatus status,
                               gboolean attention, gint64 attention_timestamp);
 SakuraTab *sakura_tab_at_page(gint page);
+SakuraPage *sakura_page_at_page(gint page);
 gint sakura_page_for_tab(SakuraTab *tab);
+gboolean sakura_notebook_sync_page_order(void);
 gint sakura_find_tab_by_terminal_id(const gchar *terminal_id);
 void sakura_notebook_page_reordered_cb(GtkNotebook *notebook, GtkWidget *child,
                                        guint page_num, void *data);
@@ -555,6 +561,7 @@ void sakura_sidebar_collect_groups(GtkTreeModel *model, GtkTreeIter *parent,
 void sakura_sidebar_sync_parents(void);
 SakuraSessionSnapshot *sakura_workspace_snapshot_new(void);
 gboolean sakura_workspace_restore_snapshot(SakuraSessionSnapshot *snapshot);
+void sakura_workspace_finish_restore(void);
 gboolean sakura_cwd_tracking_poll_cb(gpointer data);
 void sakura_set_name_dialog_cb(GtkWidget *widget, void *data);
 void sakura_setname_entry_changed_cb(GtkWidget *widget, void *data);
@@ -585,12 +592,15 @@ void sakura_tab_add_with_options(const gchar *restore_cwd,
                                  SakuraToolKind restore_tool,
                                  const gchar *restore_codex_session_id,
                                  const gchar *restore_codex_session_name,
+                                 const gchar *restore_codex_reasoning_effort,
                                  const gchar *restore_tool_target,
                                  const gchar *restore_terminal_id,
                                  const SakuraTabLaunchConfig *launch_config);
 void sakura_tab_delete_page(gint page);
 void sakura_tab_delete_pane(SakuraTab *tab);
 gboolean sakura_codex_session_id_is_uuid(const gchar *value);
+gboolean sakura_codex_reasoning_effort_is_valid(const gchar *value);
+const gchar *sakura_codex_reasoning_effort_label(const gchar *value);
 gboolean sakura_codex_tracking_poll_cb(gpointer data);
 SakuraTab *sakura_find_codex_tab_by_tracking_token(const gchar *token);
 gchar *sakura_find_codex_name_helper(void);
@@ -617,6 +627,7 @@ void sakura_add_tab_with_options(const gchar *restore_cwd,
                                  SakuraToolKind restore_tool,
                                  const gchar *restore_codex_session,
                                  const gchar *restore_codex_name,
+                                 const gchar *restore_codex_reasoning_effort,
                                  const gchar *restore_tool_target,
                                  const gchar *restore_terminal_id);
 void sakura_sidebar_update_tab(SakuraTab *tab);
@@ -664,6 +675,7 @@ typedef struct {
 	gchar *tool_target;
 	gchar *codex_session_id;
 	gchar *codex_session_name;
+	gchar *codex_reasoning_effort;
 	SakuraTabKind kind;
 	gboolean title_set_by_user;
 	SakuraTabStatus status;

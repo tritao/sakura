@@ -99,6 +99,34 @@ sakura_tool_icon_name(SakuraToolKind tool)
 
 
 gboolean
+sakura_codex_reasoning_effort_is_valid(const gchar *value)
+{
+	return g_strcmp0(value, "minimal") == 0 ||
+	       g_strcmp0(value, "low") == 0 ||
+	       g_strcmp0(value, "medium") == 0 ||
+	       g_strcmp0(value, "high") == 0 ||
+	       g_strcmp0(value, "xhigh") == 0;
+}
+
+
+const gchar *
+sakura_codex_reasoning_effort_label(const gchar *value)
+{
+	if (g_strcmp0(value, "minimal") == 0)
+		return _("Minimal");
+	if (g_strcmp0(value, "low") == 0)
+		return _("Fast");
+	if (g_strcmp0(value, "medium") == 0)
+		return _("Balanced");
+	if (g_strcmp0(value, "high") == 0)
+		return _("Deep");
+	if (g_strcmp0(value, "xhigh") == 0)
+		return _("Max");
+	return _("Default");
+}
+
+
+gboolean
 sakura_tool_requires_git_repository(SakuraToolKind tool)
 {
 	return tool == SAKURA_TOOL_GITUI || tool == SAKURA_TOOL_GIT_COLA;
@@ -396,7 +424,7 @@ sakura_new_tool_cb(GtkWidget *widget, void *data)
 
 	sakura_session_accept_changes();
 	sakura_add_tab_with_options(tool_cwd, NULL, NULL, FALSE,
-	                            SAKURA_TAB_TOOL, tool, NULL, NULL, NULL, NULL);
+	                            SAKURA_TAB_TOOL, tool, NULL, NULL, NULL, NULL, NULL);
 
 	if (tool_cwd != cwd)
 		g_free(tool_cwd);
@@ -502,7 +530,7 @@ sakura_open_pr_cb(GtkWidget *widget, void *data)
 	sakura_session_accept_changes();
 	sakura_add_tab_with_options(cwd, NULL, NULL, FALSE,
 	                            SAKURA_TAB_TOOL, SAKURA_TOOL_GH_PR,
-	                            NULL, NULL, url, NULL);
+	                            NULL, NULL, NULL, url, NULL);
 	g_free(cwd);
 	g_free(url);
 }
@@ -1351,11 +1379,15 @@ sakura_codex_tracking_status_cb (GtkWidget *widget, void *data)
 void
 sakura_new_codex_cb (GtkWidget *widget, void *data)
 {
-	(void)widget;
+	const gchar *reasoning_effort = widget != NULL
+	                              ? g_object_get_data(G_OBJECT(widget),
+	                                                  SAKURA_CODEX_REASONING_EFFORT_DATA_KEY)
+	                              : NULL;
 	(void)data;
 	sakura_session_accept_changes();
 	sakura_add_tab_with_options(NULL, NULL, NULL, FALSE, SAKURA_TAB_CODEX,
-	                            SAKURA_TOOL_NONE, NULL, NULL, NULL, NULL);
+	                            SAKURA_TOOL_NONE, NULL, NULL, reasoning_effort,
+	                            NULL, NULL);
 }
 
 
@@ -1386,7 +1418,7 @@ sakura_resume_codex_cb (GtkWidget *widget, void *data)
 			sakura_session_accept_changes();
 			sakura_add_tab_with_options(NULL, NULL, NULL, FALSE,
 			                            SAKURA_TAB_CODEX, SAKURA_TOOL_NONE,
-			                            session, NULL, NULL, NULL);
+			                            session, NULL, NULL, NULL, NULL);
 		}
 	}
 	gtk_widget_destroy(dialog);

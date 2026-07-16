@@ -380,6 +380,7 @@ sakura_session_tab_record_free(gpointer data)
 	g_free(record->tool_target);
 	g_free(record->codex_session_id);
 	g_free(record->codex_session_name);
+	g_free(record->codex_reasoning_effort);
 	g_free(record);
 }
 
@@ -803,7 +804,9 @@ sakura_session_snapshot_load_into(GKeyFile *key_file,
 		tab->codex_session_id = g_key_file_get_string(key_file, section,
 	                                                "codex_session_id", NULL);
 		tab->codex_session_name = g_key_file_get_string(key_file, section,
-	                                                  "codex_session_name", NULL);
+		                                                  "codex_session_name", NULL);
+		tab->codex_reasoning_effort = g_key_file_get_string(key_file, section,
+		                                                    "codex_reasoning_effort", NULL);
 		tab->title_set_by_user = g_key_file_get_boolean(key_file, section,
 	                                                 "title_set_by_user", NULL);
 		if (g_key_file_has_key(key_file, section, "status", NULL)) {
@@ -947,6 +950,9 @@ sakura_session_snapshot_save(const SakuraSessionSnapshot *snapshot,
 			g_key_file_set_string(key_file, section, "codex_session_id", tab->codex_session_id);
 		if (tab->codex_session_name != NULL && tab->codex_session_name[0] != '\0')
 			g_key_file_set_string(key_file, section, "codex_session_name", tab->codex_session_name);
+		if (tab->codex_reasoning_effort != NULL && tab->codex_reasoning_effort[0] != '\0')
+			g_key_file_set_string(key_file, section, "codex_reasoning_effort",
+			                      tab->codex_reasoning_effort);
 		g_key_file_set_boolean(key_file, section, "title_set_by_user", tab->title_set_by_user);
 		g_key_file_set_integer(key_file, section, "status", tab->status);
 		g_key_file_set_boolean(key_file, section, "attention", tab->attention);

@@ -7,7 +7,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: sakura\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-07-15 10:59+0100\n"
+"POT-Creation-Date: 2026-07-15 16:22+0100\n"
 "PO-Revision-Date: 2022-11-11 17:45+0300\n"
 "Last-Translator: Eyyüb Akçaer <gurbetcii_@hotmail.com>\n"
 "Language-Team: Turkish <tr_TR>\n"
@@ -33,6 +33,24 @@ msgid "Git Cola"
 msgstr ""
 
 msgid "Tool"
+msgstr ""
+
+msgid "Minimal"
+msgstr ""
+
+msgid "Fast"
+msgstr ""
+
+msgid "Balanced"
+msgstr ""
+
+msgid "Deep"
+msgstr ""
+
+msgid "Max"
+msgstr ""
+
+msgid "Default"
 msgstr ""
 
 msgid "Could not determine the current directory."
@@ -262,6 +280,10 @@ msgstr ""
 msgid "Error"
 msgstr ""
 
+#, fuzzy
+msgid "Terminal"
+msgstr "Uçbirim %d"
+
 #, c-format
 msgid "Terminal %d"
 msgstr "Uçbirim %d"
@@ -295,10 +317,6 @@ msgid "%s (%u)"
 msgstr ""
 
 #, fuzzy
-msgid "Terminal"
-msgstr "Uçbirim %d"
-
-#, fuzzy
 msgid "Copy pull request URL"
 msgstr "Tam ekran"
 
@@ -320,6 +338,10 @@ msgstr "Yeni sekme"
 msgid "New Codex session"
 msgstr ""
 
+#, fuzzy
+msgid "New Codex session with reasoning"
+msgstr "Yeni sekme"
+
 msgid "Resume session..."
 msgstr ""
 
@@ -329,7 +351,7 @@ msgstr ""
 msgid "Tools"
 msgstr ""
 
-msgid "Move to group"
+msgid "Move page to group"
 msgstr ""
 
 msgid "Rename Codex session..."
@@ -372,6 +394,13 @@ msgstr ""
 
 msgid "No terminals in this group"
 msgstr ""
+
+msgid "Reasoning"
+msgstr ""
+
+#, fuzzy, c-format
+msgid "%s (%u panes)"
+msgstr "Sekmeyi kapat"
 
 #, c-format
 msgid "Workspace (%u need attention)"
@@ -505,6 +534,56 @@ msgstr "Bağlantı kopyala"
 msgid "New tab"
 msgstr "Yeni sekme"
 
+msgid "Pane"
+msgstr ""
+
+msgid "Split Right"
+msgstr ""
+
+msgid "Split Down"
+msgstr ""
+
+msgid "Focus Left"
+msgstr ""
+
+msgid "Focus Right"
+msgstr ""
+
+msgid "Focus Up"
+msgstr ""
+
+msgid "Focus Down"
+msgstr ""
+
+#, fuzzy
+msgid "Close pane"
+msgstr "Sekmeyi kapat"
+
+msgid "Equalize split"
+msgstr ""
+
+msgid "Zoom pane"
+msgstr ""
+
+msgid "Layout preset"
+msgstr ""
+
+msgid "Two columns"
+msgstr ""
+
+msgid "Two rows"
+msgstr ""
+
+msgid "2 × 2 grid"
+msgstr ""
+
+msgid "Main + stack"
+msgstr ""
+
+#, fuzzy
+msgid "New session with reasoning"
+msgstr "Yeni sekme"
+
 msgid "Attach current tab..."
 msgstr ""
 
@@ -621,10 +700,6 @@ msgstr "sakura sürümü: %s\n"
 #, fuzzy
 #~ msgid "New terminal in group"
 #~ msgstr "Yeni sekme"
-
-#, fuzzy, c-format
-#~ msgid "%s (%u terminals)"
-#~ msgstr "Sekmeyi kapat"
 
 #, fuzzy
 #~ msgid "Terminals"

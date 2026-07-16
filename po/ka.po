@@ -7,7 +7,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: sakura git\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-07-15 10:59+0100\n"
+"POT-Creation-Date: 2026-07-15 16:22+0100\n"
 "PO-Revision-Date: 2026-04-13 15:28+0200\n"
 "Last-Translator: Temuri Doghonadze <temuri.doghonadze@gmail.com>\n"
 "Language-Team: Georgian <(nothing)>\n"
@@ -32,6 +32,24 @@ msgid "Git Cola"
 msgstr ""
 
 msgid "Tool"
+msgstr ""
+
+msgid "Minimal"
+msgstr ""
+
+msgid "Fast"
+msgstr ""
+
+msgid "Balanced"
+msgstr ""
+
+msgid "Deep"
+msgstr ""
+
+msgid "Max"
+msgstr ""
+
+msgid "Default"
 msgstr ""
 
 msgid "Could not determine the current directory."
@@ -261,6 +279,10 @@ msgstr ""
 msgid "Error"
 msgstr ""
 
+#, fuzzy
+msgid "Terminal"
+msgstr "ტერმინალი %d"
+
 #, c-format
 msgid "Terminal %d"
 msgstr "ტერმინალი %d"
@@ -294,10 +316,6 @@ msgid "%s (%u)"
 msgstr ""
 
 #, fuzzy
-msgid "Terminal"
-msgstr "ტერმინალი %d"
-
-#, fuzzy
 msgid "Copy pull request URL"
 msgstr "სრულ ეკრანზე"
 
@@ -319,6 +337,10 @@ msgstr "ახალი ჩანართი"
 msgid "New Codex session"
 msgstr ""
 
+#, fuzzy
+msgid "New Codex session with reasoning"
+msgstr "ახალი ჩანართი"
+
 msgid "Resume session..."
 msgstr ""
 
@@ -328,7 +350,7 @@ msgstr ""
 msgid "Tools"
 msgstr ""
 
-msgid "Move to group"
+msgid "Move page to group"
 msgstr ""
 
 msgid "Rename Codex session..."
@@ -371,6 +393,13 @@ msgstr ""
 
 msgid "No terminals in this group"
 msgstr ""
+
+msgid "Reasoning"
+msgstr ""
+
+#, fuzzy, c-format
+msgid "%s (%u panes)"
+msgstr "ჩანართის დახურვა"
 
 #, c-format
 msgid "Workspace (%u need attention)"
@@ -504,6 +533,56 @@ msgstr "ბმულის კოპირება"
 msgid "New tab"
 msgstr "ახალი ჩანართი"
 
+msgid "Pane"
+msgstr ""
+
+msgid "Split Right"
+msgstr ""
+
+msgid "Split Down"
+msgstr ""
+
+msgid "Focus Left"
+msgstr ""
+
+msgid "Focus Right"
+msgstr ""
+
+msgid "Focus Up"
+msgstr ""
+
+msgid "Focus Down"
+msgstr ""
+
+#, fuzzy
+msgid "Close pane"
+msgstr "ჩანართის დახურვა"
+
+msgid "Equalize split"
+msgstr ""
+
+msgid "Zoom pane"
+msgstr ""
+
+msgid "Layout preset"
+msgstr ""
+
+msgid "Two columns"
+msgstr ""
+
+msgid "Two rows"
+msgstr ""
+
+msgid "2 × 2 grid"
+msgstr ""
+
+msgid "Main + stack"
+msgstr ""
+
+#, fuzzy
+msgid "New session with reasoning"
+msgstr "ახალი ჩანართი"
+
 #, fuzzy
 msgid "Attach current tab..."
 msgstr "ახალი ჩანართი მიმდინარე ჩანართის შემდეგ"
@@ -620,10 +699,6 @@ msgstr "sakura-ის ვერსიაა %s\n"
 #, fuzzy
 #~ msgid "New terminal in group"
 #~ msgstr "ახალი ჩანართი"
-
-#, fuzzy, c-format
-#~ msgid "%s (%u terminals)"
-#~ msgstr "ჩანართის დახურვა"
 
 #, fuzzy
 #~ msgid "Terminals"

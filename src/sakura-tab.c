@@ -268,18 +268,28 @@ sakura_tab_spawn_shell(SakuraTab *tab, const gchar *cwd, gchar **env,
 void
 sakura_tab_spawn_codex(SakuraTab *tab, const gchar *cwd, gchar **env)
 {
-	gchar *argv[8] = { (gchar *)"codex",
-	                   (gchar *)"--dangerously-bypass-approvals-and-sandbox",
-	                   (gchar *)"--enable", (gchar *)"hooks",
-	                   NULL, NULL, NULL, NULL };
+	gchar *reasoning_config = NULL;
+	gchar *argv[10] = { (gchar *)"codex",
+	                    (gchar *)"--dangerously-bypass-approvals-and-sandbox",
+	                    (gchar *)"--enable", (gchar *)"hooks",
+	                    NULL, NULL, NULL, NULL, NULL, NULL };
+	guint next_arg = 4;
+
+	if (sakura_codex_reasoning_effort_is_valid(tab->codex_reasoning_effort)) {
+		reasoning_config = g_strdup_printf("model_reasoning_effort=%s",
+		                                    tab->codex_reasoning_effort);
+		argv[next_arg++] = (gchar *)"--config";
+		argv[next_arg++] = reasoning_config;
+	}
 
 	if (tab->codex_session_id != NULL && tab->codex_session_id[0] != '\0') {
-		argv[4] = (gchar *)"resume";
-		argv[5] = tab->codex_session_id;
+		argv[next_arg++] = (gchar *)"resume";
+		argv[next_arg++] = tab->codex_session_id;
 	}
 	vte_terminal_spawn_async(VTE_TERMINAL(tab->vte), VTE_PTY_NO_HELPER, cwd,
 	                         argv, env, G_SPAWN_SEARCH_PATH, NULL, NULL, NULL,
 	                         -1, NULL, sakura_spawn_callback, tab);
+	g_free(reasoning_config);
 }
 
 
@@ -431,6 +441,7 @@ sakura_tab_add_with_options (const gchar *restore_cwd,
                               SakuraToolKind restore_tool,
                               const gchar *restore_codex_session_id,
                               const gchar *restore_codex_session_name,
+                              const gchar *restore_codex_reasoning_effort,
                               const gchar *restore_tool_target,
                               const gchar *restore_terminal_id,
                               const SakuraTabLaunchConfig *launch_config)
@@ -483,6 +494,8 @@ sakura_tab_add_with_options (const gchar *restore_cwd,
 	               ? SAKURA_TAB_STATUS_IDLE : SAKURA_TAB_STATUS_NONE;
 	sk_tab->codex_session_id = g_strdup(restore_codex_session_id);
 	sk_tab->codex_session_name = g_strdup(restore_codex_session_name);
+	sk_tab->codex_reasoning_effort = sakura_codex_reasoning_effort_is_valid(
+		restore_codex_reasoning_effort) ? g_strdup(restore_codex_reasoning_effort) : NULL;
 	if (sk_tab->codex_session_name == NULL &&
 	    restore_kind == SAKURA_TAB_CODEX &&
 	    restore_codex_session_id != NULL &&
@@ -496,9 +509,14 @@ sakura_tab_add_with_options (const gchar *restore_cwd,
 	/* Tab widgets and the VTE are created together so the tab module owns the
 	 * complete terminal surface. */
 	sakura_tab_create_widgets(sk_tab);
-	if (!split_into_page)
+	if (!split_into_page) {
+		/* The first leaf is created before its GTK surface exists. Complete the
+		 * model/widget link now so later split operations can replace this leaf
+		 * with a GtkPaned subtree. */
+		if (sk_tab->layout_leaf != NULL)
+			sk_tab->layout_leaf->widget = sk_tab->hbox;
 		gtk_box_pack_start(GTK_BOX(tab_page->container), sk_tab->hbox, TRUE, TRUE, 0);
-	else if ((config->target_layout == NULL &&
+	} else if ((config->target_layout == NULL &&
 	          (tab_page->active_tab == NULL ||
 	           tab_page->active_tab->layout_leaf == NULL)) ||
 	         !sakura_layout_split_node_widgets(
@@ -667,7 +685,10 @@ sakura_tab_add_with_options (const gchar *restore_cwd,
 	} else {
 		sakura_set_font();
 		sakura_set_colors();
-		gtk_widget_show_all(sk_tab->hbox);
+		/* A GtkNotebook will not switch to a hidden child. New standalone
+		 * pages are inserted after the notebook was initially shown, so make
+		 * the page container itself visible, not only its terminal child. */
+		gtk_widget_show_all(split_into_page ? sk_tab->hbox : tab_page->container);
 		if (!sakura.show_scrollbar) {
 			gtk_widget_hide(sk_tab->scrollbar);
 		}
@@ -783,7 +804,6 @@ sakura_tab_delete_page(gint page)
 	struct sakura_tab *sk_tab;
 	SakuraPage *tab_page;
 	GPtrArray *page_panes;
-	gint tab_index;
 	gboolean removed_active;
 	guint index;
 
@@ -797,7 +817,6 @@ sakura_tab_delete_page(gint page)
 	sk_tab = sakura_tab_at_page(page);
 	if (sk_tab == NULL)
 		return;
-	tab_index = sakura_page_for_tab(sk_tab);
 	tab_page = sk_tab->page;
 	page_panes = tab_page != NULL && tab_page->panes != NULL
 	           ? g_ptr_array_ref(tab_page->panes) : NULL;
@@ -821,13 +840,10 @@ sakura_tab_delete_page(gint page)
 				g_ptr_array_remove_fast(sakura.panes, pane);
 		}
 	}
-	if (sakura.tabs != NULL) {
-		if (tab_index >= 0)
-			g_ptr_array_remove_index(sakura.tabs, tab_index);
-	}
+	if (sakura.tabs != NULL && tab_page != NULL)
+		g_ptr_array_remove(sakura.tabs, tab_page->tab_bar_tab);
 	if (sakura.pages != NULL) {
-		if (tab_index >= 0)
-			g_ptr_array_remove_index(sakura.pages, tab_index);
+		g_ptr_array_remove(sakura.pages, tab_page);
 		if (sakura.active_page == tab_page)
 			sakura.active_page = NULL;
 	}
@@ -1350,6 +1366,12 @@ sakura_tab_keypress_cb(GtkWidget *widget, GdkEventKey *event, gpointer data)
 {
 	SakuraTab *tab = data;
 
+	/* VTE handles some combinations such as Alt+Arrow itself, preventing the
+	 * event from bubbling up to the window. Give Sakura's application-level
+	 * shortcuts first refusal while the terminal has keyboard focus. */
+	if (sakura_key_press_cb(sakura.main_window, event, NULL))
+		return TRUE;
+
 	(void)widget;
 	/* Ctrl-C is the conventional terminal interrupt. Mark an active Codex
 	 * turn as interrupted immediately; the next hook event can replace this
@@ -1437,6 +1459,8 @@ sakura_term_buttonpressed_cb (GtkWidget *widget,
 		return FALSE;
 	sakura.active_tab = tab;
 	sakura.active_page = tab->page;
+	if (tab->page != NULL)
+		tab->page->active_tab = tab;
 	if (tab->page != NULL && tab->page->panes != NULL && tab->page->panes->len <= 1)
 		sakura_sidebar_queue_select_node(tab->page->sidebar_node);
 	else
@@ -1663,6 +1687,7 @@ sakura_pane_focus_in_cb(GtkWidget *widget, GdkEventFocus *event, gpointer data)
 		return FALSE;
 	sakura.active_tab = tab;
 	sakura.active_page = tab->page;
+	tab->page->active_tab = tab;
 	sakura_tab_clear_attention(tab);
 	if (tab->page->panes != NULL && tab->page->panes->len <= 1)
 		sakura_sidebar_queue_select_node(tab->page->sidebar_node);
@@ -1712,6 +1737,7 @@ sakura_tab_free(SakuraTab *tab)
 	g_free(tab->tool_target);
 	g_free(tab->codex_session_id);
 	g_free(tab->codex_session_name);
+	g_free(tab->codex_reasoning_effort);
 	g_free(tab->codex_tracking_token);
 	g_free(tab);
 }
@@ -2116,21 +2142,93 @@ sakura_tab_bar_remove_tab(SakuraTab *tab)
 	tab->tab_button_close = NULL;
 }
 
+SakuraPage *
+sakura_page_at_page(gint page)
+{
+	GtkWidget *child;
+	guint index;
+
+	if (sakura.notebook == NULL || sakura.pages == NULL || page < 0)
+		return NULL;
+	child = gtk_notebook_get_nth_page(GTK_NOTEBOOK(sakura.notebook), page);
+	if (child == NULL)
+		return NULL;
+	for (index = 0; index < sakura.pages->len; index++) {
+		SakuraPage *candidate = g_ptr_array_index(sakura.pages, index);
+		if (candidate != NULL && candidate->container == child)
+			return candidate;
+	}
+	return NULL;
+}
+
 SakuraTab *
 sakura_tab_at_page(gint page)
 {
+	SakuraPage *notebook_page = sakura_page_at_page(page);
+
+	if (notebook_page != NULL)
+		return notebook_page->tab_bar_tab != NULL
+		     ? notebook_page->tab_bar_tab : notebook_page->active_tab;
 	if (sakura.tabs == NULL || page < 0 || (guint)page >= sakura.tabs->len)
 		return NULL;
 	return g_ptr_array_index(sakura.tabs, page);
 }
 
+gboolean
+sakura_notebook_sync_page_order(void)
+{
+	GPtrArray *ordered_pages, *ordered_tabs;
+	gint count, index;
+
+	if (sakura.notebook == NULL || sakura.pages == NULL || sakura.tabs == NULL)
+		return FALSE;
+	count = gtk_notebook_get_n_pages(GTK_NOTEBOOK(sakura.notebook));
+	if (count < 0 || (guint)count != sakura.pages->len ||
+	    (guint)count != sakura.tabs->len)
+		return FALSE;
+
+	ordered_pages = g_ptr_array_sized_new((guint)count);
+	ordered_tabs = g_ptr_array_sized_new((guint)count);
+	for (index = 0; index < count; index++) {
+		SakuraPage *page = sakura_page_at_page(index);
+		if (page == NULL || page->tab_bar_tab == NULL) {
+			g_ptr_array_unref(ordered_pages);
+			g_ptr_array_unref(ordered_tabs);
+			return FALSE;
+		}
+		g_ptr_array_add(ordered_pages, page);
+		g_ptr_array_add(ordered_tabs, page->tab_bar_tab);
+	}
+
+	g_ptr_array_set_size(sakura.pages, 0);
+	g_ptr_array_set_size(sakura.tabs, 0);
+	for (index = 0; index < count; index++) {
+		g_ptr_array_add(sakura.pages, g_ptr_array_index(ordered_pages, index));
+		g_ptr_array_add(sakura.tabs, g_ptr_array_index(ordered_tabs, index));
+	}
+	g_ptr_array_unref(ordered_pages);
+	g_ptr_array_unref(ordered_tabs);
+	return TRUE;
+}
+
 gint
 sakura_page_for_tab(SakuraTab *tab)
 {
+	gint notebook_page;
 	guint index;
 
 	if (tab == NULL)
 		return -1;
+	/* GTK's child order is the authority for what set_current_page() will
+	 * display. The cached pages array can temporarily differ during restore or
+	 * notebook reordering, so never use its index to drive visible selection. */
+	if (tab->page != NULL && tab->page->container != NULL &&
+	    sakura.notebook != NULL) {
+		notebook_page = gtk_notebook_page_num(GTK_NOTEBOOK(sakura.notebook),
+		                                      tab->page->container);
+		if (notebook_page >= 0)
+			return notebook_page;
+	}
 	if (tab->page != NULL && sakura.pages != NULL) {
 		for (index = 0; index < sakura.pages->len; index++) {
 			SakuraPage *page = g_ptr_array_index(sakura.pages, index);
@@ -2160,35 +2258,10 @@ void
 sakura_notebook_page_reordered_cb(GtkNotebook *notebook, GtkWidget *child,
                                   guint page_num, void *data)
 {
-	SakuraTab *tab = NULL;
-	gint old_page;
-	guint index;
-
 	(void)notebook;
+	(void)child;
+	(void)page_num;
 	(void)data;
-	if (sakura.tabs == NULL || child == NULL)
-		return;
-
-	for (index = 0; index < sakura.tabs->len; index++) {
-		SakuraTab *candidate = g_ptr_array_index(sakura.tabs, index);
-		if (candidate != NULL && sakura_page_widget_for_tab(candidate) == child) {
-			tab = candidate;
-			break;
-		}
-	}
-	old_page = sakura_page_for_tab(tab);
-	if (old_page < 0 || (guint)old_page == page_num)
-		return;
-
-	g_ptr_array_remove_index(sakura.tabs, old_page);
-	if (page_num > sakura.tabs->len)
-		page_num = sakura.tabs->len;
-	g_ptr_array_insert(sakura.tabs, page_num, tab);
-	if (sakura.pages != NULL && (guint)old_page < sakura.pages->len) {
-		SakuraPage *page = g_ptr_array_remove_index(sakura.pages, old_page);
-		if (page_num > sakura.pages->len)
-			page_num = sakura.pages->len;
-		g_ptr_array_insert(sakura.pages, page_num, page);
-	}
-	sakura_session_mark_dirty();
+	if (sakura_notebook_sync_page_order())
+		sakura_session_mark_dirty();
 }
