@@ -6,7 +6,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: sakura 1.2.0\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-07-15 16:22+0100\n"
+"POT-Creation-Date: 2026-07-16 10:59+0100\n"
 "PO-Revision-Date: 2018-04-29 13:18+0000\n"
 "Last-Translator: David Gómez <david@pleyades.net>\n"
 "Language-Team: <fabrice.thiroux@free.fr>\n"
@@ -327,6 +327,14 @@ msgstr "Définir le titre de l'onglet..."
 msgid "Close terminal"
 msgstr "Fermer l'onglet"
 
+#, fuzzy, c-format
+msgid "Working directory: %s"
+msgstr "Définir le répertoire de travail"
+
+#, fuzzy, c-format
+msgid "Inherited working directory: %s"
+msgstr "Définir le répertoire de travail"
+
 msgid "Open pull request..."
 msgstr ""
 
@@ -367,6 +375,18 @@ msgstr "Nouvel onglet"
 msgid "New subgroup"
 msgstr ""
 
+#, fuzzy
+msgid "Change working directory..."
+msgstr "Impossible de changer le répertoire de travail\n"
+
+#, fuzzy
+msgid "Set working directory..."
+msgstr "Définir le répertoire de travail"
+
+#, fuzzy
+msgid "Clear working directory"
+msgstr "Définir le répertoire de travail"
+
 msgid "Rename group..."
 msgstr ""
 
@@ -381,6 +401,13 @@ msgstr ""
 
 msgid "Group name"
 msgstr ""
+
+#, fuzzy
+msgid "Set group working directory"
+msgstr "Définir le répertoire de travail"
+
+msgid "_Select"
+msgstr "_Sélectionner"
 
 msgid "Rename group"
 msgstr ""
@@ -473,9 +500,6 @@ msgstr "Sélectionner une police de caractères"
 
 msgid "Select colors"
 msgstr "Sélectionner les couleurs"
-
-msgid "_Select"
-msgstr "_Sélectionner"
 
 msgid "Colorset"
 msgstr "Jeu de couleurs"

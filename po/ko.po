@@ -7,7 +7,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: sakura\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-07-15 16:22+0100\n"
+"POT-Creation-Date: 2026-07-16 10:59+0100\n"
 "PO-Revision-Date: 2019-09-30 05:48+0000\n"
 "Last-Translator: Minho Park <parkmino@gmail.com>\n"
 "Language-Team: Korean <ko@li.org>\n"
@@ -328,6 +328,14 @@ msgstr "탭 이름 설정..."
 msgid "Close terminal"
 msgstr "탭 닫기"
 
+#, fuzzy, c-format
+msgid "Working directory: %s"
+msgstr "작업 디렉토리 설정"
+
+#, fuzzy, c-format
+msgid "Inherited working directory: %s"
+msgstr "작업 디렉토리 설정"
+
 msgid "Open pull request..."
 msgstr ""
 
@@ -368,6 +376,18 @@ msgstr "새 탭"
 msgid "New subgroup"
 msgstr ""
 
+#, fuzzy
+msgid "Change working directory..."
+msgstr "작업 디렉토리를 변경할 수 없습니다\n"
+
+#, fuzzy
+msgid "Set working directory..."
+msgstr "작업 디렉토리 설정"
+
+#, fuzzy
+msgid "Clear working directory"
+msgstr "작업 디렉토리 설정"
+
 msgid "Rename group..."
 msgstr ""
 
@@ -382,6 +402,13 @@ msgstr ""
 
 msgid "Group name"
 msgstr ""
+
+#, fuzzy
+msgid "Set group working directory"
+msgstr "작업 디렉토리 설정"
+
+msgid "_Select"
+msgstr "선택(_S)"
 
 msgid "Rename group"
 msgstr ""
@@ -474,9 +501,6 @@ msgstr "글꼴 선택"
 
 msgid "Select colors"
 msgstr "색상 선댁"
-
-msgid "_Select"
-msgstr "선택(_S)"
 
 msgid "Colorset"
 msgstr "색상 세트"

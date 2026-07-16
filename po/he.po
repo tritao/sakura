@@ -7,7 +7,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: sakura 3.1.4\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-07-15 16:22+0100\n"
+"POT-Creation-Date: 2026-07-16 10:59+0100\n"
 "PO-Revision-Date: 2018-04-29 13:18+0000\n"
 "Last-Translator: David Gómez <david@pleyades.net>\n"
 "Language-Team: Rahut <genghiskhan@gmx.ca>\n"
@@ -333,6 +333,16 @@ msgstr "קבע שם כרטיסייה..."
 msgid "Close terminal"
 msgstr "סגור כרטיסייה"
 
+# CLI: Do not translate!
+#, fuzzy, c-format
+msgid "Working directory: %s"
+msgstr "Set working directory"
+
+# CLI: Do not translate!
+#, fuzzy, c-format
+msgid "Inherited working directory: %s"
+msgstr "Set working directory"
+
 msgid "Open pull request..."
 msgstr ""
 
@@ -373,6 +383,20 @@ msgstr "כרטיסייה חדשה"
 msgid "New subgroup"
 msgstr ""
 
+#, fuzzy
+msgid "Change working directory..."
+msgstr "אין אפשרות לשנות מדור עבודה\n"
+
+# CLI: Do not translate!
+#, fuzzy
+msgid "Set working directory..."
+msgstr "Set working directory"
+
+# CLI: Do not translate!
+#, fuzzy
+msgid "Clear working directory"
+msgstr "Set working directory"
+
 msgid "Rename group..."
 msgstr ""
 
@@ -387,6 +411,14 @@ msgstr ""
 
 msgid "Group name"
 msgstr ""
+
+# CLI: Do not translate!
+#, fuzzy
+msgid "Set group working directory"
+msgstr "Set working directory"
+
+msgid "_Select"
+msgstr "ב_חר"
 
 msgid "Rename group"
 msgstr ""
@@ -497,9 +529,6 @@ msgstr "בחירת גופן"
 #, fuzzy
 msgid "Select colors"
 msgstr "בחר צבע"
-
-msgid "_Select"
-msgstr "ב_חר"
 
 #, fuzzy
 msgid "Colorset"

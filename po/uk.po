@@ -7,7 +7,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: sakura\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-07-15 16:22+0100\n"
+"POT-Creation-Date: 2026-07-16 10:59+0100\n"
 "PO-Revision-Date: 2018-04-29 13:18+0000\n"
 "Last-Translator: Andriy Nezhivy <adiynziy@gmail.com>\n"
 "Language-Team: Ukrainian <uk@li.org>\n"
@@ -328,6 +328,14 @@ msgstr "Встановити нове ім'я вкладки..."
 msgid "Close terminal"
 msgstr "Закрити вкладку"
 
+#, fuzzy, c-format
+msgid "Working directory: %s"
+msgstr "Встановити мерехтіння курсора"
+
+#, fuzzy, c-format
+msgid "Inherited working directory: %s"
+msgstr "Встановити мерехтіння курсора"
+
 msgid "Open pull request..."
 msgstr ""
 
@@ -368,6 +376,18 @@ msgstr "Нова вкладка"
 msgid "New subgroup"
 msgstr ""
 
+#, fuzzy
+msgid "Change working directory..."
+msgstr "Встановити мерехтіння курсора"
+
+#, fuzzy
+msgid "Set working directory..."
+msgstr "Встановити мерехтіння курсора"
+
+#, fuzzy
+msgid "Clear working directory"
+msgstr "Встановити мерехтіння курсора"
+
 msgid "Rename group..."
 msgstr ""
 
@@ -382,6 +402,14 @@ msgstr ""
 
 msgid "Group name"
 msgstr ""
+
+#, fuzzy
+msgid "Set group working directory"
+msgstr "Встановити мерехтіння курсора"
+
+#, fuzzy
+msgid "_Select"
+msgstr "Обрати шрифт"
 
 msgid "Rename group"
 msgstr ""
@@ -478,10 +506,6 @@ msgstr "Обрати шрифт"
 #, fuzzy
 msgid "Select colors"
 msgstr "Обрати колір"
-
-#, fuzzy
-msgid "_Select"
-msgstr "Обрати шрифт"
 
 msgid "Colorset"
 msgstr ""

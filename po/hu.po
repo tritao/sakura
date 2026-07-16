@@ -5,7 +5,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: sakura\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-07-15 16:22+0100\n"
+"POT-Creation-Date: 2026-07-16 10:59+0100\n"
 "PO-Revision-Date: 2018-04-29 13:18+0000\n"
 "Last-Translator: David Gómez <david@pleyades.net>\n"
 "Language-Team: hu\n"
@@ -326,6 +326,14 @@ msgstr "Fül nevének beállítása..."
 msgid "Close terminal"
 msgstr "Lap bezárása"
 
+#, fuzzy, c-format
+msgid "Working directory: %s"
+msgstr "Munkakönyvtár beállítása"
+
+#, fuzzy, c-format
+msgid "Inherited working directory: %s"
+msgstr "Munkakönyvtár beállítása"
+
 msgid "Open pull request..."
 msgstr ""
 
@@ -366,6 +374,18 @@ msgstr "Új fül"
 msgid "New subgroup"
 msgstr ""
 
+#, fuzzy
+msgid "Change working directory..."
+msgstr "A munkakönyvtár nem módosítható\n"
+
+#, fuzzy
+msgid "Set working directory..."
+msgstr "Munkakönyvtár beállítása"
+
+#, fuzzy
+msgid "Clear working directory"
+msgstr "Munkakönyvtár beállítása"
+
 msgid "Rename group..."
 msgstr ""
 
@@ -380,6 +400,13 @@ msgstr ""
 
 msgid "Group name"
 msgstr ""
+
+#, fuzzy
+msgid "Set group working directory"
+msgstr "Munkakönyvtár beállítása"
+
+msgid "_Select"
+msgstr "_Kiválasztás"
 
 msgid "Rename group"
 msgstr ""
@@ -472,9 +499,6 @@ msgstr "Betűkészlet kiválasztása"
 
 msgid "Select colors"
 msgstr "Színek kiválasztása"
-
-msgid "_Select"
-msgstr "_Kiválasztás"
 
 msgid "Colorset"
 msgstr "Színek"

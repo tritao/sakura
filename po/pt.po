@@ -7,7 +7,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: sakura\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-07-15 16:22+0100\n"
+"POT-Creation-Date: 2026-07-16 10:59+0100\n"
 "PO-Revision-Date: 2018-04-29 13:18+0000\n"
 "Last-Translator: David Gómez <david@pleyades.net>\n"
 "Language-Team: Portuguese <pt@li.org>\n"
@@ -327,6 +327,14 @@ msgstr "Definir nome do separador"
 msgid "Close terminal"
 msgstr "Fechar separador"
 
+#, fuzzy, c-format
+msgid "Working directory: %s"
+msgstr "Definir diretório de trabalho"
+
+#, fuzzy, c-format
+msgid "Inherited working directory: %s"
+msgstr "Definir diretório de trabalho"
+
 msgid "Open pull request..."
 msgstr ""
 
@@ -367,6 +375,18 @@ msgstr "Novo separador"
 msgid "New subgroup"
 msgstr ""
 
+#, fuzzy
+msgid "Change working directory..."
+msgstr "Não pode mudar o diretório de trabalho\n"
+
+#, fuzzy
+msgid "Set working directory..."
+msgstr "Definir diretório de trabalho"
+
+#, fuzzy
+msgid "Clear working directory"
+msgstr "Definir diretório de trabalho"
+
 msgid "Rename group..."
 msgstr ""
 
@@ -381,6 +401,13 @@ msgstr ""
 
 msgid "Group name"
 msgstr ""
+
+#, fuzzy
+msgid "Set group working directory"
+msgstr "Definir diretório de trabalho"
+
+msgid "_Select"
+msgstr "_Selecionar"
 
 msgid "Rename group"
 msgstr ""
@@ -473,9 +500,6 @@ msgstr "Escolha o tipo de letra"
 
 msgid "Select colors"
 msgstr "Escolha a cor"
-
-msgid "_Select"
-msgstr "_Selecionar"
 
 msgid "Colorset"
 msgstr "Conjunto de cores"

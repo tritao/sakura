@@ -7,7 +7,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: sakura\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-07-15 16:22+0100\n"
+"POT-Creation-Date: 2026-07-16 10:59+0100\n"
 "PO-Revision-Date: 2019-08-12 16:27+0000\n"
 "Last-Translator: Andreas Rönnquist <andreas@ronnquist.net>\n"
 "Language-Team: Swedish <sv@li.org>\n"
@@ -328,6 +328,14 @@ msgstr "Sätt fliknamn..."
 msgid "Close terminal"
 msgstr "Stäng flik"
 
+#, fuzzy, c-format
+msgid "Working directory: %s"
+msgstr "Sätt arbetskatalog"
+
+#, fuzzy, c-format
+msgid "Inherited working directory: %s"
+msgstr "Sätt arbetskatalog"
+
 msgid "Open pull request..."
 msgstr ""
 
@@ -368,6 +376,18 @@ msgstr "Ny flik"
 msgid "New subgroup"
 msgstr ""
 
+#, fuzzy
+msgid "Change working directory..."
+msgstr "Kan inte ändra arbetskatalog\n"
+
+#, fuzzy
+msgid "Set working directory..."
+msgstr "Sätt arbetskatalog"
+
+#, fuzzy
+msgid "Clear working directory"
+msgstr "Sätt arbetskatalog"
+
 msgid "Rename group..."
 msgstr ""
 
@@ -382,6 +402,13 @@ msgstr ""
 
 msgid "Group name"
 msgstr ""
+
+#, fuzzy
+msgid "Set group working directory"
+msgstr "Sätt arbetskatalog"
+
+msgid "_Select"
+msgstr "_Välj"
 
 msgid "Rename group"
 msgstr ""
@@ -474,9 +501,6 @@ msgstr "Välj typsnitt"
 
 msgid "Select colors"
 msgstr "Välj färger"
-
-msgid "_Select"
-msgstr "_Välj"
 
 msgid "Colorset"
 msgstr "Färguppsättning"

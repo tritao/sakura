@@ -7,7 +7,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: sakura git\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-07-15 16:22+0100\n"
+"POT-Creation-Date: 2026-07-16 10:59+0100\n"
 "PO-Revision-Date: 2026-04-13 15:28+0200\n"
 "Last-Translator: Temuri Doghonadze <temuri.doghonadze@gmail.com>\n"
 "Language-Team: Georgian <(nothing)>\n"
@@ -327,6 +327,14 @@ msgstr "ჩანართის სახელის დაყენება.
 msgid "Close terminal"
 msgstr "ჩანართის დახურვა"
 
+#, fuzzy, c-format
+msgid "Working directory: %s"
+msgstr "სამუშაო საქაღალდის დაყენება"
+
+#, fuzzy, c-format
+msgid "Inherited working directory: %s"
+msgstr "სამუშაო საქაღალდის დაყენება"
+
 msgid "Open pull request..."
 msgstr ""
 
@@ -367,6 +375,18 @@ msgstr "ახალი ჩანართი"
 msgid "New subgroup"
 msgstr ""
 
+#, fuzzy
+msgid "Change working directory..."
+msgstr "სამუშაო საქაღალდის შეცვლა შეუძლებელია\n"
+
+#, fuzzy
+msgid "Set working directory..."
+msgstr "სამუშაო საქაღალდის დაყენება"
+
+#, fuzzy
+msgid "Clear working directory"
+msgstr "სამუშაო საქაღალდის დაყენება"
+
 msgid "Rename group..."
 msgstr ""
 
@@ -381,6 +401,13 @@ msgstr ""
 
 msgid "Group name"
 msgstr ""
+
+#, fuzzy
+msgid "Set group working directory"
+msgstr "სამუშაო საქაღალდის დაყენება"
+
+msgid "_Select"
+msgstr "_მონიშვნა"
 
 msgid "Rename group"
 msgstr ""
@@ -473,9 +500,6 @@ msgstr "აირჩიეთ ფონტი"
 
 msgid "Select colors"
 msgstr "ფერების არჩევა"
-
-msgid "_Select"
-msgstr "_მონიშვნა"
 
 msgid "Colorset"
 msgstr "ფერების ნაკრები"

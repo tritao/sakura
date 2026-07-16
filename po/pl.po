@@ -7,7 +7,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: sakura\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-07-15 16:22+0100\n"
+"POT-Creation-Date: 2026-07-16 10:59+0100\n"
 "PO-Revision-Date: 2018-04-29 13:18+0000\n"
 "Last-Translator: David Gómez <david@pleyades.net>\n"
 "Language-Team: Polish <pl@li.org>\n"
@@ -328,6 +328,14 @@ msgstr "Ustaw nazwę karty..."
 msgid "Close terminal"
 msgstr "Zamknij zakładkę"
 
+#, fuzzy, c-format
+msgid "Working directory: %s"
+msgstr "Ustaw katalog roboczy"
+
+#, fuzzy, c-format
+msgid "Inherited working directory: %s"
+msgstr "Ustaw katalog roboczy"
+
 msgid "Open pull request..."
 msgstr ""
 
@@ -368,6 +376,18 @@ msgstr "Nowa zakładka"
 msgid "New subgroup"
 msgstr ""
 
+#, fuzzy
+msgid "Change working directory..."
+msgstr "Nie można zmienić katalogu roboczego\n"
+
+#, fuzzy
+msgid "Set working directory..."
+msgstr "Ustaw katalog roboczy"
+
+#, fuzzy
+msgid "Clear working directory"
+msgstr "Ustaw katalog roboczy"
+
 msgid "Rename group..."
 msgstr ""
 
@@ -382,6 +402,13 @@ msgstr ""
 
 msgid "Group name"
 msgstr ""
+
+#, fuzzy
+msgid "Set group working directory"
+msgstr "Ustaw katalog roboczy"
+
+msgid "_Select"
+msgstr "_Wybierz"
 
 msgid "Rename group"
 msgstr ""
@@ -474,9 +501,6 @@ msgstr "Wybierz czcionkę"
 
 msgid "Select colors"
 msgstr "Wybierz kolory"
-
-msgid "_Select"
-msgstr "_Wybierz"
 
 msgid "Colorset"
 msgstr "Schemat kolorów"

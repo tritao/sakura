@@ -7,7 +7,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: sakura 1.0.4\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-07-15 16:22+0100\n"
+"POT-Creation-Date: 2026-07-16 10:59+0100\n"
 "PO-Revision-Date: 2019-08-12 17:06+0000\n"
 "Last-Translator: David Gómez <david@pleyades.net>\n"
 "Language-Team: Chinese/Simplified <i18n-translation@lists.linux.net.cn>\n"
@@ -328,6 +328,14 @@ msgstr "设置标签页名称..."
 msgid "Close terminal"
 msgstr "关闭标签"
 
+#, fuzzy, c-format
+msgid "Working directory: %s"
+msgstr "设置工作目录"
+
+#, fuzzy, c-format
+msgid "Inherited working directory: %s"
+msgstr "设置工作目录"
+
 msgid "Open pull request..."
 msgstr ""
 
@@ -368,6 +376,18 @@ msgstr "新建标签"
 msgid "New subgroup"
 msgstr ""
 
+#, fuzzy
+msgid "Change working directory..."
+msgstr "不能改变工作目录\n"
+
+#, fuzzy
+msgid "Set working directory..."
+msgstr "设置工作目录"
+
+#, fuzzy
+msgid "Clear working directory"
+msgstr "设置工作目录"
+
 msgid "Rename group..."
 msgstr ""
 
@@ -382,6 +402,13 @@ msgstr ""
 
 msgid "Group name"
 msgstr ""
+
+#, fuzzy
+msgid "Set group working directory"
+msgstr "设置工作目录"
+
+msgid "_Select"
+msgstr "选择"
 
 msgid "Rename group"
 msgstr ""
@@ -474,9 +501,6 @@ msgstr "选择字体"
 
 msgid "Select colors"
 msgstr "选择颜色"
-
-msgid "_Select"
-msgstr "选择"
 
 msgid "Colorset"
 msgstr "色彩集"

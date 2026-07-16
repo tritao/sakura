@@ -4,7 +4,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: ja\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-07-15 16:22+0100\n"
+"POT-Creation-Date: 2026-07-16 10:59+0100\n"
 "PO-Revision-Date: 2019-08-12 16:55+0000\n"
 "Last-Translator: David Gómez <david@pleyades.net>\n"
 "Language-Team: Japanese <ja@li.org>\n"
@@ -325,6 +325,14 @@ msgstr "タブの名前を設定..."
 msgid "Close terminal"
 msgstr "タブを閉じる"
 
+#, fuzzy, c-format
+msgid "Working directory: %s"
+msgstr "作業ディレクトリを設定"
+
+#, fuzzy, c-format
+msgid "Inherited working directory: %s"
+msgstr "作業ディレクトリを設定"
+
 msgid "Open pull request..."
 msgstr ""
 
@@ -365,6 +373,18 @@ msgstr "新規タブ"
 msgid "New subgroup"
 msgstr ""
 
+#, fuzzy
+msgid "Change working directory..."
+msgstr "作業ディレクトリを変更することはできません\n"
+
+#, fuzzy
+msgid "Set working directory..."
+msgstr "作業ディレクトリを設定"
+
+#, fuzzy
+msgid "Clear working directory"
+msgstr "作業ディレクトリを設定"
+
 msgid "Rename group..."
 msgstr ""
 
@@ -379,6 +399,13 @@ msgstr ""
 
 msgid "Group name"
 msgstr ""
+
+#, fuzzy
+msgid "Set group working directory"
+msgstr "作業ディレクトリを設定"
+
+msgid "_Select"
+msgstr "選択(_S)"
 
 msgid "Rename group"
 msgstr ""
@@ -471,9 +498,6 @@ msgstr "フォントを選択"
 
 msgid "Select colors"
 msgstr "色を選択"
-
-msgid "_Select"
-msgstr "選択(_S)"
 
 msgid "Colorset"
 msgstr "カラーセット"

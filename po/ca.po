@@ -5,7 +5,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: sakura\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-07-15 16:22+0100\n"
+"POT-Creation-Date: 2026-07-16 10:59+0100\n"
 "PO-Revision-Date: 2019-09-30 05:43+0000\n"
 "Last-Translator: Adolfo Jayme <Unknown>\n"
 "Language-Team: Jordi Jané Cardo <jordi.jane@gmail.com>\n"
@@ -326,6 +326,14 @@ msgstr "Definir el nom de pestanya..."
 msgid "Close terminal"
 msgstr "Tancar pestanya"
 
+#, fuzzy, c-format
+msgid "Working directory: %s"
+msgstr "Definir el directori actual"
+
+#, fuzzy, c-format
+msgid "Inherited working directory: %s"
+msgstr "Definir el directori actual"
+
 msgid "Open pull request..."
 msgstr ""
 
@@ -366,6 +374,18 @@ msgstr "Nova pestanya"
 msgid "New subgroup"
 msgstr ""
 
+#, fuzzy
+msgid "Change working directory..."
+msgstr "No es pot cambiar el directori actual\n"
+
+#, fuzzy
+msgid "Set working directory..."
+msgstr "Definir el directori actual"
+
+#, fuzzy
+msgid "Clear working directory"
+msgstr "Definir el directori actual"
+
 msgid "Rename group..."
 msgstr ""
 
@@ -380,6 +400,13 @@ msgstr ""
 
 msgid "Group name"
 msgstr ""
+
+#, fuzzy
+msgid "Set group working directory"
+msgstr "Definir el directori actual"
+
+msgid "_Select"
+msgstr "_Selecciona"
 
 msgid "Rename group"
 msgstr ""
@@ -472,9 +499,6 @@ msgstr "Sel·leccioni font"
 
 msgid "Select colors"
 msgstr "Sel·leccionar color"
-
-msgid "_Select"
-msgstr "_Selecciona"
 
 msgid "Colorset"
 msgstr "Grup de colors"

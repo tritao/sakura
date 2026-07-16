@@ -5,7 +5,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: sakura\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-07-15 16:22+0100\n"
+"POT-Creation-Date: 2026-07-16 10:59+0100\n"
 "PO-Revision-Date: 2019-08-12 16:53+0000\n"
 "Last-Translator: David Gómez <david@pleyades.net>\n"
 "Language-Team: <davidge@pleyades.net>\n"
@@ -326,6 +326,14 @@ msgstr "Establecer nombre de pestaña..."
 msgid "Close terminal"
 msgstr "Cerrar pestaña"
 
+#, fuzzy, c-format
+msgid "Working directory: %s"
+msgstr "Establecer directorio actual"
+
+#, fuzzy, c-format
+msgid "Inherited working directory: %s"
+msgstr "Establecer directorio actual"
+
 msgid "Open pull request..."
 msgstr ""
 
@@ -366,6 +374,18 @@ msgstr "Pestaña nueva"
 msgid "New subgroup"
 msgstr ""
 
+#, fuzzy
+msgid "Change working directory..."
+msgstr "No se puede cambiar el directorio actual\n"
+
+#, fuzzy
+msgid "Set working directory..."
+msgstr "Establecer directorio actual"
+
+#, fuzzy
+msgid "Clear working directory"
+msgstr "Establecer directorio actual"
+
 msgid "Rename group..."
 msgstr ""
 
@@ -380,6 +400,13 @@ msgstr ""
 
 msgid "Group name"
 msgstr ""
+
+#, fuzzy
+msgid "Set group working directory"
+msgstr "Establecer directorio actual"
+
+msgid "_Select"
+msgstr "_Seleccionar"
 
 msgid "Rename group"
 msgstr ""
@@ -472,9 +499,6 @@ msgstr "Seleccionar tipo de letra"
 
 msgid "Select colors"
 msgstr "Seleccionar colores"
-
-msgid "_Select"
-msgstr "_Seleccionar"
 
 msgid "Colorset"
 msgstr "Grupo de colores"

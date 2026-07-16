@@ -8,7 +8,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: Sakura 2.3.4\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-07-15 16:22+0100\n"
+"POT-Creation-Date: 2026-07-16 10:59+0100\n"
 "PO-Revision-Date: 2020-05-06 05:00+0000\n"
 "Last-Translator: Milo Ivir <Unknown>\n"
 "Language-Team: Deutsch <de@li.org>\n"
@@ -329,6 +329,14 @@ msgstr "Reiternamen setzen …"
 msgid "Close terminal"
 msgstr "Reiter schließen"
 
+#, fuzzy, c-format
+msgid "Working directory: %s"
+msgstr "Arbeitsverzeichnis setzen"
+
+#, fuzzy, c-format
+msgid "Inherited working directory: %s"
+msgstr "Arbeitsverzeichnis setzen"
+
 msgid "Open pull request..."
 msgstr ""
 
@@ -369,6 +377,18 @@ msgstr "Neuer Reiter"
 msgid "New subgroup"
 msgstr ""
 
+#, fuzzy
+msgid "Change working directory..."
+msgstr "Das Arbeitsverzeichnis kann nicht verändert serden\n"
+
+#, fuzzy
+msgid "Set working directory..."
+msgstr "Arbeitsverzeichnis setzen"
+
+#, fuzzy
+msgid "Clear working directory"
+msgstr "Arbeitsverzeichnis setzen"
+
 msgid "Rename group..."
 msgstr ""
 
@@ -383,6 +403,13 @@ msgstr ""
 
 msgid "Group name"
 msgstr ""
+
+#, fuzzy
+msgid "Set group working directory"
+msgstr "Arbeitsverzeichnis setzen"
+
+msgid "_Select"
+msgstr "A_uswählen"
 
 msgid "Rename group"
 msgstr ""
@@ -475,9 +502,6 @@ msgstr "Schrift auswählen"
 
 msgid "Select colors"
 msgstr "Farben auswählen"
-
-msgid "_Select"
-msgstr "A_uswählen"
 
 msgid "Colorset"
 msgstr "Farbengruppe"
