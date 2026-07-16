@@ -738,7 +738,12 @@ sakura_sidebar_add_page(SakuraPage *page, SakuraSidebarNode *parent)
 	node->parent = sakura_sidebar_group_ancestor(parent);
 	node->page = page;
 	page->sidebar_node = node;
-	sakura_sidebar_insert_node(node);
+	if (sakura.sidebar_pending_insert_after != NULL &&
+	    sakura.sidebar_pending_insert_after->parent == node->parent)
+		sakura_sidebar_insert_node_after(node, sakura.sidebar_pending_insert_after);
+	else
+		sakura_sidebar_insert_node(node);
+	sakura.sidebar_pending_insert_after = NULL;
 	sakura_sidebar_update_page(page);
 }
 
@@ -859,8 +864,18 @@ sakura_sidebar_prepare_context (struct sakura_sidebar_node *node)
 static void
 sakura_new_tab_in_scope_cb (GtkWidget *widget, void *data)
 {
+	SakuraSidebarNode *node = data;
+	SakuraSidebarNode *insert_after = NULL;
+
+	if (node != NULL && node->type == SAKURA_SIDEBAR_TERMINAL &&
+	    node->parent != NULL && node->parent->type == SAKURA_SIDEBAR_PAGE)
+		insert_after = node->parent;
+	else if (node != NULL && node->type == SAKURA_SIDEBAR_PAGE)
+		insert_after = node;
 	sakura_sidebar_prepare_context(data);
+	sakura.sidebar_pending_insert_after = insert_after;
 	sakura_new_tab_cb(widget, NULL);
+	sakura.sidebar_pending_insert_after = NULL;
 }
 
 
@@ -2807,19 +2822,29 @@ sakura_sidebar_update_attention_count(void)
 }
 
 
-void
-sakura_sidebar_insert_node(SakuraSidebarNode *node)
+static void
+sakura_sidebar_insert_node_relative(SakuraSidebarNode *node,
+                                     SakuraSidebarNode *sibling)
 {
 	GtkTreeIter iter, parent_iter;
+	GtkTreeIter sibling_iter;
 	GtkTreeIter *parent = NULL;
 	GtkTreePath *path;
+	gboolean inserted_after = FALSE;
 
 	if (node->parent != NULL && sakura_sidebar_get_iter(node->parent, &parent_iter))
 		parent = &parent_iter;
+	if (sibling != NULL && sibling->parent == node->parent &&
+	    sakura_sidebar_get_iter(sibling, &sibling_iter)) {
+		gtk_tree_store_insert_after(sakura.sidebar_model, &iter, parent,
+		                            &sibling_iter);
+		inserted_after = TRUE;
+	}
+	if (!inserted_after)
+		gtk_tree_store_append(sakura.sidebar_model, &iter, parent);
 
 	if (node->type == SAKURA_SIDEBAR_GROUP)
 		sakura_sidebar_update_group_row(node);
-	gtk_tree_store_append(sakura.sidebar_model, &iter, parent);
 	sakura_sidebar_set_node_row(node, &iter);
 
 	path = gtk_tree_model_get_path(GTK_TREE_MODEL(sakura.sidebar_model), &iter);
@@ -2831,6 +2856,21 @@ sakura_sidebar_insert_node(SakuraSidebarNode *node)
 		gtk_tree_view_expand_row(GTK_TREE_VIEW(sakura.sidebar_tree), path, FALSE);
 		gtk_tree_path_free(path);
 	}
+}
+
+
+void
+sakura_sidebar_insert_node(SakuraSidebarNode *node)
+{
+	sakura_sidebar_insert_node_relative(node, NULL);
+}
+
+
+void
+sakura_sidebar_insert_node_after(SakuraSidebarNode *node,
+                                 SakuraSidebarNode *sibling)
+{
+	sakura_sidebar_insert_node_relative(node, sibling);
 }
 
 

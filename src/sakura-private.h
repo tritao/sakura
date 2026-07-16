@@ -136,6 +136,7 @@ struct sakura_app {
 	SakuraSidebarNode *sidebar_root;
 	GList *sidebar_groups;
 	guint sidebar_next_group_id;
+	SakuraSidebarNode *sidebar_pending_insert_after;
 	gboolean sidebar_syncing;
 	GtkTreeRowReference *sidebar_pending_selection;
 	guint sidebar_selection_source_id;
@@ -640,6 +641,8 @@ void sakura_sidebar_update_attention_count(void);
 gboolean sakura_sidebar_get_iter(SakuraSidebarNode *node, GtkTreeIter *iter);
 void sakura_sidebar_free_node(SakuraSidebarNode *node);
 void sakura_sidebar_insert_node(SakuraSidebarNode *node);
+void sakura_sidebar_insert_node_after(SakuraSidebarNode *node,
+                                      SakuraSidebarNode *sibling);
 SakuraSidebarNode *sakura_sidebar_selected_node(void);
 SakuraSidebarNode *sakura_sidebar_selected_group(void);
 void sakura_sidebar_remove_tab(SakuraTab *tab);
