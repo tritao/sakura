@@ -52,14 +52,16 @@ ENDIF (NOT X11_FOUND)
 FIND_PROGRAM(POD2MAN pod2man)
 MESSAGE ("pod2man executable is" ${POD2MAN})
 
-ADD_EXECUTABLE (sakura)
-TARGET_SOURCES (sakura PRIVATE
+SET (SAKURA_APP_SOURCES
 	src/sakura.c
 	src/sakura-layout.c
 	src/sakura-tab.c
 	src/sakura-workspace.c
 	src/sakura-integrations.c
 	src/sakura-session.c)
+
+ADD_EXECUTABLE (sakura)
+TARGET_SOURCES (sakura PRIVATE ${SAKURA_APP_SOURCES})
 
 TARGET_INCLUDE_DIRECTORIES (sakura PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 TARGET_COMPILE_DEFINITIONS (sakura PRIVATE
@@ -123,6 +125,43 @@ IF (BUILD_TESTING)
 		TARGET_LINK_OPTIONS (sakura-core-test PRIVATE -fsanitize=address,undefined)
 	ENDIF ()
 	ADD_TEST (NAME core COMMAND sakura-core-test)
+
+	ADD_EXECUTABLE (sakura-workspace-gtk-test)
+	TARGET_SOURCES (sakura-workspace-gtk-test PRIVATE
+		tests/test-workspace-gtk.c
+		${SAKURA_APP_SOURCES})
+	TARGET_INCLUDE_DIRECTORIES (sakura-workspace-gtk-test PRIVATE
+		${CMAKE_CURRENT_SOURCE_DIR})
+	TARGET_COMPILE_DEFINITIONS (sakura-workspace-gtk-test PRIVATE
+		SAKURA_GTK_TEST
+		VERSION="${VERSION}"
+		DATADIR="${CMAKE_INSTALL_PREFIX}/share"
+		SAKURA_SOURCE_ICON_DIR="${CMAKE_SOURCE_DIR}/icons"
+		SAKURA_SOURCE_SCRIPT_DIR="${CMAKE_SOURCE_DIR}/scripts"
+		BUILDTYPE="${CMAKE_BUILD_TYPE}")
+	TARGET_COMPILE_OPTIONS (sakura-workspace-gtk-test PRIVATE
+		${SAKURA_WARNING_FLAGS}
+		-Wno-unused-function -Wno-unused-variable)
+	IF (WEBKIT41_FOUND)
+		TARGET_COMPILE_DEFINITIONS (sakura-workspace-gtk-test PRIVATE HAVE_WEBKITGTK)
+		TARGET_LINK_LIBRARIES (sakura-workspace-gtk-test PRIVATE PkgConfig::WEBKIT41)
+	ELSEIF (WEBKIT40_FOUND)
+		TARGET_COMPILE_DEFINITIONS (sakura-workspace-gtk-test PRIVATE HAVE_WEBKITGTK)
+		TARGET_LINK_LIBRARIES (sakura-workspace-gtk-test PRIVATE PkgConfig::WEBKIT40)
+	ENDIF ()
+	TARGET_LINK_LIBRARIES (sakura-workspace-gtk-test PRIVATE
+		PkgConfig::GLIB
+		PkgConfig::GIO_UNIX
+		PkgConfig::GTK
+		PkgConfig::VTE
+		PkgConfig::X11
+		m)
+	IF (SAKURA_ENABLE_SANITIZERS)
+		TARGET_COMPILE_OPTIONS (sakura-workspace-gtk-test PRIVATE
+			-fsanitize=address,undefined -fno-omit-frame-pointer)
+		TARGET_LINK_OPTIONS (sakura-workspace-gtk-test PRIVATE
+			-fsanitize=address,undefined)
+	ENDIF ()
 ENDIF (BUILD_TESTING)
 
 IF (Python3_Interpreter_FOUND)
@@ -133,7 +172,14 @@ IF (Python3_Interpreter_FOUND)
 		USES_TERMINAL)
 
 	FIND_PROGRAM (XVFB_EXECUTABLE Xvfb)
+	FIND_PROGRAM (XVFB_RUN_EXECUTABLE xvfb-run)
 	FIND_PROGRAM (XDOTOOL_EXECUTABLE xdotool)
+	IF (BUILD_TESTING AND XVFB_RUN_EXECUTABLE)
+		ADD_TEST (NAME workspace-gtk
+		          COMMAND ${XVFB_RUN_EXECUTABLE} -a
+		                  $<TARGET_FILE:sakura-workspace-gtk-test>)
+		SET_TESTS_PROPERTIES (workspace-gtk PROPERTIES TIMEOUT 30)
+	ENDIF (BUILD_TESTING AND XVFB_RUN_EXECUTABLE)
 	IF (BUILD_TESTING AND XVFB_EXECUTABLE AND XDOTOOL_EXECUTABLE)
 		ADD_TEST (NAME session-stress
 		          COMMAND ${Python3_EXECUTABLE}
