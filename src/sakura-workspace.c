@@ -15,6 +15,7 @@ static void sakura_sidebar_clear_directory_cb(GtkWidget *widget, void *data);
 
 static SakuraSidebarNode *sakura_sidebar_group_ancestor(SakuraSidebarNode *node);
 static void sakura_sidebar_refresh_group_rows(void);
+static void sakura_sidebar_refresh_tab_rows(void);
 static void sakura_sidebar_show_page_panes(SakuraPage *page);
 static void sakura_sidebar_hide_page_panes(SakuraPage *page);
 static void sakura_sidebar_add_page(SakuraPage *page, SakuraSidebarNode *parent);
@@ -134,6 +135,21 @@ sakura_sidebar_refresh_group_rows(void)
 
 	for (group = sakura.sidebar_groups; group != NULL; group = group->next)
 		sakura_sidebar_update_group_row(group->data);
+}
+
+
+static void
+sakura_sidebar_refresh_tab_rows(void)
+{
+	guint index;
+
+	if (sakura.panes == NULL)
+		return;
+	for (index = 0; index < sakura.panes->len; index++) {
+		SakuraTab *tab = g_ptr_array_index(sakura.panes, index);
+		if (tab != NULL && tab->sidebar_node != NULL)
+			sakura_sidebar_update_tab(tab);
+	}
 }
 
 
@@ -1594,6 +1610,7 @@ sakura_sidebar_save_groups (void)
 	sakura_session_accept_changes();
 	sakura_sidebar_sync_parents();
 	sakura_sidebar_refresh_group_rows();
+	sakura_sidebar_refresh_tab_rows();
 
 	ids = g_ptr_array_new_with_free_func(g_free);
 	parents = g_ptr_array_new_with_free_func(g_free);

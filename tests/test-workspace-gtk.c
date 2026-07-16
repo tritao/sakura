@@ -587,11 +587,18 @@ test_sidebar_hides_redundant_directory(void)
 
 	setup_workspace();
 	setup_sidebar_fixture();
+	sakura.panes = g_ptr_array_new();
+	for (guint index = 0; index < sakura.pages->len; index++) {
+		SakuraPage *page = g_ptr_array_index(sakura.pages, index);
+		for (guint pane_index = 0; pane_index < page->panes->len; pane_index++)
+			g_ptr_array_add(sakura.panes, g_ptr_array_index(page->panes, pane_index));
+	}
+	sakura.cfg = g_key_file_new();
 	sakura.sidebar_root->directory = g_strdup("/tmp");
 
 	same = sakura_page_at_page(0)->active_tab;
 	same->cwd = g_strdup("/tmp");
-	sakura_sidebar_update_tab(same);
+	sakura_sidebar_model_reordered_cb(NULL, NULL, NULL, NULL, NULL);
 	subtitle = test_sidebar_column(same, SAKURA_SIDEBAR_COLUMN_SUBTITLE);
 	tooltip = test_sidebar_column(same, SAKURA_SIDEBAR_COLUMN_TOOLTIP);
 	g_assert_cmpstr(subtitle, ==, "");
@@ -601,7 +608,7 @@ test_sidebar_hides_redundant_directory(void)
 
 	different = sakura_page_at_page(1)->active_tab;
 	different->cwd = g_strdup("/var");
-	sakura_sidebar_update_tab(different);
+	sakura_sidebar_model_reordered_cb(NULL, NULL, NULL, NULL, NULL);
 	subtitle = test_sidebar_column(different, SAKURA_SIDEBAR_COLUMN_SUBTITLE);
 	g_assert_cmpstr(subtitle, ==, "/var");
 	g_free(subtitle);
@@ -610,11 +617,15 @@ test_sidebar_hides_redundant_directory(void)
 	sakura.sidebar_root->directory = g_strdup("/directory-that-does-not-exist");
 	g_free(same->cwd);
 	same->cwd = g_strdup("/directory-that-does-not-exist");
-	sakura_sidebar_update_tab(same);
+	sakura_sidebar_model_reordered_cb(NULL, NULL, NULL, NULL, NULL);
 	subtitle = test_sidebar_column(same, SAKURA_SIDEBAR_COLUMN_SUBTITLE);
 	g_assert_cmpstr(subtitle, ==, "/directory-that-does-not-exist");
 	g_free(subtitle);
 
+	g_key_file_free(sakura.cfg);
+	sakura.cfg = NULL;
+	g_ptr_array_free(sakura.panes, TRUE);
+	sakura.panes = NULL;
 	teardown_workspace();
 }
 
