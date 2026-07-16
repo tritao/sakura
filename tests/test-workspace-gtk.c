@@ -329,6 +329,7 @@ test_page_free(SakuraPage *page)
 	for (index = 0; index < tabs->len; index++) {
 		SakuraTab *tab = g_ptr_array_index(tabs, index);
 		g_free(tab->terminal_id);
+		g_free(tab->cwd);
 		g_free(tab);
 	}
 	g_ptr_array_unref(tabs);
@@ -563,6 +564,61 @@ test_snapshot_destroy_restore_equivalence(void)
 }
 
 
+static gchar *
+test_sidebar_column(SakuraTab *tab, guint column)
+{
+	GtkTreeIter iter;
+	gchar *value = NULL;
+
+	g_assert_nonnull(tab);
+	g_assert_nonnull(tab->sidebar_node);
+	g_assert_true(sakura_sidebar_get_iter(tab->sidebar_node, &iter));
+	gtk_tree_model_get(GTK_TREE_MODEL(sakura.sidebar_model), &iter,
+	                   column, &value, -1);
+	return value;
+}
+
+
+static void
+test_sidebar_hides_redundant_directory(void)
+{
+	SakuraTab *same, *different;
+	gchar *subtitle, *tooltip;
+
+	setup_workspace();
+	setup_sidebar_fixture();
+	sakura.sidebar_root->directory = g_strdup("/tmp");
+
+	same = sakura_page_at_page(0)->active_tab;
+	same->cwd = g_strdup("/tmp");
+	sakura_sidebar_update_tab(same);
+	subtitle = test_sidebar_column(same, SAKURA_SIDEBAR_COLUMN_SUBTITLE);
+	tooltip = test_sidebar_column(same, SAKURA_SIDEBAR_COLUMN_TOOLTIP);
+	g_assert_cmpstr(subtitle, ==, "");
+	g_assert_true(g_strstr_len(tooltip, -1, "/tmp") != NULL);
+	g_free(subtitle);
+	g_free(tooltip);
+
+	different = sakura_page_at_page(1)->active_tab;
+	different->cwd = g_strdup("/var");
+	sakura_sidebar_update_tab(different);
+	subtitle = test_sidebar_column(different, SAKURA_SIDEBAR_COLUMN_SUBTITLE);
+	g_assert_cmpstr(subtitle, ==, "/var");
+	g_free(subtitle);
+
+	g_free(sakura.sidebar_root->directory);
+	sakura.sidebar_root->directory = g_strdup("/directory-that-does-not-exist");
+	g_free(same->cwd);
+	same->cwd = g_strdup("/directory-that-does-not-exist");
+	sakura_sidebar_update_tab(same);
+	subtitle = test_sidebar_column(same, SAKURA_SIDEBAR_COLUMN_SUBTITLE);
+	g_assert_cmpstr(subtitle, ==, "/directory-that-does-not-exist");
+	g_free(subtitle);
+
+	teardown_workspace();
+}
+
+
 static void
 test_restore_order_reconciliation(void)
 {
@@ -707,6 +763,8 @@ main(int argc, char **argv)
 	                test_select_and_detach_by_identity);
 	g_test_add_func("/workspace/snapshot-destroy-restore",
 	                test_snapshot_destroy_restore_equivalence);
+	g_test_add_func("/workspace/sidebar-directory-subtitles",
+	                test_sidebar_hides_redundant_directory);
 	g_test_add_func("/workspace/restore-order-reconciliation",
 	                test_restore_order_reconciliation);
 	g_test_add_func("/workspace/seeded-operations",

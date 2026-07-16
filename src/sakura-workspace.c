@@ -83,6 +83,23 @@ sakura_sidebar_directory_display(const gchar *directory)
 }
 
 
+static gboolean
+sakura_sidebar_paths_equal(const gchar *first, const gchar *second)
+{
+	gchar *canonical_first, *canonical_second;
+	gboolean equal;
+
+	if (first == NULL || first[0] == '\0' || second == NULL || second[0] == '\0')
+		return FALSE;
+	canonical_first = g_canonicalize_filename(first, NULL);
+	canonical_second = g_canonicalize_filename(second, NULL);
+	equal = g_strcmp0(canonical_first, canonical_second) == 0;
+	g_free(canonical_first);
+	g_free(canonical_second);
+	return equal;
+}
+
+
 static void
 sakura_sidebar_update_group_row(SakuraSidebarNode *node)
 {
@@ -2910,7 +2927,9 @@ sakura_sidebar_update_tab(SakuraTab *tab)
 {
 	GtkTreeIter iter;
 	SakuraSidebarNode *node;
-	gchar *title, *subtitle, *tooltip, *display_path;
+	gchar *title, *subtitle, *tooltip, *display_path, *full_subtitle;
+	gchar *group_directory;
+	gboolean hide_directory;
 	gint page;
 
 	if (tab == NULL || tab->sidebar_node == NULL)
@@ -2946,20 +2965,30 @@ sakura_sidebar_update_tab(SakuraTab *tab)
 			display_path = g_strdup(tab->cwd);
 	}
 	if (tab->host != NULL && display_path != NULL)
-		subtitle = g_strdup_printf("%s · %s", tab->host, display_path);
+		full_subtitle = g_strdup_printf("%s · %s", tab->host, display_path);
 	else if (tab->host != NULL)
-		subtitle = g_strdup(tab->host);
+		full_subtitle = g_strdup(tab->host);
 	else if (display_path != NULL)
-		subtitle = g_strdup(display_path);
+		full_subtitle = g_strdup(display_path);
 	else
-		subtitle = g_strdup("");
+		full_subtitle = g_strdup("");
 
-	if (tab->raw_title != NULL && tab->raw_title[0] != '\0' && subtitle[0] != '\0')
-		tooltip = g_strdup_printf("%s\n%s", tab->raw_title, subtitle);
+	group_directory = sakura_sidebar_directory_for_node(node);
+	hide_directory = display_path != NULL && group_directory != NULL &&
+	                 sakura_sidebar_paths_equal(tab->cwd, group_directory);
+	if (hide_directory && tab->host == NULL)
+		subtitle = g_strdup("");
+	else if (hide_directory)
+		subtitle = g_strdup(tab->host);
+	else
+		subtitle = g_strdup(full_subtitle);
+
+	if (tab->raw_title != NULL && tab->raw_title[0] != '\0' && full_subtitle[0] != '\0')
+		tooltip = g_strdup_printf("%s\n%s", tab->raw_title, full_subtitle);
 	else if (tab->raw_title != NULL && tab->raw_title[0] != '\0')
 		tooltip = g_strdup(tab->raw_title);
 	else
-		tooltip = g_strdup(subtitle);
+		tooltip = g_strdup(full_subtitle);
 
 	g_free(node->title);
 	g_free(node->subtitle);
@@ -2972,6 +3001,8 @@ sakura_sidebar_update_tab(SakuraTab *tab)
 	sakura_sidebar_update_page(tab->page);
 	sakura_tab_bar_update_tab(tab);
 	g_free(display_path);
+	g_free(full_subtitle);
+	g_free(group_directory);
 	sakura_session_mark_dirty();
 }
 
