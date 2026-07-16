@@ -3816,9 +3816,8 @@ sakura_sanitize_working_directory()
 /* main */
 /********/
 
-#ifndef SAKURA_GTK_TEST
 int
-main(int argc, char **argv)
+sakura_run(int argc, char **argv)
 {
 	gchar *localedir;
 	int i; int n;
@@ -3939,4 +3938,3 @@ main(int argc, char **argv)
 
 	return 0;
 }
-#endif

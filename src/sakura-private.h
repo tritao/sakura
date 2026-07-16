@@ -17,6 +17,7 @@
 
 typedef struct sakura_app SakuraApp;
 typedef struct sakura_page SakuraPage;
+int sakura_run(int argc, char **argv);
 typedef struct sakura_layout_node SakuraLayoutNode;
 typedef struct sakura_sidebar_node SakuraSidebarNode;
 typedef struct sakura_tab SakuraTab;
