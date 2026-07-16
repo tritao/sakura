@@ -840,14 +840,10 @@ sakura_tab_delete_page(gint page)
 				g_ptr_array_remove_fast(sakura.panes, pane);
 		}
 	}
-	if (sakura.tabs != NULL && tab_page != NULL)
-		g_ptr_array_remove(sakura.tabs, tab_page->tab_bar_tab);
-	if (sakura.pages != NULL) {
-		g_ptr_array_remove(sakura.pages, tab_page);
-		if (sakura.active_page == tab_page)
-			sakura.active_page = NULL;
-	}
-	gtk_notebook_remove_page(GTK_NOTEBOOK(sakura.notebook), page);
+	if (tab_page != NULL)
+		sakura_notebook_detach_page(tab_page);
+	if (sakura.active_page == tab_page)
+		sakura.active_page = NULL;
 	if (tab_page != NULL) {
 		sakura_sidebar_remove_page(tab_page);
 		sakura_page_free(tab_page);
@@ -2208,6 +2204,25 @@ sakura_notebook_sync_page_order(void)
 	}
 	g_ptr_array_unref(ordered_pages);
 	g_ptr_array_unref(ordered_tabs);
+	return TRUE;
+}
+
+gboolean
+sakura_notebook_detach_page(SakuraPage *page)
+{
+	gint notebook_page;
+
+	if (page == NULL || page->container == NULL || sakura.notebook == NULL)
+		return FALSE;
+	notebook_page = gtk_notebook_page_num(GTK_NOTEBOOK(sakura.notebook),
+	                                     page->container);
+	if (notebook_page < 0)
+		return FALSE;
+	if (sakura.tabs != NULL)
+		g_ptr_array_remove(sakura.tabs, page->tab_bar_tab);
+	if (sakura.pages != NULL)
+		g_ptr_array_remove(sakura.pages, page);
+	gtk_notebook_remove_page(GTK_NOTEBOOK(sakura.notebook), notebook_page);
 	return TRUE;
 }
 

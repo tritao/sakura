@@ -1,4 +1,5 @@
 #include <libintl.h>
+#include <stdarg.h>
 
 #include "sakura-private.h"
 
@@ -23,6 +24,107 @@ sakura_sidebar_group_ancestor(SakuraSidebarNode *node)
 	while (node != NULL && node->type != SAKURA_SIDEBAR_GROUP)
 		node = node->parent;
 	return node != NULL ? node : sakura.sidebar_root;
+}
+
+
+static gboolean
+sakura_workspace_validation_error(GError **error, const gchar *format, ...)
+{
+	va_list args;
+	gchar *message;
+
+	va_start(args, format);
+	message = g_strdup_vprintf(format, args);
+	va_end(args);
+	g_set_error_literal(error, G_FILE_ERROR, G_FILE_ERROR_FAILED, message);
+	g_free(message);
+	return FALSE;
+}
+
+
+gboolean
+sakura_workspace_validate(GError **error)
+{
+	GHashTable *seen_pages, *seen_tabs;
+	gint count, current, index;
+
+	if (sakura.notebook == NULL || sakura.pages == NULL || sakura.tabs == NULL)
+		return sakura_workspace_validation_error(error,
+		                                        "workspace collections are not initialized");
+	count = gtk_notebook_get_n_pages(GTK_NOTEBOOK(sakura.notebook));
+	if ((guint)count != sakura.pages->len || (guint)count != sakura.tabs->len)
+		return sakura_workspace_validation_error(
+			error, "notebook/pages/tabs count mismatch: %d/%u/%u",
+			count, sakura.pages->len, sakura.tabs->len);
+
+	seen_pages = g_hash_table_new(g_direct_hash, g_direct_equal);
+	seen_tabs = g_hash_table_new(g_direct_hash, g_direct_equal);
+	for (index = 0; index < count; index++) {
+		SakuraPage *page = sakura_page_at_page(index);
+		SakuraTab *tab = sakura_tab_at_page(index);
+		GError *layout_error = NULL;
+		guint pane_index;
+
+		if (page == NULL || tab == NULL) {
+			g_hash_table_destroy(seen_pages);
+			g_hash_table_destroy(seen_tabs);
+			return sakura_workspace_validation_error(error,
+			                                        "notebook page %d has no model object", index);
+		}
+		if (g_hash_table_contains(seen_pages, page) ||
+		    g_hash_table_contains(seen_tabs, tab)) {
+			g_hash_table_destroy(seen_pages);
+			g_hash_table_destroy(seen_tabs);
+			return sakura_workspace_validation_error(error,
+			                                        "duplicate page or representative at %d", index);
+		}
+		g_hash_table_add(seen_pages, page);
+		g_hash_table_add(seen_tabs, tab);
+		if (page->container != gtk_notebook_get_nth_page(
+				GTK_NOTEBOOK(sakura.notebook), index) ||
+		    tab->page != page || page->tab_bar_tab != tab ||
+		    !gtk_widget_get_visible(page->container) ||
+		    sakura_page_for_tab(tab) != index) {
+			g_hash_table_destroy(seen_pages);
+			g_hash_table_destroy(seen_tabs);
+			return sakura_workspace_validation_error(error,
+			                                        "page identity invariant failed at %d", index);
+		}
+		if (page->panes == NULL || page->panes->len == 0) {
+			g_hash_table_destroy(seen_pages);
+			g_hash_table_destroy(seen_tabs);
+			return sakura_workspace_validation_error(error,
+			                                        "page %d has no terminal panes", index);
+		}
+		for (pane_index = 0; pane_index < page->panes->len; pane_index++) {
+			SakuraTab *pane = g_ptr_array_index(page->panes, pane_index);
+			if (pane == NULL || pane->page != page || pane->layout_leaf == NULL ||
+			    pane->layout_leaf->widget != pane->hbox) {
+				g_hash_table_destroy(seen_pages);
+				g_hash_table_destroy(seen_tabs);
+				return sakura_workspace_validation_error(
+					error, "terminal leaf widget invariant failed at %d:%u",
+					index, pane_index);
+			}
+		}
+		if (!sakura_layout_validate(page, &layout_error)) {
+			g_propagate_prefixed_error(error, layout_error,
+			                           "page %d layout invalid: ", index);
+			g_hash_table_destroy(seen_pages);
+			g_hash_table_destroy(seen_tabs);
+			return FALSE;
+		}
+	}
+	g_hash_table_destroy(seen_pages);
+	g_hash_table_destroy(seen_tabs);
+
+	current = gtk_notebook_get_current_page(GTK_NOTEBOOK(sakura.notebook));
+	if (sakura.active_page != NULL &&
+	    (current < 0 || sakura_page_at_page(current) != sakura.active_page ||
+	     sakura.active_tab == NULL || sakura.active_tab->page != sakura.active_page))
+		return sakura_workspace_validation_error(error,
+		                                        "active page does not match GTK current page");
+	return TRUE;
 }
 
 static SakuraTab *

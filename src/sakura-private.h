@@ -518,6 +518,7 @@ SakuraTab *sakura_tab_at_page(gint page);
 SakuraPage *sakura_page_at_page(gint page);
 gint sakura_page_for_tab(SakuraTab *tab);
 gboolean sakura_notebook_sync_page_order(void);
+gboolean sakura_notebook_detach_page(SakuraPage *page);
 gint sakura_find_tab_by_terminal_id(const gchar *terminal_id);
 void sakura_notebook_page_reordered_cb(GtkNotebook *notebook, GtkWidget *child,
                                        guint page_num, void *data);
@@ -562,6 +563,7 @@ void sakura_sidebar_sync_parents(void);
 SakuraSessionSnapshot *sakura_workspace_snapshot_new(void);
 gboolean sakura_workspace_restore_snapshot(SakuraSessionSnapshot *snapshot);
 void sakura_workspace_finish_restore(void);
+gboolean sakura_workspace_validate(GError **error);
 gboolean sakura_cwd_tracking_poll_cb(gpointer data);
 void sakura_set_name_dialog_cb(GtkWidget *widget, void *data);
 void sakura_setname_entry_changed_cb(GtkWidget *widget, void *data);
