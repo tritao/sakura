@@ -33,6 +33,7 @@ test_sidebar_add_page(SakuraPage *page)
 	node->tooltip = g_strdup("Terminal");
 	node->parent = sakura.sidebar_root;
 	node->page = page;
+	page->group = sakura.sidebar_root;
 	page->sidebar_node = node;
 	sakura_sidebar_insert_node(node);
 }
@@ -952,6 +953,9 @@ test_close_active_page_preserves_group_scope(void)
 	g_assert_true(sakura_sidebar_move_page_to_group(page_a, group_a));
 	g_assert_true(sakura_sidebar_move_page_to_group(page_b, group_b));
 	g_assert_true(sakura_sidebar_move_page_to_group(page_c, group_a));
+	g_assert_true(page_a->group == group_a);
+	g_assert_true(page_b->group == group_b);
+	g_assert_true(page_c->group == group_a);
 	sakura.active_group_scope = group_a;
 	sakura.active_page = page_a;
 	sakura.active_tab = page_a->active_tab;
@@ -995,6 +999,9 @@ test_selecting_terminal_switches_group_scope(void)
 	g_assert_true(sakura_sidebar_move_page_to_group(page_a, group_a));
 	g_assert_true(sakura_sidebar_move_page_to_group(page_b, group_b));
 	g_assert_true(sakura_sidebar_move_page_to_group(page_c, group_a));
+	g_assert_true(sakura_group_for_session(page_a) == group_a);
+	g_assert_true(sakura_group_for_session(page_b) == group_b);
+	g_assert_true(sakura_group_for_session(page_c) == group_a);
 
 	sakura.active_group_scope = group_a;
 	sakura.active_task = NULL;
@@ -1075,6 +1082,7 @@ test_sidebar_task_owns_page(void)
 	task->title = g_strdup("Task page");
 	task->provider = g_strdup("local");
 	task->status = SAKURA_TASK_READY;
+	task->group = sakura.sidebar_root;
 	node = g_new0(SakuraSidebarNode, 1);
 	node->type = SAKURA_SIDEBAR_TASK;
 	node->id = g_strdup(task->id);
@@ -1088,12 +1096,14 @@ test_sidebar_task_owns_page(void)
 	page = sakura_page_at_page(1);
 	sakura_task_attach_page(task, page);
 	g_assert_true(page->task == task);
+	g_assert_true(page->group == sakura.sidebar_root);
 	g_assert_true(page->sidebar_node->parent == node);
 	g_assert_true(sakura_tab_is_in_active_scope(page->active_tab));
 	assert_workspace_consistent();
 
 	sakura_task_detach_page(page);
 	g_assert_null(page->task);
+	g_assert_true(page->group == sakura.sidebar_root);
 	g_assert_true(page->sidebar_node->parent == sakura.sidebar_root);
 	assert_workspace_consistent();
 

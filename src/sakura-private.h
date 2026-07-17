@@ -25,6 +25,9 @@ typedef SakuraPage SakuraSession;
 int sakura_run(int argc, char **argv);
 typedef struct sakura_layout_node SakuraLayoutNode;
 typedef struct sakura_sidebar_node SakuraSidebarNode;
+/* Groups are still represented by sidebar nodes for now, but ownership is
+ * explicit on the session/task models instead of being inferred at every use. */
+typedef SakuraSidebarNode SakuraGroup;
 typedef struct sakura_tab SakuraTab;
 typedef SakuraTab SakuraPane;
 typedef struct sakura_task SakuraTask;
@@ -369,6 +372,7 @@ struct sakura_task {
 	SakuraTaskStatus status;
 	SakuraSidebarNode *sidebar_node;
 	SakuraTask *parent;
+	SakuraGroup *group; /* Explicit owning group; not separately owned. */
 };
 
 struct sakura_page {
@@ -380,6 +384,7 @@ struct sakura_page {
 	SakuraTab *active_tab;
 	SakuraSidebarNode *sidebar_node;
 	SakuraTask *task;
+	SakuraGroup *group; /* Explicit owning group; not separately owned. */
 	gchar *last_active_terminal_id;
 	SakuraTab *tab_bar_tab;
 	GPtrArray *panes;
@@ -734,6 +739,8 @@ const gchar *sakura_task_status_label(SakuraTaskStatus status);
 const gchar *sakura_task_status_symbol(SakuraTaskStatus status);
 const gchar *sakura_task_status_color(SakuraTaskStatus status);
 SakuraTask *sakura_task_find_by_id(const gchar *id);
+SakuraGroup *sakura_group_for_task(SakuraTask *task);
+SakuraGroup *sakura_group_for_session(SakuraSession *session);
 void sakura_task_update_row(SakuraTask *task);
 void sakura_task_attach_page(SakuraTask *task, SakuraPage *page);
 void sakura_task_detach_page(SakuraPage *page);
