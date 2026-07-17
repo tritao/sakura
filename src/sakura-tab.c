@@ -886,6 +886,12 @@ sakura_tab_delete_page(gint page)
 	tab_page = sk_tab->page;
 	page_panes = tab_page != NULL && tab_page->panes != NULL
 	           ? g_ptr_array_ref(tab_page->panes) : NULL;
+	/* Capture this before GTK detaches the page. Removing the current page can
+	 * synchronously emit switch-page and temporarily point active_page at a
+	 * physical notebook neighbor. */
+	removed_active = tab_page != NULL &&
+	               (sakura.active_page == tab_page ||
+	                gtk_notebook_get_current_page(GTK_NOTEBOOK(sakura.notebook)) == page);
 	if (page_panes != NULL) {
 		for (guint index = 0; index < page_panes->len; index++)
 			sakura_tab_disconnect_exit_handler(g_ptr_array_index(page_panes, index));
@@ -895,7 +901,6 @@ sakura_tab_delete_page(gint page)
 		sakura.workspace_mutating = FALSE;
 		return FALSE;
 	}
-	removed_active = tab_page != NULL && sakura.active_page == tab_page;
 	if (removed_active)
 		sakura.active_tab = NULL;
 
@@ -930,13 +935,16 @@ sakura_tab_delete_page(gint page)
 		sakura_set_size();
 	sakura_sidebar_update_attention_count();
 
+	/* Commit the deletion before selecting a replacement. This lets the normal
+	 * notebook callback run for the replacement page and keeps the fallback
+	 * scoped to the group/task that owned the deleted page. */
+	sakura.workspace_mutating = FALSE;
 	if (removed_active)
 		sakura_select_scope_default();
 	else
 		sakura_tab_bar_refresh();
 	sakura_session_mark_dirty();
 	sakura_session_flush();
-	sakura.workspace_mutating = FALSE;
 	return TRUE;
 }
 

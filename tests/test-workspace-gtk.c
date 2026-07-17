@@ -810,6 +810,49 @@ test_sidebar_selects_created_tab(void)
 
 
 static void
+test_close_active_page_preserves_group_scope(void)
+{
+	SakuraSidebarNode *group_a, *group_b;
+	SakuraPage *page_a, *page_b, *page_c;
+
+	setup_workspace();
+	setup_sidebar_fixture();
+	group_a = test_sidebar_add_group("group-a", "Alpha", sakura.sidebar_root);
+	group_b = test_sidebar_add_group("group-b", "Beta", sakura.sidebar_root);
+	page_a = sakura_page_at_page(0);
+	page_b = sakura_page_at_page(1);
+	page_c = sakura_page_at_page(2);
+	g_assert_true(sakura_sidebar_move_page_to_group(page_a, group_a));
+	g_assert_true(sakura_sidebar_move_page_to_group(page_b, group_b));
+	g_assert_true(sakura_sidebar_move_page_to_group(page_c, group_a));
+	sakura.active_group_scope = group_a;
+	sakura.active_page = page_a;
+	sakura.active_tab = page_a->active_tab;
+	gtk_notebook_set_current_page(GTK_NOTEBOOK(sakura.notebook), 0);
+	group_a->last_terminal_id = g_strdup(page_a->active_tab->terminal_id);
+	g_signal_connect(sakura.notebook, "switch-page",
+	                 G_CALLBACK(sakura_switch_page_cb), NULL);
+
+	/* The physical next notebook page belongs to Beta. The replacement must
+	 * still come from Alpha after GTK emits its removal-time switch signal. */
+	g_assert_true(sakura_tab_delete_page(0));
+	g_assert_true(sakura.active_group_scope == group_a);
+	g_assert_true(sakura.active_page == page_c);
+	g_assert_true(sakura.active_tab == page_c->active_tab);
+	g_assert_cmpstr(group_a->last_terminal_id, ==, page_c->active_tab->terminal_id);
+	g_assert_cmpstr(sakura_tab_at_page(0)->terminal_id, ==,
+	                page_b->active_tab->terminal_id);
+	g_assert_cmpstr(sakura_tab_at_page(1)->terminal_id, ==,
+	                page_c->active_tab->terminal_id);
+
+	sakura_sidebar_cancel_pending_selection();
+	test_sidebar_remove_group(group_a);
+	test_sidebar_remove_group(group_b);
+	teardown_workspace();
+}
+
+
+static void
 test_sidebar_task_owns_page(void)
 {
 	SakuraTask *task;
@@ -1137,6 +1180,8 @@ main(int argc, char **argv)
 	                test_sidebar_pulses_nested_rows);
 	g_test_add_func("/workspace/sidebar-selects-created-tab",
 	                test_sidebar_selects_created_tab);
+	g_test_add_func("/workspace/close-active-page-preserves-group",
+	                test_close_active_page_preserves_group_scope);
 	g_test_add_func("/workspace/sidebar-task-owns-page",
 	                test_sidebar_task_owns_page);
 	g_test_add_func("/workspace/sidebar-creation-parent-context",

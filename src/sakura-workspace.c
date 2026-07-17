@@ -3419,6 +3419,11 @@ sakura_switch_page_cb (GtkWidget *widget, GtkWidget *widget_page,
 	(void)widget;
 	(void)widget_page;
 	(void)data;
+	/* Page removal is a transaction. GTK may emit switch-page while the old
+	 * page is being detached; the delete path performs the authoritative
+	 * group-aware selection once the model is consistent again. */
+	if (sakura.workspace_mutating)
+		return;
 	/* Don't use gtk_notebook_get_current_page here; GTK still reports the
 	 * previous page while this callback is dispatched. */
 	tab = sakura_tab_at_page(page_num);

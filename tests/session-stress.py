@@ -180,6 +180,54 @@ title=Page C
     )
 
 
+def write_group_close_fixture(config_file, session_file):
+    config_file.write_text(
+        "[sakura]\nless_questions=true\ndont_save=false\n"
+        "sidebar_visible=true\nsidebar_width=300\n",
+        encoding="utf-8",
+    )
+    session_file.write_text(
+        "[Session]\n"
+        "version=3\n"
+        "group_count=2\n"
+        "terminal_count=3\n"
+        "selected_terminal=2\n"
+        "sidebar_visible=true\n"
+        "sidebar_width=300\n"
+        "active_group_id=group-a\n\n"
+        "[Group0]\n"
+        "id=group-a\n"
+        "parent=root\n"
+        "title=Alpha\n\n"
+        "[Group1]\n"
+        "id=group-b\n"
+        "parent=root\n"
+        "title=Beta\n\n"
+        "[Terminal0]\n"
+        "parent=group-a\n"
+        "cwd=/tmp\n"
+        "terminal_id=close-terminal-a\n"
+        "kind=shell\n"
+        "title_set_by_user=true\n"
+        "title=Close A\n\n"
+        "[Terminal1]\n"
+        "parent=group-b\n"
+        "cwd=/tmp\n"
+        "terminal_id=close-terminal-b\n"
+        "kind=shell\n"
+        "title_set_by_user=true\n"
+        "title=Close B\n\n"
+        "[Terminal2]\n"
+        "parent=group-a\n"
+        "cwd=/tmp\n"
+        "terminal_id=close-terminal-c\n"
+        "kind=shell\n"
+        "title_set_by_user=true\n"
+        "title=Close C\n",
+        encoding="utf-8",
+    )
+
+
 def read_session(session_file):
     parser = configparser.ConfigParser(interpolation=None)
     parser.read(session_file, encoding="utf-8")
@@ -592,6 +640,41 @@ def run_create_delete_case(binary, config_file, session_file, env, log_file):
         raise
 
 
+def run_group_close_selection_case(binary, config_file, session_file, env, log_file):
+    """Ensure closing an active page selects the next page in its group."""
+    write_group_close_fixture(config_file, session_file)
+    process, window = launch_sakura(binary, config_file, env, log_file)
+    try:
+        wait_for_session(
+            session_file,
+            lambda value: value[1] == ["group-a", "group-a", "group-b"] and
+            value[2] == ["close-terminal-a", "close-terminal-c", "close-terminal-b"],
+        )
+        run(["xdotool", "windowfocus", "--sync", window], env)
+
+        # The physical next notebook page is group B. Group-aware fallback must
+        # skip it and select the remaining page in group A instead.
+        run(["xdotool", "key", "ctrl+shift+w"], env)
+        wait_for_session(
+            session_file,
+            lambda value: value[1] == ["group-a", "group-b"] and
+            value[2] == ["close-terminal-a", "close-terminal-b"],
+        )
+        _, selected_id = read_metadata(session_file)
+        if selected_id != "close-terminal-a":
+            raise AssertionError(
+                f"closing group A selected {selected_id}, expected close-terminal-a"
+            )
+
+        close_window(process, window, env)
+        process = None
+    except Exception:
+        if process is not None and process.poll() is None:
+            process.kill()
+            process.wait(timeout=3)
+        raise
+
+
 def run_visible_terminal_case(binary, config_file, session_file, env, log_file):
     """Verify sidebar selection focuses the VTE belonging to the selected page."""
     write_fixture(config_file, session_file)
@@ -851,6 +934,8 @@ def main():
             print("terminal key switching: passed")
             run_create_delete_case(binary, config_file, session_file, env, log_file)
             print("create/delete lifecycle: passed")
+            run_group_close_selection_case(binary, config_file, session_file, env, log_file)
+            print("group-aware close selection: passed")
             run_visible_terminal_case(binary, config_file, session_file, env, log_file)
             print("restored sidebar-to-VTE mapping: passed")
             run_failed_restore_case(binary, config_file, session_file, env, log_file)
