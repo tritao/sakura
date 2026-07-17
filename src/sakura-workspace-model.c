@@ -50,6 +50,198 @@ sakura_workspace_model_set_root(SakuraWorkspaceModel *model,
 }
 
 
+static gboolean
+sakura_workspace_model_group_belongs_to(const SakuraWorkspaceModel *model,
+                                        const SakuraGroup *group,
+                                        const SakuraGroup *parent)
+{
+	return group != NULL &&
+	       (group->parent == parent ||
+	        (group->parent == NULL && model != NULL &&
+	         parent == model->root_group));
+}
+
+
+static gint
+sakura_workspace_model_group_order_compare(gconstpointer first,
+                                            gconstpointer second)
+{
+	const SakuraGroup *first_group = first;
+	const SakuraGroup *second_group = second;
+
+	if (first_group->order < second_group->order)
+		return -1;
+	if (first_group->order > second_group->order)
+		return 1;
+	return 0;
+}
+
+
+static void
+sakura_workspace_model_append_ordered_groups(
+	const SakuraWorkspaceModel *model, SakuraGroup *parent,
+	GPtrArray *groups, GHashTable *seen)
+{
+	GList *children = NULL, *group_link;
+
+	if (model == NULL)
+		return;
+	for (group_link = model->groups; group_link != NULL;
+	     group_link = group_link->next) {
+		SakuraGroup *group = group_link->data;
+
+		if (group != NULL && group != model->root_group &&
+		    sakura_workspace_model_group_belongs_to(model, group, parent))
+			children = g_list_append(children, group);
+	}
+	children = g_list_sort(children,
+	                       sakura_workspace_model_group_order_compare);
+	for (group_link = children; group_link != NULL; group_link = group_link->next) {
+		SakuraGroup *group = group_link->data;
+
+		if (g_hash_table_add(seen, group)) {
+			g_ptr_array_add(groups, group);
+			sakura_workspace_model_append_ordered_groups(model, group,
+			                                             groups, seen);
+		}
+	}
+	g_list_free(children);
+}
+
+
+GPtrArray *
+sakura_workspace_model_ordered_groups(const SakuraWorkspaceModel *model)
+{
+	GPtrArray *groups = g_ptr_array_new();
+	GHashTable *seen = g_hash_table_new(g_direct_hash, g_direct_equal);
+	GList *group_link;
+
+	if (model != NULL) {
+		sakura_workspace_model_append_ordered_groups(model,
+		                                             model->root_group,
+		                                             groups, seen);
+		/* Preserve malformed or partially migrated model entries instead of
+		 * dropping them from persistence. Valid hierarchies were emitted above. */
+		for (group_link = model->groups; group_link != NULL;
+		     group_link = group_link->next) {
+			SakuraGroup *group = group_link->data;
+
+			if (group != NULL && group != model->root_group &&
+			    g_hash_table_add(seen, group))
+				g_ptr_array_add(groups, group);
+		}
+	}
+	g_hash_table_destroy(seen);
+	return groups;
+}
+
+
+static gint
+sakura_workspace_model_task_order_compare(gconstpointer first,
+                                           gconstpointer second)
+{
+	const SakuraTask *first_task = first;
+	const SakuraTask *second_task = second;
+
+	if (first_task->order < second_task->order)
+		return -1;
+	if (first_task->order > second_task->order)
+		return 1;
+	return 0;
+}
+
+
+static void
+sakura_workspace_model_append_task_subtree(const SakuraWorkspaceModel *model,
+                                            SakuraTask *parent,
+                                            GPtrArray *tasks,
+                                            GHashTable *seen)
+{
+	GList *children = NULL, *task_link;
+
+	if (model == NULL || parent == NULL || !g_hash_table_add(seen, parent))
+		return;
+	g_ptr_array_add(tasks, parent);
+	for (guint index = 0; index < model->tasks->len; index++) {
+		SakuraTask *child = g_ptr_array_index(model->tasks, index);
+
+		if (child != NULL && child->parent == parent)
+			children = g_list_append(children, child);
+	}
+	children = g_list_sort(children,
+	                       sakura_workspace_model_task_order_compare);
+	for (task_link = children; task_link != NULL; task_link = task_link->next)
+		sakura_workspace_model_append_task_subtree(model, task_link->data,
+		                                           tasks, seen);
+	g_list_free(children);
+}
+
+
+static gboolean
+sakura_workspace_model_task_belongs_to(const SakuraWorkspaceModel *model,
+                                       const SakuraTask *task,
+                                       const SakuraGroup *group)
+{
+	return task != NULL &&
+	       (task->group == group ||
+	        (task->group == NULL && model != NULL &&
+	         group == model->root_group));
+}
+
+
+static void
+sakura_workspace_model_append_ordered_tasks_for_group(
+	const SakuraWorkspaceModel *model, SakuraGroup *group,
+	GPtrArray *tasks, GHashTable *seen)
+{
+	GList *children = NULL, *task_link;
+
+	if (model == NULL || model->tasks == NULL)
+		return;
+	for (guint index = 0; index < model->tasks->len; index++) {
+		SakuraTask *task = g_ptr_array_index(model->tasks, index);
+
+		if (task != NULL && task->parent == NULL &&
+		    sakura_workspace_model_task_belongs_to(model, task, group))
+			children = g_list_append(children, task);
+	}
+	children = g_list_sort(children,
+	                       sakura_workspace_model_task_order_compare);
+	for (task_link = children; task_link != NULL; task_link = task_link->next)
+		sakura_workspace_model_append_task_subtree(model, task_link->data,
+		                                           tasks, seen);
+	g_list_free(children);
+}
+
+
+GPtrArray *
+sakura_workspace_model_ordered_tasks(const SakuraWorkspaceModel *model)
+{
+	GPtrArray *tasks = g_ptr_array_new();
+	GPtrArray *ordered_groups;
+	GHashTable *seen;
+
+	if (model == NULL || model->tasks == NULL)
+		return tasks;
+	seen = g_hash_table_new(g_direct_hash, g_direct_equal);
+	sakura_workspace_model_append_ordered_tasks_for_group(model,
+	                                                       model->root_group,
+	                                                       tasks, seen);
+	ordered_groups = sakura_workspace_model_ordered_groups(model);
+	for (guint index = 0; index < ordered_groups->len; index++)
+		sakura_workspace_model_append_ordered_tasks_for_group(
+			model, g_ptr_array_index(ordered_groups, index), tasks, seen);
+	g_ptr_array_unref(ordered_groups);
+	/* Preserve malformed or partially migrated task entries instead of
+	 * dropping them from persistence. */
+	for (guint index = 0; index < model->tasks->len; index++)
+		sakura_workspace_model_append_task_subtree(
+		model, g_ptr_array_index(model->tasks, index), tasks, seen);
+	g_hash_table_destroy(seen);
+	return tasks;
+}
+
+
 static SakuraGroup *
 sakura_workspace_model_find_group(SakuraWorkspaceModel *model,
                                   const gchar *id)
@@ -256,36 +448,6 @@ sakura_workspace_model_group_is_child_of(SakuraWorkspaceModel *model,
 	return group != NULL &&
 	       (group->parent == parent ||
 	        (group->parent == NULL && parent == model->root_group));
-}
-
-
-static gint
-sakura_workspace_model_group_order_compare(gconstpointer first,
-                                            gconstpointer second)
-{
-	const SakuraGroup *first_group = first;
-	const SakuraGroup *second_group = second;
-
-	if (first_group->order < second_group->order)
-		return -1;
-	if (first_group->order > second_group->order)
-		return 1;
-	return 0;
-}
-
-
-static gint
-sakura_workspace_model_task_order_compare(gconstpointer first,
-                                           gconstpointer second)
-{
-	const SakuraTask *first_task = first;
-	const SakuraTask *second_task = second;
-
-	if (first_task->order < second_task->order)
-		return -1;
-	if (first_task->order > second_task->order)
-		return 1;
-	return 0;
 }
 
 

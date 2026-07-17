@@ -2,6 +2,13 @@
 
 #include "src/sakura-private.h"
 
+static SakuraSessionSnapshot *
+test_workspace_snapshot_new(void)
+{
+	return sakura_workspace_model_snapshot_new(sakura.workspace, TRUE, 200);
+}
+
+
 static SakuraPage *
 test_page_new(const gchar *page_id, const gchar *terminal_id)
 {
@@ -726,7 +733,7 @@ test_snapshot_destroy_restore_equivalence(void)
 	setup_sidebar_fixture();
 	assert_workspace_consistent();
 
-	source = sakura_workspace_snapshot_new();
+	source = test_workspace_snapshot_new();
 	g_assert_cmpuint(source->pages->len, ==, 3);
 	g_assert_cmpuint(source->tabs->len, ==, 4);
 	g_assert_cmpuint(source->layouts->len, ==, 5);
@@ -1318,7 +1325,7 @@ test_task_model_survives_sidebar_projection(void)
 	g_assert_true(page->sidebar_node->parent == sakura.sidebar_root);
 	sakura_task_update_row(task);
 	assert_workspace_consistent();
-	snapshot = sakura_workspace_snapshot_new();
+	snapshot = test_workspace_snapshot_new();
 	g_assert_cmpuint(snapshot->tasks->len, ==, 1);
 	g_assert_cmpstr(((SakuraSessionTaskRecord *)g_ptr_array_index(
 		snapshot->tasks, 0))->id, ==, "task-model-only");
@@ -1464,7 +1471,7 @@ test_sidebar_rebuilds_nested_model_projection(void)
 	g_strfreev(saved_group_ids);
 	g_key_file_free(sakura.cfg);
 	sakura.cfg = NULL;
-	snapshot = sakura_workspace_snapshot_new();
+	snapshot = test_workspace_snapshot_new();
 	g_assert_cmpuint(snapshot->groups->len, ==, 1);
 	group_record = g_ptr_array_index(snapshot->groups, 0);
 	g_assert_cmpstr(group_record->id, ==, "projection-group");
@@ -1559,7 +1566,7 @@ test_sidebar_order_survives_snapshot_roundtrip(void)
 	g_assert_cmpuint(task_a->order, ==, 1);
 	assert_workspace_consistent();
 
-	source = sakura_workspace_snapshot_new();
+	source = test_workspace_snapshot_new();
 	g_assert_cmpuint(source->groups->len, ==, 2);
 	group_record = g_ptr_array_index(source->groups, 0);
 	g_assert_cmpstr(group_record->id, ==, "ordered-group-b");
@@ -1874,7 +1881,7 @@ test_sidebar_mixed_hierarchy_roundtrip(void)
 	g_assert_true(child_task->sidebar_node->parent == parent_task->sidebar_node);
 	assert_workspace_consistent();
 
-	source = sakura_workspace_snapshot_new();
+	source = test_workspace_snapshot_new();
 	group_record = test_snapshot_group_record(source, "mixed-nested");
 	g_assert_nonnull(group_record);
 	g_assert_cmpstr(group_record->parent_id, ==, "mixed-group-a");
@@ -2104,6 +2111,108 @@ test_workspace_model_restores_hierarchy_without_view(void)
 
 
 static void
+test_workspace_model_snapshot_without_view(void)
+{
+	SakuraWorkspaceModel *model = sakura_workspace_model_new();
+	SakuraSessionSnapshot *snapshot;
+	SakuraGroup *root = sakura_group_new("root", "Root", NULL);
+	SakuraGroup *group = sakura_group_new("model-group", "Model group", root);
+	SakuraTask *task = g_new0(SakuraTask, 1);
+
+	g_assert_true(sakura_workspace_model_set_root(model, root));
+	group->order = 2;
+	g_assert_true(sakura_workspace_model_add_group(model, group));
+	task->id = g_strdup("model-task");
+	task->title = g_strdup("Model task");
+	task->group = group;
+	task->order = 1;
+	g_assert_true(sakura_workspace_model_add_task(model, task));
+	model->active_group = group;
+	model->active_task = task;
+
+	snapshot = sakura_workspace_model_snapshot_new(model, TRUE, 240);
+	g_assert_nonnull(snapshot);
+	g_assert_cmpuint(snapshot->groups->len, ==, 1);
+	g_assert_cmpuint(snapshot->tasks->len, ==, 1);
+	g_assert_cmpuint(snapshot->tabs->len, ==, 0);
+	g_assert_cmpstr(snapshot->active_group_id, ==, "model-group");
+	g_assert_cmpstr(snapshot->selected_task_id, ==, "model-task");
+	g_assert_cmpint(snapshot->sidebar_width, ==, 240);
+	g_assert_null(group->sidebar_node);
+
+	sakura_session_snapshot_free(snapshot);
+	sakura_workspace_model_free(model);
+}
+
+
+static void
+test_workspace_model_restores_malformed_records(void)
+{
+	SakuraWorkspaceModel *model = sakura_workspace_model_new();
+	SakuraSessionSnapshot *snapshot = sakura_session_snapshot_new();
+	SakuraGroup *root = sakura_group_new("root", "Root", NULL);
+	SakuraSessionGroupRecord *cycle_a = g_new0(SakuraSessionGroupRecord, 1);
+	SakuraSessionGroupRecord *cycle_b = g_new0(SakuraSessionGroupRecord, 1);
+	SakuraSessionGroupRecord *orphan = g_new0(SakuraSessionGroupRecord, 1);
+	SakuraSessionTaskRecord *task_a = g_new0(SakuraSessionTaskRecord, 1);
+	SakuraSessionTaskRecord *task_b = g_new0(SakuraSessionTaskRecord, 1);
+	SakuraSessionTaskRecord *orphan_task = g_new0(SakuraSessionTaskRecord, 1);
+	SakuraGroup *restored_a, *restored_b, *restored_orphan;
+	SakuraTask *restored_task_a, *restored_task_b, *restored_orphan_task;
+
+	g_assert_true(sakura_workspace_model_set_root(model, root));
+	cycle_a->id = g_strdup("cycle-group-a");
+	cycle_a->parent_id = g_strdup("cycle-group-b");
+	cycle_a->title = g_strdup("Cycle A");
+	cycle_b->id = g_strdup("cycle-group-b");
+	cycle_b->parent_id = g_strdup("cycle-group-a");
+	cycle_b->title = g_strdup("Cycle B");
+	orphan->id = g_strdup("orphan-group");
+	orphan->parent_id = g_strdup("missing-group");
+	orphan->title = g_strdup("Orphan group");
+	g_ptr_array_add(snapshot->groups, cycle_a);
+	g_ptr_array_add(snapshot->groups, cycle_b);
+	g_ptr_array_add(snapshot->groups, orphan);
+
+	task_a->id = g_strdup("cycle-task-a");
+	task_a->parent_id = g_strdup("cycle-task-b");
+	task_a->group_id = g_strdup("root");
+	task_a->title = g_strdup("Cycle task A");
+	task_b->id = g_strdup("cycle-task-b");
+	task_b->parent_id = g_strdup("cycle-task-a");
+	task_b->group_id = g_strdup("root");
+	task_b->title = g_strdup("Cycle task B");
+	orphan_task->id = g_strdup("orphan-task");
+	orphan_task->parent_id = g_strdup("missing-task");
+	orphan_task->group_id = g_strdup("root");
+	orphan_task->title = g_strdup("Orphan task");
+	g_ptr_array_add(snapshot->tasks, task_a);
+	g_ptr_array_add(snapshot->tasks, task_b);
+	g_ptr_array_add(snapshot->tasks, orphan_task);
+
+	g_assert_true(sakura_workspace_model_restore_snapshot(model, snapshot));
+	restored_a = test_workspace_model_group_by_id(model, "cycle-group-a");
+	restored_b = test_workspace_model_group_by_id(model, "cycle-group-b");
+	restored_orphan = test_workspace_model_group_by_id(model, "orphan-group");
+	g_assert_true(restored_a->parent == root);
+	g_assert_true(restored_b->parent == root);
+	g_assert_true(restored_orphan->parent == root);
+	restored_task_a = sakura_workspace_model_find_task(model, "cycle-task-a");
+	restored_task_b = sakura_workspace_model_find_task(model, "cycle-task-b");
+	restored_orphan_task = sakura_workspace_model_find_task(model, "orphan-task");
+	g_assert_true(restored_task_a->parent == NULL);
+	g_assert_true(restored_task_b->parent == NULL);
+	g_assert_true(restored_orphan_task->parent == NULL);
+	g_assert_true(restored_task_a->group == root);
+	g_assert_true(restored_task_b->group == root);
+	g_assert_true(restored_orphan_task->group == root);
+
+	sakura_session_snapshot_free(snapshot);
+	sakura_workspace_model_free(model);
+}
+
+
+static void
 test_remove_random_pane(SakuraPage *page, GRand *random)
 {
 	SakuraTab *pane;
@@ -2266,6 +2375,10 @@ main(int argc, char **argv)
 	                test_workspace_model_instance_ownership);
 	g_test_add_func("/workspace/model-restores-without-view",
 	                test_workspace_model_restores_hierarchy_without_view);
+	g_test_add_func("/workspace/model-snapshots-without-view",
+	                test_workspace_model_snapshot_without_view);
+	g_test_add_func("/workspace/model-restores-malformed-records",
+	                test_workspace_model_restores_malformed_records);
 	g_test_add_func("/workspace/seeded-operations",
 	                test_seeded_workspace_operations);
 	return g_test_run();

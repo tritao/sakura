@@ -458,6 +458,7 @@ struct sakura_tab {
 	gchar *cwd;
 	gchar *host;
 	gchar *raw_title;
+	gchar *user_title;  /* Persisted title when the user renamed this tab. */
 	gchar *terminal_id;
 	SakuraTabKind kind;
 	SakuraToolKind tool;
@@ -656,7 +657,6 @@ gboolean sakura_sidebar_move_page_to_group(SakuraPage *page,
 gboolean sakura_sidebar_can_reorder_node_to_group(SakuraSidebarNode *source,
                                                     SakuraSidebarNode *target);
 void sakura_sidebar_sync_projection_links(void);
-SakuraSessionSnapshot *sakura_workspace_snapshot_new(void);
 gboolean sakura_workspace_restore_snapshot(SakuraSessionSnapshot *snapshot);
 void sakura_workspace_finish_restore(void);
 gboolean sakura_workspace_validate(GError **error);
@@ -762,6 +762,10 @@ gboolean sakura_workspace_model_set_root(SakuraWorkspaceModel *model,
                                           SakuraGroup *root_group);
 gboolean sakura_workspace_model_restore_snapshot(
 	SakuraWorkspaceModel *model, const SakuraSessionSnapshot *snapshot);
+GPtrArray *sakura_workspace_model_ordered_groups(
+	const SakuraWorkspaceModel *model);
+GPtrArray *sakura_workspace_model_ordered_tasks(
+	const SakuraWorkspaceModel *model);
 SakuraTask *sakura_workspace_model_find_task(SakuraWorkspaceModel *model,
                                               const gchar *id);
 SakuraGroup *sakura_group_new(const gchar *id, const gchar *title,
@@ -798,6 +802,9 @@ gboolean sakura_workspace_model_reorder_group(SakuraWorkspaceModel *model,
 gboolean sakura_workspace_model_append_task(SakuraWorkspaceModel *model,
                                              SakuraTask *task,
                                              SakuraGroup *group);
+SakuraSessionSnapshot *sakura_workspace_model_snapshot_new(
+	const SakuraWorkspaceModel *model, gboolean sidebar_visible,
+	gint sidebar_width);
 void sakura_task_update_row(SakuraTask *task);
 void sakura_task_attach_page(SakuraTask *task, SakuraPage *page);
 void sakura_task_detach_page(SakuraPage *page);

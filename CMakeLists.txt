@@ -58,6 +58,7 @@ SET (SAKURA_APP_SOURCES
 	src/sakura-tab.c
 	src/sakura-workspace.c
 	src/sakura-workspace-model.c
+	src/sakura-workspace-persistence.c
 	src/sakura-integrations.c
 	src/sakura-session.c)
 

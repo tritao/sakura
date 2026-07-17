@@ -1162,6 +1162,8 @@ sakura_set_tab_label_text(const gchar *title, gint page)
 	}
 
 	gtk_label_set_text(GTK_LABEL(tab->label), label_text);
+	g_free(tab->user_title);
+	tab->user_title = tab->label_set_byuser ? g_strdup(label_text) : NULL;
 	if (tab->page != NULL && tab->page->tab_bar_tab == tab) {
 		g_free(tab->page->title);
 		tab->page->title = g_strdup(label_text);
@@ -1439,9 +1441,9 @@ sakura_set_name_dialog_cb (GtkWidget *widget, void *data)
 	response = gtk_dialog_run(GTK_DIALOG(dialog));
 	if (response == GTK_RESPONSE_ACCEPT) {
 		sakura_session_accept_changes();
+		tab->label_set_byuser = TRUE;
 		sakura_set_tab_label_text(gtk_entry_get_text(GTK_ENTRY(entry)), page);
 		sakura_set_window_title(gtk_entry_get_text(GTK_ENTRY(entry)));
-		tab->label_set_byuser = TRUE;
 		sakura_sidebar_update_tab(tab);
 		sakura.main_title = NULL;
 	}
@@ -1861,6 +1863,7 @@ sakura_tab_free(SakuraTab *tab)
 	g_free(tab->cwd);
 	g_free(tab->host);
 	g_free(tab->raw_title);
+	g_free(tab->user_title);
 	g_free(tab->terminal_id);
 	g_free(tab->tool_target);
 	g_free(tab->codex_session_id);
