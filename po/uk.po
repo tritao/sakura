@@ -7,7 +7,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: sakura\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-07-17 11:09+0100\n"
+"POT-Creation-Date: 2026-07-17 11:18+0100\n"
 "PO-Revision-Date: 2018-04-29 13:18+0000\n"
 "Last-Translator: Andriy Nezhivy <adiynziy@gmail.com>\n"
 "Language-Team: Ukrainian <uk@li.org>\n"
@@ -409,6 +409,10 @@ msgid "Close page"
 msgstr "Закрити вкладку"
 
 #, fuzzy
+msgid "Close pane"
+msgstr "Закрити вкладку"
+
+#, fuzzy
 msgid "New terminal here"
 msgstr "Нова вкладка"
 
@@ -650,10 +654,6 @@ msgstr ""
 
 msgid "Focus Down"
 msgstr ""
-
-#, fuzzy
-msgid "Close pane"
-msgstr "Закрити вкладку"
 
 msgid "Equalize split"
 msgstr ""

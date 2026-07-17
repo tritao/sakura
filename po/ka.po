@@ -7,7 +7,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: sakura git\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-07-17 11:09+0100\n"
+"POT-Creation-Date: 2026-07-17 11:18+0100\n"
 "PO-Revision-Date: 2026-04-13 15:28+0200\n"
 "Last-Translator: Temuri Doghonadze <temuri.doghonadze@gmail.com>\n"
 "Language-Team: Georgian <(nothing)>\n"
@@ -410,6 +410,10 @@ msgid "Close page"
 msgstr "ჩანართის დახურვა"
 
 #, fuzzy
+msgid "Close pane"
+msgstr "ჩანართის დახურვა"
+
+#, fuzzy
 msgid "New terminal here"
 msgstr "ახალი ჩანართი"
 
@@ -640,10 +644,6 @@ msgstr ""
 
 msgid "Focus Down"
 msgstr ""
-
-#, fuzzy
-msgid "Close pane"
-msgstr "ჩანართის დახურვა"
 
 msgid "Equalize split"
 msgstr ""

@@ -1439,6 +1439,30 @@ sakura_sidebar_codex_reasoning_menu_new(struct sakura_sidebar_node *node)
 }
 
 
+static void
+sakura_sidebar_close_terminal_cb(GtkWidget *widget, gpointer data)
+{
+	struct sakura_sidebar_node *node = data;
+	SakuraTab *tab;
+	gint page;
+
+	(void)widget;
+	if (node == NULL || node->type != SAKURA_SIDEBAR_TERMINAL)
+		return;
+	tab = node->tab;
+	if (tab == NULL)
+		return;
+	if (tab->page != NULL && tab->page->panes != NULL &&
+	    tab->page->panes->len > 1) {
+		sakura_tab_delete_pane(tab);
+		return;
+	}
+	page = sakura_page_for_tab(tab);
+	if (page >= 0)
+		sakura_close_tab(page);
+}
+
+
 GtkWidget *
 sakura_sidebar_context_menu_new (struct sakura_sidebar_node *node)
 {
@@ -1560,9 +1584,19 @@ sakura_sidebar_context_menu_new (struct sakura_sidebar_node *node)
 			page_context != NULL && page_context->page != NULL &&
 			page_context->page->panes != NULL &&
 			page_context->page->panes->len > 1
-			? _("Close page") : _("Close terminal"));
-		g_signal_connect(item, "activate", G_CALLBACK(sakura_close_tab_cb),
-		                 context_node->tab);
+			? _("Close page")
+			: page_context == NULL && context_node->tab != NULL &&
+			  context_node->tab->page != NULL &&
+			  context_node->tab->page->panes != NULL &&
+			  context_node->tab->page->panes->len > 1
+			? _("Close pane") : _("Close terminal"));
+		if (page_context == NULL)
+			g_signal_connect(item, "activate",
+			                 G_CALLBACK(sakura_sidebar_close_terminal_cb),
+			                 context_node);
+		else
+			g_signal_connect(item, "activate", G_CALLBACK(sakura_close_tab_cb),
+			                 context_node->tab);
 		gtk_menu_shell_append(GTK_MENU_SHELL(menu), item);
 	} else if (context_node != NULL && context_node->type == SAKURA_SIDEBAR_GROUP) {
 		item = gtk_menu_item_new_with_label(

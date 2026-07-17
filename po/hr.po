@@ -8,7 +8,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: Sakura 2.3.4\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-07-17 11:09+0100\n"
+"POT-Creation-Date: 2026-07-17 11:18+0100\n"
 "PO-Revision-Date: 2020-05-06 05:00+0000\n"
 "Last-Translator: Milo Ivir <Unknown>\n"
 "Language-Team: \n"
@@ -410,6 +410,10 @@ msgid "Close page"
 msgstr "Zatvori karticu"
 
 #, fuzzy
+msgid "Close pane"
+msgstr "Zatvori karticu"
+
+#, fuzzy
 msgid "New terminal here"
 msgstr "Nova kartica"
 
@@ -640,10 +644,6 @@ msgstr ""
 
 msgid "Focus Down"
 msgstr ""
-
-#, fuzzy
-msgid "Close pane"
-msgstr "Zatvori karticu"
 
 msgid "Equalize split"
 msgstr ""

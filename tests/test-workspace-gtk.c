@@ -681,6 +681,30 @@ test_menu_has_label(GtkWidget *menu, const gchar *label)
 }
 
 
+static GtkWidget *
+test_menu_item_for_label(GtkWidget *menu, const gchar *label)
+{
+	GList *items, *item;
+	GtkWidget *result = NULL;
+
+	items = gtk_container_get_children(GTK_CONTAINER(menu));
+	for (item = items; item != NULL; item = item->next) {
+		GtkWidget *child;
+
+		if (!GTK_IS_MENU_ITEM(item->data))
+			continue;
+		child = gtk_bin_get_child(GTK_BIN(item->data));
+		if (GTK_IS_LABEL(child) &&
+		    g_strcmp0(gtk_label_get_text(GTK_LABEL(child)), label) == 0) {
+			result = item->data;
+			break;
+		}
+	}
+	g_list_free(items);
+	return result;
+}
+
+
 static void
 test_sidebar_hides_redundant_directory(void)
 {
@@ -929,6 +953,39 @@ test_sidebar_page_context_menu_names_page_close(void)
 
 
 static void
+test_sidebar_terminal_context_menu_closes_only_pane(void)
+{
+	SakuraPage *page;
+	SakuraTab *pane;
+	GtkWidget *menu;
+	GtkWidget *item;
+
+	setup_workspace();
+	page = sakura_page_at_page(1);
+	pane = g_new0(SakuraTab, 1);
+	pane->terminal_id = g_strdup("terminal-pane-close");
+	pane->hbox = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
+	pane->label = gtk_label_new("Terminal");
+	g_assert_true(sakura_layout_split_node_widgets(
+		page->active_tab->layout_leaf, SAKURA_SPLIT_DOWN, pane));
+	setup_sidebar_fixture();
+
+	menu = sakura_sidebar_context_menu_new(pane->sidebar_node);
+	g_assert_true(test_menu_has_label(menu, "Close pane"));
+	g_assert_false(test_menu_has_label(menu, "Close terminal"));
+	item = test_menu_item_for_label(menu, "Close pane");
+	g_assert_nonnull(item);
+	g_signal_emit_by_name(item, "activate");
+	g_assert_cmpuint(page->panes->len, ==, 1);
+	g_assert_true(sakura_page_at_page(1) == page);
+	assert_workspace_consistent();
+	gtk_widget_destroy(menu);
+
+	teardown_workspace();
+}
+
+
+static void
 test_restore_order_reconciliation(void)
 {
 	SakuraPage *first, *second, *third;
@@ -1088,6 +1145,8 @@ main(int argc, char **argv)
 	                test_sidebar_move_page_preserves_whole_page_parent);
 	g_test_add_func("/workspace/sidebar-page-context-menu-close-label",
 	                test_sidebar_page_context_menu_names_page_close);
+	g_test_add_func("/workspace/sidebar-terminal-context-menu-close-pane",
+	                test_sidebar_terminal_context_menu_closes_only_pane);
 	g_test_add_func("/workspace/restore-order-reconciliation",
 	                test_restore_order_reconciliation);
 	g_test_add_func("/workspace/seeded-operations",

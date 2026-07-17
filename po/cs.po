@@ -7,7 +7,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: sakura 2.3.8\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-07-17 11:09+0100\n"
+"POT-Creation-Date: 2026-07-17 11:18+0100\n"
 "PO-Revision-Date: 2018-05-03 16:14+0000\n"
 "Last-Translator: David Gómez <david@pleyades.net>\n"
 "Language-Team: Czech <gnome-cs-list@gnome.org>\n"
@@ -409,6 +409,10 @@ msgid "Close page"
 msgstr "Zavřít kartu"
 
 #, fuzzy
+msgid "Close pane"
+msgstr "Zavřít kartu"
+
+#, fuzzy
 msgid "New terminal here"
 msgstr "Nová karta"
 
@@ -639,10 +643,6 @@ msgstr ""
 
 msgid "Focus Down"
 msgstr ""
-
-#, fuzzy
-msgid "Close pane"
-msgstr "Zavřít kartu"
 
 msgid "Equalize split"
 msgstr ""

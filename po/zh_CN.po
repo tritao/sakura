@@ -7,7 +7,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: sakura 1.0.4\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-07-17 11:09+0100\n"
+"POT-Creation-Date: 2026-07-17 11:18+0100\n"
 "PO-Revision-Date: 2019-08-12 17:06+0000\n"
 "Last-Translator: David Gómez <david@pleyades.net>\n"
 "Language-Team: Chinese/Simplified <i18n-translation@lists.linux.net.cn>\n"
@@ -409,6 +409,10 @@ msgid "Close page"
 msgstr "关闭标签"
 
 #, fuzzy
+msgid "Close pane"
+msgstr "关闭标签"
+
+#, fuzzy
 msgid "New terminal here"
 msgstr "新建标签"
 
@@ -639,10 +643,6 @@ msgstr ""
 
 msgid "Focus Down"
 msgstr ""
-
-#, fuzzy
-msgid "Close pane"
-msgstr "关闭标签"
 
 msgid "Equalize split"
 msgstr ""

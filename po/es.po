@@ -5,7 +5,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: sakura\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-07-17 11:09+0100\n"
+"POT-Creation-Date: 2026-07-17 11:18+0100\n"
 "PO-Revision-Date: 2019-08-12 16:53+0000\n"
 "Last-Translator: David Gómez <david@pleyades.net>\n"
 "Language-Team: <davidge@pleyades.net>\n"
@@ -409,6 +409,10 @@ msgid "Close page"
 msgstr "Cerrar pestaña"
 
 #, fuzzy
+msgid "Close pane"
+msgstr "Cerrar pestaña"
+
+#, fuzzy
 msgid "New terminal here"
 msgstr "Pestaña nueva"
 
@@ -639,10 +643,6 @@ msgstr ""
 
 msgid "Focus Down"
 msgstr ""
-
-#, fuzzy
-msgid "Close pane"
-msgstr "Cerrar pestaña"
 
 msgid "Equalize split"
 msgstr ""
