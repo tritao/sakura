@@ -268,6 +268,7 @@ sakura_tab_spawn_shell(SakuraTab *tab, const gchar *cwd, gchar **env,
 void
 sakura_tab_spawn_codex(SakuraTab *tab, const gchar *cwd, gchar **env)
 {
+	gchar **codex_env = g_get_environ();
 	gchar *reasoning_config = NULL;
 	gchar *argv[10] = { (gchar *)"codex",
 	                    (gchar *)"--dangerously-bypass-approvals-and-sandbox",
@@ -286,9 +287,28 @@ sakura_tab_spawn_codex(SakuraTab *tab, const gchar *cwd, gchar **env)
 		argv[next_arg++] = (gchar *)"resume";
 		argv[next_arg++] = tab->codex_session_id;
 	}
+	/* NO_COLOR is inherited from the environment Sakura was launched from.
+	 * Codex is a color-capable TUI, so remove only this opt-out from its child
+	 * environment while preserving all other inherited variables and Sakura's
+	 * per-tab additions. */
+	if (env != NULL) {
+		gchar **entry;
+		for (entry = env; *entry != NULL; entry++) {
+			const gchar *separator = strchr(*entry, '=');
+			gchar *name;
+
+			if (separator == NULL || separator == *entry)
+				continue;
+			name = g_strndup(*entry, (gsize)(separator - *entry));
+			codex_env = g_environ_setenv(codex_env, name, separator + 1, TRUE);
+			g_free(name);
+		}
+	}
+	codex_env = g_environ_unsetenv(codex_env, "NO_COLOR");
 	vte_terminal_spawn_async(VTE_TERMINAL(tab->vte), VTE_PTY_NO_HELPER, cwd,
-	                         argv, env, G_SPAWN_SEARCH_PATH, NULL, NULL, NULL,
+	                         argv, codex_env, G_SPAWN_SEARCH_PATH, NULL, NULL, NULL,
 	                         -1, NULL, sakura_spawn_callback, tab);
+	g_strfreev(codex_env);
 	g_free(reasoning_config);
 }
 
@@ -444,6 +464,7 @@ sakura_tab_add_with_options (const gchar *restore_cwd,
                               const gchar *restore_codex_reasoning_effort,
                               const gchar *restore_tool_target,
                               const gchar *restore_terminal_id,
+                              gint restore_colorset,
                               const SakuraTabLaunchConfig *launch_config)
 {
 	struct sakura_tab *sk_tab;
@@ -459,6 +480,7 @@ sakura_tab_add_with_options (const gchar *restore_cwd,
 		.login_shell = FALSE,
 		.hold = FALSE,
 		.execute_on_existing_tabs = FALSE,
+		.suppress_current_cwd_fallback = FALSE,
 		.target_page = NULL,
 		.target_layout = NULL,
 		.target_ratio = 0.5,
@@ -535,7 +557,9 @@ sakura_tab_add_with_options (const gchar *restore_cwd,
 	event_box = sk_tab->tab_event_box;
 	close_button = sk_tab->tab_close_button;
 
-	sk_tab->colorset = sakura.last_colorset-1;
+	sk_tab->colorset = restore_colorset >= 0 && restore_colorset < NUM_COLORSETS
+	                 ? restore_colorset
+	                 : CLAMP(sakura.last_colorset - 1, 0, NUM_COLORSETS - 1);
 
 	/* -1 if there is no pages yet */
 	page = gtk_notebook_get_current_page(GTK_NOTEBOOK(sakura.notebook));
@@ -549,7 +573,7 @@ sakura_tab_add_with_options (const gchar *restore_cwd,
 		cwd = g_strdup(restore_cwd);
 	} else if (group_cwd != NULL) {
 		cwd = g_strdup(group_cwd);
-	} else if (page >= 0) {
+	} else if (page >= 0 && !config->suppress_current_cwd_fallback) {
 		struct sakura_tab *prev_term;
 		prev_term = sakura_tab_at_page(page);
 		/* If OSC7 method doesn't work, use the old one as fallback */
@@ -758,6 +782,8 @@ sakura_tab_add_with_options (const gchar *restore_cwd,
 	g_strfreev(command_env);
 
 	sakura_tab_configure_terminal(sk_tab);
+	if (!sakura.session_restoring)
+		sakura_sidebar_select_created_tab(sk_tab);
 
 }
 void
@@ -1849,7 +1875,9 @@ sakura_tab_bar_refresh(void)
 	sakura.tab_bar_refreshing = TRUE;
 
 	visible_count = sakura_tab_bar_visible_count();
-	scope_title = sakura.active_group_scope != NULL &&
+	scope_title = sakura.active_task != NULL && sakura.active_task->title != NULL
+	            ? sakura.active_task->title
+	            : sakura.active_group_scope != NULL &&
 	              sakura.active_group_scope->title != NULL
 	            ? sakura.active_group_scope->title
 	            : _("All terminals");

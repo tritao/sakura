@@ -6,7 +6,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: sakura 1.2.0\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-07-16 10:59+0100\n"
+"POT-Creation-Date: 2026-07-16 20:14+0100\n"
 "PO-Revision-Date: 2018-04-29 13:18+0000\n"
 "Last-Translator: David Gómez <david@pleyades.net>\n"
 "Language-Team: <fabrice.thiroux@free.fr>\n"
@@ -327,6 +327,19 @@ msgstr "Définir le titre de l'onglet..."
 msgid "Close terminal"
 msgstr "Fermer l'onglet"
 
+#, fuzzy
+msgid "Blocked"
+msgstr "Bloc"
+
+msgid "Ready for review"
+msgstr ""
+
+msgid "Done"
+msgstr ""
+
+msgid "Ready"
+msgstr ""
+
 #, fuzzy, c-format
 msgid "Working directory: %s"
 msgstr "Définir le répertoire de travail"
@@ -334,6 +347,9 @@ msgstr "Définir le répertoire de travail"
 #, fuzzy, c-format
 msgid "Inherited working directory: %s"
 msgstr "Définir le répertoire de travail"
+
+msgid "Untitled task"
+msgstr ""
 
 msgid "Open pull request..."
 msgstr ""
@@ -343,6 +359,26 @@ msgid "New terminal"
 msgstr "Nouvel onglet"
 
 msgid "New Codex session"
+msgstr ""
+
+msgid "Start work"
+msgstr ""
+
+#, fuzzy
+msgid "New subtask"
+msgstr "Nouvel onglet"
+
+msgid "Attach current page here"
+msgstr ""
+
+msgid "Set status"
+msgstr ""
+
+#, fuzzy
+msgid "Rename task..."
+msgstr "Définir le titre de l'onglet..."
+
+msgid "Delete task"
 msgstr ""
 
 #, fuzzy
@@ -361,6 +397,9 @@ msgstr ""
 msgid "Move page to group"
 msgstr ""
 
+msgid "Attach page to task"
+msgstr ""
+
 msgid "Rename Codex session..."
 msgstr ""
 
@@ -374,6 +413,14 @@ msgstr "Nouvel onglet"
 
 msgid "New subgroup"
 msgstr ""
+
+#, fuzzy
+msgid "New task"
+msgstr "Nouvel onglet"
+
+#, fuzzy
+msgid "New task here"
+msgstr "Nouvel onglet"
 
 #, fuzzy
 msgid "Change working directory..."
@@ -400,6 +447,16 @@ msgid "_Create"
 msgstr ""
 
 msgid "Group name"
+msgstr ""
+
+msgid "Task title"
+msgstr ""
+
+#, fuzzy
+msgid "Rename task"
+msgstr "Définir le titre de l'onglet..."
+
+msgid "Only empty tasks can be deleted."
 msgstr ""
 
 #, fuzzy

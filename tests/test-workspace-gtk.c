@@ -58,6 +58,38 @@ test_sidebar_add_tab(SakuraTab *tab)
 }
 
 
+static SakuraSidebarNode *
+test_sidebar_add_group(const gchar *id, const gchar *title,
+                       SakuraSidebarNode *parent)
+{
+	SakuraSidebarNode *node = g_new0(SakuraSidebarNode, 1);
+
+	node->type = SAKURA_SIDEBAR_GROUP;
+	node->id = g_strdup(id);
+	node->title = g_strdup(title);
+	node->subtitle = g_strdup("");
+	node->tooltip = g_strdup(title);
+	node->parent = parent;
+	sakura.sidebar_groups = g_list_append(sakura.sidebar_groups, node);
+	sakura_sidebar_insert_node(node);
+	return node;
+}
+
+
+static void
+test_sidebar_remove_group(SakuraSidebarNode *group)
+{
+	GtkTreeIter iter;
+
+	if (group == NULL)
+		return;
+	if (sakura_sidebar_get_iter(group, &iter))
+		gtk_tree_store_remove(sakura.sidebar_model, &iter);
+	sakura.sidebar_groups = g_list_remove(sakura.sidebar_groups, group);
+	sakura_sidebar_free_node(group);
+}
+
+
 static void
 setup_sidebar_fixture(void)
 {
@@ -475,6 +507,37 @@ test_leaf_widget_can_split(void)
 
 
 static void
+test_generated_page_id_avoids_existing_page(void)
+{
+	SakuraPage *seed;
+	SakuraPage *reserved;
+	SakuraPage *candidate;
+	gchar *reserved_id;
+	guint seed_number;
+
+	setup_workspace();
+	seed = sakura_page_new(NULL);
+	g_assert_true(g_str_has_prefix(seed->id, "page-"));
+	seed_number = (guint)g_ascii_strtoull(seed->id + strlen("page-"), NULL, 10);
+	g_ptr_array_add(sakura.pages, seed);
+	reserved_id = g_strdup_printf("page-%u", seed_number + 1);
+	reserved = sakura_page_new(reserved_id);
+	g_ptr_array_add(sakura.pages, reserved);
+	candidate = sakura_page_new(NULL);
+	g_assert_cmpstr(candidate->id, !=, seed->id);
+	g_assert_cmpstr(candidate->id, !=, reserved->id);
+
+	sakura_page_free(candidate);
+	g_ptr_array_remove(sakura.pages, reserved);
+	g_ptr_array_remove(sakura.pages, seed);
+	sakura_page_free(reserved);
+	sakura_page_free(seed);
+	g_free(reserved_id);
+	teardown_workspace();
+}
+
+
+static void
 test_select_and_detach_by_identity(void)
 {
 	SakuraPage *selected, *removed;
@@ -579,6 +642,21 @@ test_sidebar_column(SakuraTab *tab, guint column)
 }
 
 
+static guint
+test_sidebar_uint_column(SakuraTab *tab, guint column)
+{
+	GtkTreeIter iter;
+	guint value = 0;
+
+	g_assert_nonnull(tab);
+	g_assert_nonnull(tab->sidebar_node);
+	g_assert_true(sakura_sidebar_get_iter(tab->sidebar_node, &iter));
+	gtk_tree_model_get(GTK_TREE_MODEL(sakura.sidebar_model), &iter,
+	                   column, &value, -1);
+	return value;
+}
+
+
 static void
 test_sidebar_hides_redundant_directory(void)
 {
@@ -626,6 +704,176 @@ test_sidebar_hides_redundant_directory(void)
 	sakura.cfg = NULL;
 	g_ptr_array_free(sakura.panes, TRUE);
 	sakura.panes = NULL;
+	teardown_workspace();
+}
+
+
+static void
+test_sidebar_pulses_nested_rows(void)
+{
+	SakuraPage *page;
+	SakuraTab *tab;
+	guint before, after;
+
+	setup_workspace();
+	page = sakura_page_at_page(1);
+	tab = g_new0(SakuraTab, 1);
+	tab->terminal_id = g_strdup("terminal-spinner");
+	tab->hbox = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
+	tab->label = gtk_label_new("Terminal");
+	g_assert_true(sakura_layout_split_node_widgets(
+		page->active_tab->layout_leaf, SAKURA_SPLIT_DOWN, tab));
+	page->active_tab = tab;
+	sakura.active_page = page;
+	sakura.active_tab = tab;
+	setup_sidebar_fixture();
+
+	tab->status = SAKURA_TAB_STATUS_RUNNING;
+	sakura.sidebar_spinner_pulse = 41;
+	sakura_sidebar_update_tab(tab);
+	before = test_sidebar_uint_column(tab, SAKURA_SIDEBAR_COLUMN_STATUS_PULSE);
+	sakura_sidebar_spinner_pulse_cb(NULL);
+	after = test_sidebar_uint_column(tab, SAKURA_SIDEBAR_COLUMN_STATUS_PULSE);
+	g_assert_cmpuint(before, ==, 41);
+	g_assert_cmpuint(after, ==, 42);
+
+	teardown_workspace();
+}
+
+
+static void
+test_sidebar_selects_created_tab(void)
+{
+	GtkTreeModel *model = NULL;
+	GtkTreeIter iter;
+	SakuraSidebarNode *node = NULL;
+	SakuraTab *tab;
+
+	setup_workspace();
+	setup_sidebar_fixture();
+	tab = sakura_page_at_page(1)->active_tab;
+	sakura_sidebar_select_created_tab(tab);
+	g_assert_true(gtk_tree_selection_get_selected(sakura.sidebar_selection,
+	                                               &model, &iter));
+	gtk_tree_model_get(model, &iter, SAKURA_SIDEBAR_COLUMN_NODE, &node, -1);
+	g_assert_true(node == tab->page->sidebar_node);
+	teardown_workspace();
+}
+
+
+static void
+test_sidebar_task_owns_page(void)
+{
+	SakuraTask *task;
+	SakuraSidebarNode *node;
+	SakuraPage *page;
+	GtkTreeIter node_iter;
+
+	setup_workspace();
+	setup_sidebar_fixture();
+	sakura.tasks = g_ptr_array_new_with_free_func((GDestroyNotify)sakura_task_free);
+	task = g_new0(SakuraTask, 1);
+	task->id = g_strdup("task-sidebar");
+	task->title = g_strdup("Task page");
+	task->provider = g_strdup("local");
+	task->status = SAKURA_TASK_READY;
+	node = g_new0(SakuraSidebarNode, 1);
+	node->type = SAKURA_SIDEBAR_TASK;
+	node->id = g_strdup(task->id);
+	node->title = g_strdup(task->title);
+	node->parent = sakura.sidebar_root;
+	node->task = task;
+	task->sidebar_node = node;
+	g_ptr_array_add(sakura.tasks, task);
+	sakura_sidebar_insert_node(node);
+
+	page = sakura_page_at_page(1);
+	sakura_task_attach_page(task, page);
+	g_assert_true(page->task == task);
+	g_assert_true(page->sidebar_node->parent == node);
+	g_assert_true(sakura_tab_is_in_active_scope(page->active_tab));
+	assert_workspace_consistent();
+
+	sakura_task_detach_page(page);
+	g_assert_null(page->task);
+	g_assert_true(page->sidebar_node->parent == sakura.sidebar_root);
+	assert_workspace_consistent();
+
+	if (sakura_sidebar_get_iter(node, &node_iter))
+		gtk_tree_store_remove(sakura.sidebar_model, &node_iter);
+	sakura_sidebar_free_node(node);
+	task->sidebar_node = NULL;
+	sakura.active_task = NULL;
+	g_ptr_array_unref(sakura.tasks);
+	sakura.tasks = NULL;
+	teardown_workspace();
+}
+
+
+static void
+test_sidebar_creation_parent_preserves_context(void)
+{
+	SakuraSidebarNode root = { 0 };
+	SakuraSidebarNode freecad = { 0 };
+	SakuraSidebarNode bim_walls = { 0 };
+	SakuraSidebarNode task = { 0 };
+	SakuraSidebarNode page = { 0 };
+	SakuraSidebarNode terminal = { 0 };
+
+	root.type = SAKURA_SIDEBAR_GROUP;
+	freecad.type = SAKURA_SIDEBAR_GROUP;
+	freecad.parent = &root;
+	bim_walls.type = SAKURA_SIDEBAR_GROUP;
+	bim_walls.parent = &freecad;
+	task.type = SAKURA_SIDEBAR_TASK;
+	task.parent = &bim_walls;
+	page.type = SAKURA_SIDEBAR_PAGE;
+	page.parent = &task;
+	terminal.type = SAKURA_SIDEBAR_TERMINAL;
+	terminal.parent = &page;
+
+	/* A context-menu action must use the row that opened it, even when the
+	 * currently selected tab belongs to a nested group. */
+	g_assert_true(sakura_sidebar_creation_parent_for_context(&freecad) == &freecad);
+	g_assert_true(sakura_sidebar_creation_parent_for_context(&bim_walls) == &bim_walls);
+	g_assert_true(sakura_sidebar_creation_parent_for_context(&task) == &task);
+	g_assert_true(sakura_sidebar_creation_parent_for_context(&page) == &task);
+	g_assert_true(sakura_sidebar_creation_parent_for_context(&terminal) == &task);
+}
+
+
+static void
+test_sidebar_move_page_preserves_whole_page_parent(void)
+{
+	SakuraPage *page;
+	SakuraTab *pane;
+	SakuraSidebarNode *group;
+
+	setup_workspace();
+	page = sakura_page_at_page(1);
+	pane = g_new0(SakuraTab, 1);
+	pane->terminal_id = g_strdup("terminal-move-pane");
+	pane->hbox = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
+	pane->label = gtk_label_new("Terminal");
+	g_assert_true(sakura_layout_split_node_widgets(
+		page->active_tab->layout_leaf, SAKURA_SPLIT_DOWN, pane));
+	setup_sidebar_fixture();
+	group = test_sidebar_add_group("freecad", "FreeCAD", sakura.sidebar_root);
+
+	g_assert_true(sakura_sidebar_move_page_to_group(page, group));
+	g_assert_true(page->sidebar_node->parent == group);
+	g_assert_true(sakura_sidebar_get_iter(page->sidebar_node, &(GtkTreeIter){ 0 }));
+	for (guint index = 0; index < page->panes->len; index++) {
+		SakuraTab *tab = g_ptr_array_index(page->panes, index);
+		g_assert_true(tab->sidebar_node->parent == page->sidebar_node);
+	}
+
+	/* The persisted/model parent must agree with the GTK tree after a move. */
+	sakura_sidebar_sync_parents();
+	g_assert_true(page->sidebar_node->parent == group);
+	assert_workspace_consistent();
+
+	test_sidebar_remove_group(group);
 	teardown_workspace();
 }
 
@@ -770,12 +1018,24 @@ main(int argc, char **argv)
 	g_test_add_func("/workspace/notebook-identity-reorder",
 	                test_notebook_identity_and_reorder);
 	g_test_add_func("/workspace/leaf-widget-split", test_leaf_widget_can_split);
+	g_test_add_func("/workspace/generated-page-id-avoids-existing",
+	                test_generated_page_id_avoids_existing_page);
 	g_test_add_func("/workspace/select-detach-identity",
 	                test_select_and_detach_by_identity);
 	g_test_add_func("/workspace/snapshot-destroy-restore",
 	                test_snapshot_destroy_restore_equivalence);
 	g_test_add_func("/workspace/sidebar-directory-subtitles",
 	                test_sidebar_hides_redundant_directory);
+	g_test_add_func("/workspace/sidebar-pulses-nested-rows",
+	                test_sidebar_pulses_nested_rows);
+	g_test_add_func("/workspace/sidebar-selects-created-tab",
+	                test_sidebar_selects_created_tab);
+	g_test_add_func("/workspace/sidebar-task-owns-page",
+	                test_sidebar_task_owns_page);
+	g_test_add_func("/workspace/sidebar-creation-parent-context",
+	                test_sidebar_creation_parent_preserves_context);
+	g_test_add_func("/workspace/sidebar-move-page-parent",
+	                test_sidebar_move_page_preserves_whole_page_parent);
 	g_test_add_func("/workspace/restore-order-reconciliation",
 	                test_restore_order_reconciliation);
 	g_test_add_func("/workspace/seeded-operations",

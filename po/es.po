@@ -5,7 +5,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: sakura\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-07-16 10:59+0100\n"
+"POT-Creation-Date: 2026-07-16 20:14+0100\n"
 "PO-Revision-Date: 2019-08-12 16:53+0000\n"
 "Last-Translator: David Gómez <david@pleyades.net>\n"
 "Language-Team: <davidge@pleyades.net>\n"
@@ -326,6 +326,19 @@ msgstr "Establecer nombre de pestaña..."
 msgid "Close terminal"
 msgstr "Cerrar pestaña"
 
+#, fuzzy
+msgid "Blocked"
+msgstr "Bloque"
+
+msgid "Ready for review"
+msgstr ""
+
+msgid "Done"
+msgstr ""
+
+msgid "Ready"
+msgstr ""
+
 #, fuzzy, c-format
 msgid "Working directory: %s"
 msgstr "Establecer directorio actual"
@@ -333,6 +346,9 @@ msgstr "Establecer directorio actual"
 #, fuzzy, c-format
 msgid "Inherited working directory: %s"
 msgstr "Establecer directorio actual"
+
+msgid "Untitled task"
+msgstr ""
 
 msgid "Open pull request..."
 msgstr ""
@@ -342,6 +358,27 @@ msgid "New terminal"
 msgstr "Pestaña nueva"
 
 msgid "New Codex session"
+msgstr ""
+
+msgid "Start work"
+msgstr ""
+
+#, fuzzy
+msgid "New subtask"
+msgstr "Pestaña nueva"
+
+#, fuzzy
+msgid "Attach current page here"
+msgstr "Nueva pestaña tras la pestaña actual"
+
+msgid "Set status"
+msgstr ""
+
+#, fuzzy
+msgid "Rename task..."
+msgstr "Establecer nombre de pestaña..."
+
+msgid "Delete task"
 msgstr ""
 
 #, fuzzy
@@ -360,6 +397,10 @@ msgstr ""
 msgid "Move page to group"
 msgstr ""
 
+#, fuzzy
+msgid "Attach page to task"
+msgstr "Nueva pestaña tras la pestaña actual"
+
 msgid "Rename Codex session..."
 msgstr ""
 
@@ -373,6 +414,14 @@ msgstr "Pestaña nueva"
 
 msgid "New subgroup"
 msgstr ""
+
+#, fuzzy
+msgid "New task"
+msgstr "Pestaña nueva"
+
+#, fuzzy
+msgid "New task here"
+msgstr "Pestaña nueva"
 
 #, fuzzy
 msgid "Change working directory..."
@@ -399,6 +448,16 @@ msgid "_Create"
 msgstr ""
 
 msgid "Group name"
+msgstr ""
+
+msgid "Task title"
+msgstr ""
+
+#, fuzzy
+msgid "Rename task"
+msgstr "Establecer nombre de pestaña..."
+
+msgid "Only empty tasks can be deleted."
 msgstr ""
 
 #, fuzzy

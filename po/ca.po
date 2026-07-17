@@ -5,7 +5,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: sakura\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-07-16 10:59+0100\n"
+"POT-Creation-Date: 2026-07-16 20:14+0100\n"
 "PO-Revision-Date: 2019-09-30 05:43+0000\n"
 "Last-Translator: Adolfo Jayme <Unknown>\n"
 "Language-Team: Jordi Jané Cardo <jordi.jane@gmail.com>\n"
@@ -326,6 +326,19 @@ msgstr "Definir el nom de pestanya..."
 msgid "Close terminal"
 msgstr "Tancar pestanya"
 
+#, fuzzy
+msgid "Blocked"
+msgstr "Bloc"
+
+msgid "Ready for review"
+msgstr ""
+
+msgid "Done"
+msgstr ""
+
+msgid "Ready"
+msgstr ""
+
 #, fuzzy, c-format
 msgid "Working directory: %s"
 msgstr "Definir el directori actual"
@@ -333,6 +346,9 @@ msgstr "Definir el directori actual"
 #, fuzzy, c-format
 msgid "Inherited working directory: %s"
 msgstr "Definir el directori actual"
+
+msgid "Untitled task"
+msgstr ""
 
 msgid "Open pull request..."
 msgstr ""
@@ -342,6 +358,26 @@ msgid "New terminal"
 msgstr "Nova pestanya"
 
 msgid "New Codex session"
+msgstr ""
+
+msgid "Start work"
+msgstr ""
+
+#, fuzzy
+msgid "New subtask"
+msgstr "Nova pestanya"
+
+msgid "Attach current page here"
+msgstr ""
+
+msgid "Set status"
+msgstr ""
+
+#, fuzzy
+msgid "Rename task..."
+msgstr "Definir el nom de pestanya..."
+
+msgid "Delete task"
 msgstr ""
 
 #, fuzzy
@@ -360,6 +396,9 @@ msgstr ""
 msgid "Move page to group"
 msgstr ""
 
+msgid "Attach page to task"
+msgstr ""
+
 msgid "Rename Codex session..."
 msgstr ""
 
@@ -373,6 +412,14 @@ msgstr "Nova pestanya"
 
 msgid "New subgroup"
 msgstr ""
+
+#, fuzzy
+msgid "New task"
+msgstr "Nova pestanya"
+
+#, fuzzy
+msgid "New task here"
+msgstr "Nova pestanya"
 
 #, fuzzy
 msgid "Change working directory..."
@@ -399,6 +446,16 @@ msgid "_Create"
 msgstr ""
 
 msgid "Group name"
+msgstr ""
+
+msgid "Task title"
+msgstr ""
+
+#, fuzzy
+msgid "Rename task"
+msgstr "Definir el nom de pestanya..."
+
+msgid "Only empty tasks can be deleted."
 msgstr ""
 
 #, fuzzy

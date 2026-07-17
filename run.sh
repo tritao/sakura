@@ -4,9 +4,9 @@ set -euo pipefail
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 BUILD_DIR="${BUILD_DIR:-"$SCRIPT_DIR/build"}"
 
-if [[ ! -x "$BUILD_DIR/src/sakura" ]]; then
-	"$SCRIPT_DIR/build.sh"
-fi
+# CMake performs the incremental check, so this is a no-op when the build is
+# already up to date and also handles an unconfigured build directory.
+"$SCRIPT_DIR/build.sh"
 
 if [[ -z "${VTE_PREFIX:-}" && -f /tmp/sakura-vte/root/usr/lib/x86_64-linux-gnu/libvte-2.91.so ]]; then
 	VTE_PREFIX="/tmp/sakura-vte/root"

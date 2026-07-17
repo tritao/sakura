@@ -8,7 +8,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: Sakura 2.3.4\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-07-16 10:59+0100\n"
+"POT-Creation-Date: 2026-07-16 20:14+0100\n"
 "PO-Revision-Date: 2020-05-06 05:00+0000\n"
 "Last-Translator: Milo Ivir <Unknown>\n"
 "Language-Team: Deutsch <de@li.org>\n"
@@ -329,6 +329,19 @@ msgstr "Reiternamen setzen …"
 msgid "Close terminal"
 msgstr "Reiter schließen"
 
+#, fuzzy
+msgid "Blocked"
+msgstr "Rechteck"
+
+msgid "Ready for review"
+msgstr ""
+
+msgid "Done"
+msgstr ""
+
+msgid "Ready"
+msgstr ""
+
 #, fuzzy, c-format
 msgid "Working directory: %s"
 msgstr "Arbeitsverzeichnis setzen"
@@ -336,6 +349,9 @@ msgstr "Arbeitsverzeichnis setzen"
 #, fuzzy, c-format
 msgid "Inherited working directory: %s"
 msgstr "Arbeitsverzeichnis setzen"
+
+msgid "Untitled task"
+msgstr ""
 
 msgid "Open pull request..."
 msgstr ""
@@ -345,6 +361,26 @@ msgid "New terminal"
 msgstr "Neuer Reiter"
 
 msgid "New Codex session"
+msgstr ""
+
+msgid "Start work"
+msgstr ""
+
+#, fuzzy
+msgid "New subtask"
+msgstr "Neuer Reiter"
+
+msgid "Attach current page here"
+msgstr ""
+
+msgid "Set status"
+msgstr ""
+
+#, fuzzy
+msgid "Rename task..."
+msgstr "Reiternamen setzen …"
+
+msgid "Delete task"
 msgstr ""
 
 #, fuzzy
@@ -363,6 +399,9 @@ msgstr ""
 msgid "Move page to group"
 msgstr ""
 
+msgid "Attach page to task"
+msgstr ""
+
 msgid "Rename Codex session..."
 msgstr ""
 
@@ -376,6 +415,14 @@ msgstr "Neuer Reiter"
 
 msgid "New subgroup"
 msgstr ""
+
+#, fuzzy
+msgid "New task"
+msgstr "Neuer Reiter"
+
+#, fuzzy
+msgid "New task here"
+msgstr "Neuer Reiter"
 
 #, fuzzy
 msgid "Change working directory..."
@@ -402,6 +449,16 @@ msgid "_Create"
 msgstr ""
 
 msgid "Group name"
+msgstr ""
+
+msgid "Task title"
+msgstr ""
+
+#, fuzzy
+msgid "Rename task"
+msgstr "Reiternamen setzen …"
+
+msgid "Only empty tasks can be deleted."
 msgstr ""
 
 #, fuzzy

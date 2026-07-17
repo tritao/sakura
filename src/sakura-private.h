@@ -21,6 +21,7 @@ int sakura_run(int argc, char **argv);
 typedef struct sakura_layout_node SakuraLayoutNode;
 typedef struct sakura_sidebar_node SakuraSidebarNode;
 typedef struct sakura_tab SakuraTab;
+typedef struct sakura_task SakuraTask;
 typedef struct sakura_session_snapshot SakuraSessionSnapshot;
 
 struct sakura_codex_name_query;
@@ -92,9 +93,18 @@ typedef enum {
 
 typedef enum {
 	SAKURA_SIDEBAR_GROUP,
+	SAKURA_SIDEBAR_TASK,
 	SAKURA_SIDEBAR_PAGE,
 	SAKURA_SIDEBAR_TERMINAL
 } SakuraSidebarNodeType;
+
+typedef enum {
+	SAKURA_TASK_READY,
+	SAKURA_TASK_WORKING,
+	SAKURA_TASK_BLOCKED,
+	SAKURA_TASK_REVIEW,
+	SAKURA_TASK_DONE
+} SakuraTaskStatus;
 
 typedef struct {
 	const gchar *execute_command;
@@ -102,6 +112,7 @@ typedef struct {
 	gboolean login_shell;
 	gboolean hold;
 	gboolean execute_on_existing_tabs;
+	gboolean suppress_current_cwd_fallback;
 	SakuraPage *target_page;
 	SakuraLayoutNode *target_layout;
 	gdouble target_ratio;
@@ -136,6 +147,7 @@ struct sakura_app {
 	SakuraSidebarNode *sidebar_root;
 	GList *sidebar_groups;
 	guint sidebar_next_group_id;
+	guint sidebar_next_task_id;
 	SakuraSidebarNode *sidebar_pending_insert_after;
 	gboolean sidebar_syncing;
 	GtkTreeRowReference *sidebar_pending_selection;
@@ -146,6 +158,8 @@ struct sakura_app {
 	GPtrArray *tabs;               /* Stable tab ownership, in notebook order */
 	GPtrArray *pages;              /* Notebook pages; panes remain in tabs */
 	GPtrArray *panes;              /* All terminal surfaces, including splits */
+	GPtrArray *tasks;              /* Local task records */
+	SakuraTask *active_task;
 	SakuraPage *active_page;
 	GtkWidget *content_box;
 	GtkWidget *tab_bar_shell;
@@ -312,9 +326,21 @@ struct sakura_sidebar_node {
 	gchar *directory;
 	gchar *last_terminal_id;
 	SakuraSidebarNode *parent;
+	SakuraTask *task;
 	SakuraPage *page;
 	SakuraTab *tab;
 	GtkTreeRowReference *row;
+};
+
+struct sakura_task {
+	gchar *id;
+	gchar *title;
+	gchar *provider;
+	gchar *external_id;
+	gchar *url;
+	SakuraTaskStatus status;
+	SakuraSidebarNode *sidebar_node;
+	SakuraTask *parent;
 };
 
 struct sakura_page {
@@ -325,6 +351,7 @@ struct sakura_page {
 	SakuraLayoutNode *layout_root;
 	SakuraTab *active_tab;
 	SakuraSidebarNode *sidebar_node;
+	SakuraTask *task;
 	gchar *last_active_terminal_id;
 	SakuraTab *tab_bar_tab;
 	GPtrArray *panes;
@@ -534,6 +561,8 @@ void sakura_tab_bar_add_tab(SakuraTab *tab);
 void sakura_tab_bar_remove_tab(SakuraTab *tab);
 void sakura_select_tab(SakuraTab *tab, gboolean focus);
 void sakura_new_tab_cb(GtkWidget *widget, void *data);
+void sakura_new_tab_for_group(SakuraSidebarNode *group);
+void sakura_new_tab_for_task(SakuraTask *task);
 void sakura_split_current_cb(GtkWidget *widget, void *data);
 void sakura_focus_direction_cb(GtkWidget *widget, void *data);
 void sakura_toggle_zoom_current_cb(GtkWidget *widget, void *data);
@@ -550,6 +579,9 @@ void sakura_sidebar_selection_changed_cb(GtkTreeSelection *selection, void *data
 gboolean sakura_sidebar_button_press_cb(GtkWidget *widget, GdkEventButton *event,
                                          void *data);
 void sakura_sidebar_new_group_cb(GtkWidget *widget, void *data);
+void sakura_sidebar_new_task_cb(GtkWidget *widget, void *data);
+void sakura_sidebar_attach_page_to_task_cb(GtkWidget *widget, void *data);
+void sakura_sidebar_task_start_cb(GtkWidget *widget, void *data);
 void sakura_sidebar_model_reordered_cb(GtkTreeModel *model, GtkTreePath *path,
                                        GtkTreeIter *iter, gint *new_order,
                                        void *data);
@@ -563,6 +595,10 @@ void sakura_sidebar_collect_groups(GtkTreeModel *model, GtkTreeIter *parent,
                                    GPtrArray *ids, GPtrArray *parents,
                                    GPtrArray *titles, GPtrArray *directories);
 gchar *sakura_sidebar_directory_for_node(SakuraSidebarNode *node);
+SakuraSidebarNode *sakura_sidebar_creation_parent_for_context(
+                                      SakuraSidebarNode *context);
+gboolean sakura_sidebar_move_page_to_group(SakuraPage *page,
+                                            SakuraSidebarNode *group);
 void sakura_sidebar_sync_parents(void);
 SakuraSessionSnapshot *sakura_workspace_snapshot_new(void);
 gboolean sakura_workspace_restore_snapshot(SakuraSessionSnapshot *snapshot);
@@ -601,6 +637,7 @@ void sakura_tab_add_with_options(const gchar *restore_cwd,
                                  const gchar *restore_codex_reasoning_effort,
                                  const gchar *restore_tool_target,
                                  const gchar *restore_terminal_id,
+                                 gint restore_colorset,
                                  const SakuraTabLaunchConfig *launch_config);
 void sakura_tab_delete_page(gint page);
 void sakura_tab_delete_pane(SakuraTab *tab);
@@ -635,7 +672,8 @@ void sakura_add_tab_with_options(const gchar *restore_cwd,
                                  const gchar *restore_codex_name,
                                  const gchar *restore_codex_reasoning_effort,
                                  const gchar *restore_tool_target,
-                                 const gchar *restore_terminal_id);
+                                 const gchar *restore_terminal_id,
+                                 gint restore_colorset);
 void sakura_sidebar_update_tab(SakuraTab *tab);
 void sakura_sidebar_update_attention_count(void);
 gboolean sakura_sidebar_get_iter(SakuraSidebarNode *node, GtkTreeIter *iter);
@@ -647,8 +685,17 @@ SakuraSidebarNode *sakura_sidebar_selected_node(void);
 SakuraSidebarNode *sakura_sidebar_selected_group(void);
 void sakura_sidebar_remove_tab(SakuraTab *tab);
 void sakura_sidebar_queue_select_node(SakuraSidebarNode *node);
+void sakura_sidebar_select_created_tab(SakuraTab *tab);
 void sakura_sidebar_cancel_pending_selection(void);
 void sakura_sidebar_set_node_row(SakuraSidebarNode *node, GtkTreeIter *iter);
+const gchar *sakura_task_status_label(SakuraTaskStatus status);
+const gchar *sakura_task_status_symbol(SakuraTaskStatus status);
+const gchar *sakura_task_status_color(SakuraTaskStatus status);
+SakuraTask *sakura_task_find_by_id(const gchar *id);
+void sakura_task_update_row(SakuraTask *task);
+void sakura_task_attach_page(SakuraTask *task, SakuraPage *page);
+void sakura_task_detach_page(SakuraPage *page);
+void sakura_task_free(SakuraTask *task);
 gboolean sakura_sidebar_spinner_pulse_cb(gpointer data);
 void sakura_session_mark_dirty(void);
 void sakura_session_flush(void);
@@ -676,6 +723,17 @@ typedef struct {
 } SakuraSessionGroupRecord;
 
 typedef struct {
+	gchar *id;
+	gchar *parent_id;
+	gchar *group_id;
+	gchar *title;
+	gchar *provider;
+	gchar *external_id;
+	gchar *url;
+	SakuraTaskStatus status;
+} SakuraSessionTaskRecord;
+
+typedef struct {
 	gchar *parent_id;
 	gchar *cwd;
 	gchar *title;
@@ -685,6 +743,7 @@ typedef struct {
 	gchar *codex_session_id;
 	gchar *codex_session_name;
 	gchar *codex_reasoning_effort;
+	gint colorset;
 	SakuraTabKind kind;
 	gboolean title_set_by_user;
 	SakuraTabStatus status;
@@ -699,6 +758,7 @@ typedef struct {
 	gboolean title_set_by_user;
 	gchar *root_layout_id;
 	gchar *active_terminal_id;
+	gchar *task_id;
 } SakuraSessionPageRecord;
 
 typedef struct {
@@ -714,12 +774,14 @@ typedef struct {
 
 struct sakura_session_snapshot {
 	GPtrArray *groups;
+	GPtrArray *tasks;
 	GPtrArray *tabs;
 	GPtrArray *pages;
 	GPtrArray *layouts;
 	gint selected_terminal;
 	gchar *selected_terminal_id;
 	gchar *selected_page_id;
+	gchar *selected_task_id;
 	gchar *active_group_id;
 	gchar *root_directory;
 	gboolean sidebar_visible;

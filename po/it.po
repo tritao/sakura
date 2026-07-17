@@ -5,7 +5,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: sakura\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-07-16 10:59+0100\n"
+"POT-Creation-Date: 2026-07-16 20:14+0100\n"
 "PO-Revision-Date: 2018-04-29 13:18+0000\n"
 "Last-Translator: David Gómez <david@pleyades.net>\n"
 "Language-Team: sakura-it <nicola@entidi.it>\n"
@@ -329,6 +329,19 @@ msgstr "Imposta il nome di la scheda"
 msgid "Close terminal"
 msgstr "Chiudi la scheda"
 
+#, fuzzy
+msgid "Blocked"
+msgstr "Blocco"
+
+msgid "Ready for review"
+msgstr ""
+
+msgid "Done"
+msgstr ""
+
+msgid "Ready"
+msgstr ""
+
 #, fuzzy, c-format
 msgid "Working directory: %s"
 msgstr "Imposta la directory di lavoro"
@@ -336,6 +349,9 @@ msgstr "Imposta la directory di lavoro"
 #, fuzzy, c-format
 msgid "Inherited working directory: %s"
 msgstr "Imposta la directory di lavoro"
+
+msgid "Untitled task"
+msgstr ""
 
 msgid "Open pull request..."
 msgstr ""
@@ -345,6 +361,26 @@ msgid "New terminal"
 msgstr "Nuova scheda"
 
 msgid "New Codex session"
+msgstr ""
+
+msgid "Start work"
+msgstr ""
+
+#, fuzzy
+msgid "New subtask"
+msgstr "Nuova scheda"
+
+msgid "Attach current page here"
+msgstr ""
+
+msgid "Set status"
+msgstr ""
+
+#, fuzzy
+msgid "Rename task..."
+msgstr "Imposta il nome di la scheda"
+
+msgid "Delete task"
 msgstr ""
 
 #, fuzzy
@@ -363,6 +399,9 @@ msgstr ""
 msgid "Move page to group"
 msgstr ""
 
+msgid "Attach page to task"
+msgstr ""
+
 msgid "Rename Codex session..."
 msgstr ""
 
@@ -376,6 +415,14 @@ msgstr "Nuova scheda"
 
 msgid "New subgroup"
 msgstr ""
+
+#, fuzzy
+msgid "New task"
+msgstr "Nuova scheda"
+
+#, fuzzy
+msgid "New task here"
+msgstr "Nuova scheda"
 
 #, fuzzy
 msgid "Change working directory..."
@@ -402,6 +449,16 @@ msgid "_Create"
 msgstr ""
 
 msgid "Group name"
+msgstr ""
+
+msgid "Task title"
+msgstr ""
+
+#, fuzzy
+msgid "Rename task"
+msgstr "Imposta il nome di la scheda"
+
+msgid "Only empty tasks can be deleted."
 msgstr ""
 
 #, fuzzy

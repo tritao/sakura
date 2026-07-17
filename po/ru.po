@@ -2,7 +2,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: sakura\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-07-16 10:59+0100\n"
+"POT-Creation-Date: 2026-07-16 20:14+0100\n"
 "PO-Revision-Date: 2018-04-29 13:18+0000\n"
 "Last-Translator: ManDrive <roman_romul@mail.ru>\n"
 "Language-Team: Evgenij Vdovin <evdovin@pochta.ru>\n"
@@ -323,6 +323,19 @@ msgstr "Установить заголовок вкладки..."
 msgid "Close terminal"
 msgstr "Закрыть вкладку"
 
+#, fuzzy
+msgid "Blocked"
+msgstr "Блочный"
+
+msgid "Ready for review"
+msgstr ""
+
+msgid "Done"
+msgstr ""
+
+msgid "Ready"
+msgstr ""
+
 #, fuzzy, c-format
 msgid "Working directory: %s"
 msgstr "Установить рабочую директорию"
@@ -330,6 +343,9 @@ msgstr "Установить рабочую директорию"
 #, fuzzy, c-format
 msgid "Inherited working directory: %s"
 msgstr "Установить рабочую директорию"
+
+msgid "Untitled task"
+msgstr ""
 
 msgid "Open pull request..."
 msgstr ""
@@ -339,6 +355,26 @@ msgid "New terminal"
 msgstr "Новая вкладка"
 
 msgid "New Codex session"
+msgstr ""
+
+msgid "Start work"
+msgstr ""
+
+#, fuzzy
+msgid "New subtask"
+msgstr "Новая вкладка"
+
+msgid "Attach current page here"
+msgstr ""
+
+msgid "Set status"
+msgstr ""
+
+#, fuzzy
+msgid "Rename task..."
+msgstr "Установить заголовок вкладки..."
+
+msgid "Delete task"
 msgstr ""
 
 #, fuzzy
@@ -357,6 +393,9 @@ msgstr ""
 msgid "Move page to group"
 msgstr ""
 
+msgid "Attach page to task"
+msgstr ""
+
 msgid "Rename Codex session..."
 msgstr ""
 
@@ -370,6 +409,14 @@ msgstr "Новая вкладка"
 
 msgid "New subgroup"
 msgstr ""
+
+#, fuzzy
+msgid "New task"
+msgstr "Новая вкладка"
+
+#, fuzzy
+msgid "New task here"
+msgstr "Новая вкладка"
 
 #, fuzzy
 msgid "Change working directory..."
@@ -396,6 +443,16 @@ msgid "_Create"
 msgstr ""
 
 msgid "Group name"
+msgstr ""
+
+msgid "Task title"
+msgstr ""
+
+#, fuzzy
+msgid "Rename task"
+msgstr "Установить заголовок вкладки..."
+
+msgid "Only empty tasks can be deleted."
 msgstr ""
 
 #, fuzzy

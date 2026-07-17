@@ -7,7 +7,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: sakura\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-07-16 10:59+0100\n"
+"POT-Creation-Date: 2026-07-16 20:14+0100\n"
 "PO-Revision-Date: 2019-08-12 16:54+0000\n"
 "Last-Translator: David Gómez <david@pleyades.net>\n"
 "Language-Team: English (United Kingdom) <en_GB@li.org>\n"
@@ -328,6 +328,19 @@ msgstr "Set tab name..."
 msgid "Close terminal"
 msgstr "Close tab"
 
+#, fuzzy
+msgid "Blocked"
+msgstr "Block"
+
+msgid "Ready for review"
+msgstr ""
+
+msgid "Done"
+msgstr ""
+
+msgid "Ready"
+msgstr ""
+
 #, fuzzy, c-format
 msgid "Working directory: %s"
 msgstr "Set working directory"
@@ -335,6 +348,9 @@ msgstr "Set working directory"
 #, fuzzy, c-format
 msgid "Inherited working directory: %s"
 msgstr "Set working directory"
+
+msgid "Untitled task"
+msgstr ""
 
 msgid "Open pull request..."
 msgstr ""
@@ -344,6 +360,27 @@ msgid "New terminal"
 msgstr "New tab"
 
 msgid "New Codex session"
+msgstr ""
+
+msgid "Start work"
+msgstr ""
+
+#, fuzzy
+msgid "New subtask"
+msgstr "New tab"
+
+#, fuzzy
+msgid "Attach current page here"
+msgstr "New tab after current tab"
+
+msgid "Set status"
+msgstr ""
+
+#, fuzzy
+msgid "Rename task..."
+msgstr "Set tab name..."
+
+msgid "Delete task"
 msgstr ""
 
 #, fuzzy
@@ -362,6 +399,10 @@ msgstr ""
 msgid "Move page to group"
 msgstr ""
 
+#, fuzzy
+msgid "Attach page to task"
+msgstr "New tab after current tab"
+
 msgid "Rename Codex session..."
 msgstr ""
 
@@ -375,6 +416,14 @@ msgstr "New tab"
 
 msgid "New subgroup"
 msgstr ""
+
+#, fuzzy
+msgid "New task"
+msgstr "New tab"
+
+#, fuzzy
+msgid "New task here"
+msgstr "New tab"
 
 #, fuzzy
 msgid "Change working directory..."
@@ -401,6 +450,16 @@ msgid "_Create"
 msgstr ""
 
 msgid "Group name"
+msgstr ""
+
+msgid "Task title"
+msgstr ""
+
+#, fuzzy
+msgid "Rename task"
+msgstr "Set tab name..."
+
+msgid "Only empty tasks can be deleted."
 msgstr ""
 
 #, fuzzy

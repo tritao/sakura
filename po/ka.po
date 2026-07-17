@@ -7,7 +7,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: sakura git\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-07-16 10:59+0100\n"
+"POT-Creation-Date: 2026-07-16 20:14+0100\n"
 "PO-Revision-Date: 2026-04-13 15:28+0200\n"
 "Last-Translator: Temuri Doghonadze <temuri.doghonadze@gmail.com>\n"
 "Language-Team: Georgian <(nothing)>\n"
@@ -327,6 +327,19 @@ msgstr "ჩანართის სახელის დაყენება.
 msgid "Close terminal"
 msgstr "ჩანართის დახურვა"
 
+#, fuzzy
+msgid "Blocked"
+msgstr "ბლოკი"
+
+msgid "Ready for review"
+msgstr ""
+
+msgid "Done"
+msgstr ""
+
+msgid "Ready"
+msgstr ""
+
 #, fuzzy, c-format
 msgid "Working directory: %s"
 msgstr "სამუშაო საქაღალდის დაყენება"
@@ -334,6 +347,9 @@ msgstr "სამუშაო საქაღალდის დაყენე�
 #, fuzzy, c-format
 msgid "Inherited working directory: %s"
 msgstr "სამუშაო საქაღალდის დაყენება"
+
+msgid "Untitled task"
+msgstr ""
 
 msgid "Open pull request..."
 msgstr ""
@@ -343,6 +359,27 @@ msgid "New terminal"
 msgstr "ახალი ჩანართი"
 
 msgid "New Codex session"
+msgstr ""
+
+msgid "Start work"
+msgstr ""
+
+#, fuzzy
+msgid "New subtask"
+msgstr "ახალი ჩანართი"
+
+#, fuzzy
+msgid "Attach current page here"
+msgstr "ახალი ჩანართი მიმდინარე ჩანართის შემდეგ"
+
+msgid "Set status"
+msgstr ""
+
+#, fuzzy
+msgid "Rename task..."
+msgstr "ჩანართის სახელის დაყენება..."
+
+msgid "Delete task"
 msgstr ""
 
 #, fuzzy
@@ -361,6 +398,10 @@ msgstr ""
 msgid "Move page to group"
 msgstr ""
 
+#, fuzzy
+msgid "Attach page to task"
+msgstr "ახალი ჩანართი მიმდინარე ჩანართის შემდეგ"
+
 msgid "Rename Codex session..."
 msgstr ""
 
@@ -374,6 +415,14 @@ msgstr "ახალი ჩანართი"
 
 msgid "New subgroup"
 msgstr ""
+
+#, fuzzy
+msgid "New task"
+msgstr "ახალი ჩანართი"
+
+#, fuzzy
+msgid "New task here"
+msgstr "ახალი ჩანართი"
 
 #, fuzzy
 msgid "Change working directory..."
@@ -400,6 +449,16 @@ msgid "_Create"
 msgstr ""
 
 msgid "Group name"
+msgstr ""
+
+msgid "Task title"
+msgstr ""
+
+#, fuzzy
+msgid "Rename task"
+msgstr "ჩანართის სახელის დაყენება..."
+
+msgid "Only empty tasks can be deleted."
 msgstr ""
 
 #, fuzzy

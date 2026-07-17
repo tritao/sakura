@@ -7,7 +7,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: sakura\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-07-16 10:59+0100\n"
+"POT-Creation-Date: 2026-07-16 20:14+0100\n"
 "PO-Revision-Date: 2022-11-11 17:45+0300\n"
 "Last-Translator: Eyyüb Akçaer <gurbetcii_@hotmail.com>\n"
 "Language-Team: Turkish <tr_TR>\n"
@@ -328,6 +328,19 @@ msgstr "Sekme adını ayarla..."
 msgid "Close terminal"
 msgstr "Sekmeyi kapat"
 
+#, fuzzy
+msgid "Blocked"
+msgstr "Blok"
+
+msgid "Ready for review"
+msgstr ""
+
+msgid "Done"
+msgstr ""
+
+msgid "Ready"
+msgstr ""
+
 #, fuzzy, c-format
 msgid "Working directory: %s"
 msgstr "Çalışma dizinini ayarla"
@@ -335,6 +348,9 @@ msgstr "Çalışma dizinini ayarla"
 #, fuzzy, c-format
 msgid "Inherited working directory: %s"
 msgstr "Çalışma dizinini ayarla"
+
+msgid "Untitled task"
+msgstr ""
 
 msgid "Open pull request..."
 msgstr ""
@@ -344,6 +360,26 @@ msgid "New terminal"
 msgstr "Yeni sekme"
 
 msgid "New Codex session"
+msgstr ""
+
+msgid "Start work"
+msgstr ""
+
+#, fuzzy
+msgid "New subtask"
+msgstr "Yeni sekme"
+
+msgid "Attach current page here"
+msgstr ""
+
+msgid "Set status"
+msgstr ""
+
+#, fuzzy
+msgid "Rename task..."
+msgstr "Sekme adını ayarla..."
+
+msgid "Delete task"
 msgstr ""
 
 #, fuzzy
@@ -362,6 +398,9 @@ msgstr ""
 msgid "Move page to group"
 msgstr ""
 
+msgid "Attach page to task"
+msgstr ""
+
 msgid "Rename Codex session..."
 msgstr ""
 
@@ -375,6 +414,14 @@ msgstr "Yeni sekme"
 
 msgid "New subgroup"
 msgstr ""
+
+#, fuzzy
+msgid "New task"
+msgstr "Yeni sekme"
+
+#, fuzzy
+msgid "New task here"
+msgstr "Yeni sekme"
 
 #, fuzzy
 msgid "Change working directory..."
@@ -401,6 +448,16 @@ msgid "_Create"
 msgstr ""
 
 msgid "Group name"
+msgstr ""
+
+msgid "Task title"
+msgstr ""
+
+#, fuzzy
+msgid "Rename task"
+msgstr "Sekme adını ayarla..."
+
+msgid "Only empty tasks can be deleted."
 msgstr ""
 
 #, fuzzy

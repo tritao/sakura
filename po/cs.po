@@ -7,7 +7,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: sakura 2.3.8\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-07-16 10:59+0100\n"
+"POT-Creation-Date: 2026-07-16 20:14+0100\n"
 "PO-Revision-Date: 2018-05-03 16:14+0000\n"
 "Last-Translator: David Gómez <david@pleyades.net>\n"
 "Language-Team: Czech <gnome-cs-list@gnome.org>\n"
@@ -328,6 +328,19 @@ msgstr "Nastavit název panelu…"
 msgid "Close terminal"
 msgstr "Zavřít kartu"
 
+#, fuzzy
+msgid "Blocked"
+msgstr "Blokový"
+
+msgid "Ready for review"
+msgstr ""
+
+msgid "Done"
+msgstr ""
+
+msgid "Ready"
+msgstr ""
+
 #, fuzzy, c-format
 msgid "Working directory: %s"
 msgstr "Nastavit pracovní složku"
@@ -335,6 +348,9 @@ msgstr "Nastavit pracovní složku"
 #, fuzzy, c-format
 msgid "Inherited working directory: %s"
 msgstr "Nastavit pracovní složku"
+
+msgid "Untitled task"
+msgstr ""
 
 msgid "Open pull request..."
 msgstr ""
@@ -344,6 +360,26 @@ msgid "New terminal"
 msgstr "Nová karta"
 
 msgid "New Codex session"
+msgstr ""
+
+msgid "Start work"
+msgstr ""
+
+#, fuzzy
+msgid "New subtask"
+msgstr "Nová karta"
+
+msgid "Attach current page here"
+msgstr ""
+
+msgid "Set status"
+msgstr ""
+
+#, fuzzy
+msgid "Rename task..."
+msgstr "Nastavit název panelu…"
+
+msgid "Delete task"
 msgstr ""
 
 #, fuzzy
@@ -362,6 +398,9 @@ msgstr ""
 msgid "Move page to group"
 msgstr ""
 
+msgid "Attach page to task"
+msgstr ""
+
 msgid "Rename Codex session..."
 msgstr ""
 
@@ -375,6 +414,14 @@ msgstr "Nová karta"
 
 msgid "New subgroup"
 msgstr ""
+
+#, fuzzy
+msgid "New task"
+msgstr "Nová karta"
+
+#, fuzzy
+msgid "New task here"
+msgstr "Nová karta"
 
 #, fuzzy
 msgid "Change working directory..."
@@ -401,6 +448,16 @@ msgid "_Create"
 msgstr ""
 
 msgid "Group name"
+msgstr ""
+
+msgid "Task title"
+msgstr ""
+
+#, fuzzy
+msgid "Rename task"
+msgstr "Nastavit název panelu…"
+
+msgid "Only empty tasks can be deleted."
 msgstr ""
 
 #, fuzzy

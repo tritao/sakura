@@ -2,7 +2,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: sakura\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-07-16 10:59+0100\n"
+"POT-Creation-Date: 2026-07-16 20:14+0100\n"
 "PO-Revision-Date: 2018-04-29 13:18+0000\n"
 "Last-Translator: David Gómez <david@pleyades.net>\n"
 "Language-Team: fabio.antunes@hotmail.com <fabio.antunes@hotmail.com>\n"
@@ -323,6 +323,19 @@ msgstr "Definir nome da aba..."
 msgid "Close terminal"
 msgstr "Fechar aba"
 
+#, fuzzy
+msgid "Blocked"
+msgstr "Bloquear"
+
+msgid "Ready for review"
+msgstr ""
+
+msgid "Done"
+msgstr ""
+
+msgid "Ready"
+msgstr ""
+
 #, fuzzy, c-format
 msgid "Working directory: %s"
 msgstr "Ativar cursor piscando"
@@ -330,6 +343,9 @@ msgstr "Ativar cursor piscando"
 #, fuzzy, c-format
 msgid "Inherited working directory: %s"
 msgstr "Ativar cursor piscando"
+
+msgid "Untitled task"
+msgstr ""
 
 msgid "Open pull request..."
 msgstr ""
@@ -339,6 +355,26 @@ msgid "New terminal"
 msgstr "Nova aba"
 
 msgid "New Codex session"
+msgstr ""
+
+msgid "Start work"
+msgstr ""
+
+#, fuzzy
+msgid "New subtask"
+msgstr "Nova aba"
+
+msgid "Attach current page here"
+msgstr ""
+
+msgid "Set status"
+msgstr ""
+
+#, fuzzy
+msgid "Rename task..."
+msgstr "Definir nome da aba..."
+
+msgid "Delete task"
 msgstr ""
 
 #, fuzzy
@@ -357,6 +393,9 @@ msgstr ""
 msgid "Move page to group"
 msgstr ""
 
+msgid "Attach page to task"
+msgstr ""
+
 msgid "Rename Codex session..."
 msgstr ""
 
@@ -370,6 +409,14 @@ msgstr "Nova aba"
 
 msgid "New subgroup"
 msgstr ""
+
+#, fuzzy
+msgid "New task"
+msgstr "Nova aba"
+
+#, fuzzy
+msgid "New task here"
+msgstr "Nova aba"
 
 #, fuzzy
 msgid "Change working directory..."
@@ -396,6 +443,16 @@ msgid "_Create"
 msgstr ""
 
 msgid "Group name"
+msgstr ""
+
+msgid "Task title"
+msgstr ""
+
+#, fuzzy
+msgid "Rename task"
+msgstr "Definir nome da aba..."
+
+msgid "Only empty tasks can be deleted."
 msgstr ""
 
 #, fuzzy

@@ -5,7 +5,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: sakura\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-07-16 10:59+0100\n"
+"POT-Creation-Date: 2026-07-16 20:14+0100\n"
 "PO-Revision-Date: 2018-04-29 13:18+0000\n"
 "Last-Translator: David Gómez <david@pleyades.net>\n"
 "Language-Team: hu\n"
@@ -326,6 +326,19 @@ msgstr "Fül nevének beállítása..."
 msgid "Close terminal"
 msgstr "Lap bezárása"
 
+#, fuzzy
+msgid "Blocked"
+msgstr "Blokk"
+
+msgid "Ready for review"
+msgstr ""
+
+msgid "Done"
+msgstr ""
+
+msgid "Ready"
+msgstr ""
+
 #, fuzzy, c-format
 msgid "Working directory: %s"
 msgstr "Munkakönyvtár beállítása"
@@ -333,6 +346,9 @@ msgstr "Munkakönyvtár beállítása"
 #, fuzzy, c-format
 msgid "Inherited working directory: %s"
 msgstr "Munkakönyvtár beállítása"
+
+msgid "Untitled task"
+msgstr ""
 
 msgid "Open pull request..."
 msgstr ""
@@ -342,6 +358,26 @@ msgid "New terminal"
 msgstr "Új fül"
 
 msgid "New Codex session"
+msgstr ""
+
+msgid "Start work"
+msgstr ""
+
+#, fuzzy
+msgid "New subtask"
+msgstr "Új fül"
+
+msgid "Attach current page here"
+msgstr ""
+
+msgid "Set status"
+msgstr ""
+
+#, fuzzy
+msgid "Rename task..."
+msgstr "Fül nevének beállítása..."
+
+msgid "Delete task"
 msgstr ""
 
 #, fuzzy
@@ -360,6 +396,9 @@ msgstr ""
 msgid "Move page to group"
 msgstr ""
 
+msgid "Attach page to task"
+msgstr ""
+
 msgid "Rename Codex session..."
 msgstr ""
 
@@ -373,6 +412,14 @@ msgstr "Új fül"
 
 msgid "New subgroup"
 msgstr ""
+
+#, fuzzy
+msgid "New task"
+msgstr "Új fül"
+
+#, fuzzy
+msgid "New task here"
+msgstr "Új fül"
 
 #, fuzzy
 msgid "Change working directory..."
@@ -399,6 +446,16 @@ msgid "_Create"
 msgstr ""
 
 msgid "Group name"
+msgstr ""
+
+msgid "Task title"
+msgstr ""
+
+#, fuzzy
+msgid "Rename task"
+msgstr "Fül nevének beállítása..."
+
+msgid "Only empty tasks can be deleted."
 msgstr ""
 
 #, fuzzy

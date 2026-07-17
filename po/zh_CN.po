@@ -7,7 +7,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: sakura 1.0.4\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-07-16 10:59+0100\n"
+"POT-Creation-Date: 2026-07-16 20:14+0100\n"
 "PO-Revision-Date: 2019-08-12 17:06+0000\n"
 "Last-Translator: David Gómez <david@pleyades.net>\n"
 "Language-Team: Chinese/Simplified <i18n-translation@lists.linux.net.cn>\n"
@@ -328,6 +328,19 @@ msgstr "设置标签页名称..."
 msgid "Close terminal"
 msgstr "关闭标签"
 
+#, fuzzy
+msgid "Blocked"
+msgstr "方块"
+
+msgid "Ready for review"
+msgstr ""
+
+msgid "Done"
+msgstr ""
+
+msgid "Ready"
+msgstr ""
+
 #, fuzzy, c-format
 msgid "Working directory: %s"
 msgstr "设置工作目录"
@@ -335,6 +348,9 @@ msgstr "设置工作目录"
 #, fuzzy, c-format
 msgid "Inherited working directory: %s"
 msgstr "设置工作目录"
+
+msgid "Untitled task"
+msgstr ""
 
 msgid "Open pull request..."
 msgstr ""
@@ -344,6 +360,26 @@ msgid "New terminal"
 msgstr "新建标签"
 
 msgid "New Codex session"
+msgstr ""
+
+msgid "Start work"
+msgstr ""
+
+#, fuzzy
+msgid "New subtask"
+msgstr "新建标签"
+
+msgid "Attach current page here"
+msgstr ""
+
+msgid "Set status"
+msgstr ""
+
+#, fuzzy
+msgid "Rename task..."
+msgstr "设置标签页名称..."
+
+msgid "Delete task"
 msgstr ""
 
 #, fuzzy
@@ -362,6 +398,9 @@ msgstr ""
 msgid "Move page to group"
 msgstr ""
 
+msgid "Attach page to task"
+msgstr ""
+
 msgid "Rename Codex session..."
 msgstr ""
 
@@ -375,6 +414,14 @@ msgstr "新建标签"
 
 msgid "New subgroup"
 msgstr ""
+
+#, fuzzy
+msgid "New task"
+msgstr "新建标签"
+
+#, fuzzy
+msgid "New task here"
+msgstr "新建标签"
 
 #, fuzzy
 msgid "Change working directory..."
@@ -401,6 +448,16 @@ msgid "_Create"
 msgstr ""
 
 msgid "Group name"
+msgstr ""
+
+msgid "Task title"
+msgstr ""
+
+#, fuzzy
+msgid "Rename task"
+msgstr "设置标签页名称..."
+
+msgid "Only empty tasks can be deleted."
 msgstr ""
 
 #, fuzzy

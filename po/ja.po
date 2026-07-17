@@ -4,7 +4,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: ja\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-07-16 10:59+0100\n"
+"POT-Creation-Date: 2026-07-16 20:14+0100\n"
 "PO-Revision-Date: 2019-08-12 16:55+0000\n"
 "Last-Translator: David Gómez <david@pleyades.net>\n"
 "Language-Team: Japanese <ja@li.org>\n"
@@ -325,6 +325,19 @@ msgstr "タブの名前を設定..."
 msgid "Close terminal"
 msgstr "タブを閉じる"
 
+#, fuzzy
+msgid "Blocked"
+msgstr "四角"
+
+msgid "Ready for review"
+msgstr ""
+
+msgid "Done"
+msgstr ""
+
+msgid "Ready"
+msgstr ""
+
 #, fuzzy, c-format
 msgid "Working directory: %s"
 msgstr "作業ディレクトリを設定"
@@ -332,6 +345,9 @@ msgstr "作業ディレクトリを設定"
 #, fuzzy, c-format
 msgid "Inherited working directory: %s"
 msgstr "作業ディレクトリを設定"
+
+msgid "Untitled task"
+msgstr ""
 
 msgid "Open pull request..."
 msgstr ""
@@ -341,6 +357,26 @@ msgid "New terminal"
 msgstr "新規タブ"
 
 msgid "New Codex session"
+msgstr ""
+
+msgid "Start work"
+msgstr ""
+
+#, fuzzy
+msgid "New subtask"
+msgstr "新規タブ"
+
+msgid "Attach current page here"
+msgstr ""
+
+msgid "Set status"
+msgstr ""
+
+#, fuzzy
+msgid "Rename task..."
+msgstr "タブの名前を設定..."
+
+msgid "Delete task"
 msgstr ""
 
 #, fuzzy
@@ -359,6 +395,9 @@ msgstr ""
 msgid "Move page to group"
 msgstr ""
 
+msgid "Attach page to task"
+msgstr ""
+
 msgid "Rename Codex session..."
 msgstr ""
 
@@ -372,6 +411,14 @@ msgstr "新規タブ"
 
 msgid "New subgroup"
 msgstr ""
+
+#, fuzzy
+msgid "New task"
+msgstr "新規タブ"
+
+#, fuzzy
+msgid "New task here"
+msgstr "新規タブ"
 
 #, fuzzy
 msgid "Change working directory..."
@@ -398,6 +445,16 @@ msgid "_Create"
 msgstr ""
 
 msgid "Group name"
+msgstr ""
+
+msgid "Task title"
+msgstr ""
+
+#, fuzzy
+msgid "Rename task"
+msgstr "タブの名前を設定..."
+
+msgid "Only empty tasks can be deleted."
 msgstr ""
 
 #, fuzzy

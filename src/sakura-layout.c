@@ -9,6 +9,41 @@
 static guint next_layout_id;
 
 
+static gboolean
+sakura_page_id_in_use(const gchar *id)
+{
+#ifndef SAKURA_CORE_TEST
+	guint index;
+
+	if (id == NULL || sakura.pages == NULL)
+		return FALSE;
+	for (index = 0; index < sakura.pages->len; index++) {
+		SakuraPage *page = g_ptr_array_index(sakura.pages, index);
+		if (page != NULL && g_strcmp0(page->id, id) == 0)
+			return TRUE;
+	}
+#else
+	(void)id;
+#endif
+	return FALSE;
+}
+
+
+static gchar *
+sakura_page_new_id(void)
+{
+	static guint next_page_id;
+	gchar *id;
+
+	do {
+		id = g_strdup_printf("page-%u", ++next_page_id);
+		if (!sakura_page_id_in_use(id))
+			return id;
+		g_free(id);
+	} while (TRUE);
+}
+
+
 void
 sakura_layout_paned_position_cb(GObject *object, GParamSpec *pspec, gpointer data)
 {
@@ -121,12 +156,11 @@ sakura_layout_node_free_recursive(SakuraLayoutNode *node)
 SakuraPage *
 sakura_page_new(const gchar *id)
 {
-	static guint next_page_id;
 	SakuraPage *page = g_new0(SakuraPage, 1);
 
 	page->id = id != NULL && id[0] != '\0'
 	        ? g_strdup(id)
-	        : g_strdup_printf("page-%u", ++next_page_id);
+	        : sakura_page_new_id();
 	page->panes = g_ptr_array_new();
 	return page;
 }

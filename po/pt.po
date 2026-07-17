@@ -7,7 +7,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: sakura\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-07-16 10:59+0100\n"
+"POT-Creation-Date: 2026-07-16 20:14+0100\n"
 "PO-Revision-Date: 2018-04-29 13:18+0000\n"
 "Last-Translator: David Gómez <david@pleyades.net>\n"
 "Language-Team: Portuguese <pt@li.org>\n"
@@ -327,6 +327,19 @@ msgstr "Definir nome do separador"
 msgid "Close terminal"
 msgstr "Fechar separador"
 
+#, fuzzy
+msgid "Blocked"
+msgstr "Bloco"
+
+msgid "Ready for review"
+msgstr ""
+
+msgid "Done"
+msgstr ""
+
+msgid "Ready"
+msgstr ""
+
 #, fuzzy, c-format
 msgid "Working directory: %s"
 msgstr "Definir diretório de trabalho"
@@ -334,6 +347,9 @@ msgstr "Definir diretório de trabalho"
 #, fuzzy, c-format
 msgid "Inherited working directory: %s"
 msgstr "Definir diretório de trabalho"
+
+msgid "Untitled task"
+msgstr ""
 
 msgid "Open pull request..."
 msgstr ""
@@ -343,6 +359,26 @@ msgid "New terminal"
 msgstr "Novo separador"
 
 msgid "New Codex session"
+msgstr ""
+
+msgid "Start work"
+msgstr ""
+
+#, fuzzy
+msgid "New subtask"
+msgstr "Novo separador"
+
+msgid "Attach current page here"
+msgstr ""
+
+msgid "Set status"
+msgstr ""
+
+#, fuzzy
+msgid "Rename task..."
+msgstr "Definir nome do separador"
+
+msgid "Delete task"
 msgstr ""
 
 #, fuzzy
@@ -361,6 +397,9 @@ msgstr ""
 msgid "Move page to group"
 msgstr ""
 
+msgid "Attach page to task"
+msgstr ""
+
 msgid "Rename Codex session..."
 msgstr ""
 
@@ -374,6 +413,14 @@ msgstr "Novo separador"
 
 msgid "New subgroup"
 msgstr ""
+
+#, fuzzy
+msgid "New task"
+msgstr "Novo separador"
+
+#, fuzzy
+msgid "New task here"
+msgstr "Novo separador"
 
 #, fuzzy
 msgid "Change working directory..."
@@ -400,6 +447,16 @@ msgid "_Create"
 msgstr ""
 
 msgid "Group name"
+msgstr ""
+
+msgid "Task title"
+msgstr ""
+
+#, fuzzy
+msgid "Rename task"
+msgstr "Definir nome do separador"
+
+msgid "Only empty tasks can be deleted."
 msgstr ""
 
 #, fuzzy

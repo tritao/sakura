@@ -433,7 +433,7 @@ sakura_new_tool_cb(GtkWidget *widget, void *data)
 
 	sakura_session_accept_changes();
 	sakura_add_tab_with_options(tool_cwd, NULL, NULL, FALSE,
-	                            SAKURA_TAB_TOOL, tool, NULL, NULL, NULL, NULL, NULL);
+	                            SAKURA_TAB_TOOL, tool, NULL, NULL, NULL, NULL, NULL, -1);
 
 	if (tool_cwd != cwd)
 		g_free(tool_cwd);
@@ -539,7 +539,7 @@ sakura_open_pr_cb(GtkWidget *widget, void *data)
 	sakura_session_accept_changes();
 	sakura_add_tab_with_options(cwd, NULL, NULL, FALSE,
 	                            SAKURA_TAB_TOOL, SAKURA_TOOL_GH_PR,
-	                            NULL, NULL, NULL, url, NULL);
+	                            NULL, NULL, NULL, url, NULL, -1);
 	g_free(cwd);
 	g_free(url);
 }
@@ -1392,11 +1392,11 @@ sakura_new_codex_cb (GtkWidget *widget, void *data)
 	                              ? g_object_get_data(G_OBJECT(widget),
 	                                                  SAKURA_CODEX_REASONING_EFFORT_DATA_KEY)
 	                              : NULL;
-	(void)data;
+	SakuraSidebarNode *parent = data;
 	sakura_session_accept_changes();
-	sakura_add_tab_with_options(NULL, NULL, NULL, FALSE, SAKURA_TAB_CODEX,
+	sakura_add_tab_with_options(NULL, parent, NULL, FALSE, SAKURA_TAB_CODEX,
 	                            SAKURA_TOOL_NONE, NULL, NULL, reasoning_effort,
-	                            NULL, NULL);
+	                            NULL, NULL, -1);
 }
 
 
@@ -1405,9 +1405,9 @@ sakura_resume_codex_cb (GtkWidget *widget, void *data)
 {
 	GtkWidget *dialog, *entry;
 	const gchar *session;
+	SakuraSidebarNode *parent = data;
 
 	(void)widget;
-	(void)data;
 	dialog = gtk_dialog_new_with_buttons(
 		_("Resume session"), GTK_WINDOW(sakura.main_window),
 		GTK_DIALOG_MODAL | GTK_DIALOG_USE_HEADER_BAR,
@@ -1425,9 +1425,9 @@ sakura_resume_codex_cb (GtkWidget *widget, void *data)
 		session = gtk_entry_get_text(GTK_ENTRY(entry));
 		if (session != NULL && session[0] != '\0') {
 			sakura_session_accept_changes();
-			sakura_add_tab_with_options(NULL, NULL, NULL, FALSE,
+			sakura_add_tab_with_options(NULL, parent, NULL, FALSE,
 			                            SAKURA_TAB_CODEX, SAKURA_TOOL_NONE,
-			                            session, NULL, NULL, NULL, NULL);
+			                            session, NULL, NULL, NULL, NULL, -1);
 		}
 	}
 	gtk_widget_destroy(dialog);
