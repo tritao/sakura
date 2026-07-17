@@ -50,6 +50,204 @@ sakura_workspace_model_set_root(SakuraWorkspaceModel *model,
 }
 
 
+static SakuraGroup *
+sakura_workspace_model_find_group(SakuraWorkspaceModel *model,
+                                  const gchar *id)
+{
+	if (model == NULL || id == NULL || id[0] == '\0' ||
+	    g_strcmp0(id, "root") == 0)
+		return model != NULL ? model->root_group : NULL;
+	for (GList *link = model->groups; link != NULL; link = link->next) {
+		SakuraGroup *group = link->data;
+
+		if (group != NULL && g_strcmp0(group->id, id) == 0)
+			return group;
+	}
+	return NULL;
+}
+
+
+static void
+sakura_workspace_model_update_group_id(SakuraWorkspaceModel *model,
+                                        SakuraGroup *group)
+{
+	gchar *end = NULL;
+	guint id_number;
+
+	if (model == NULL || group == NULL ||
+	    !g_str_has_prefix(group->id, "group-"))
+		return;
+	id_number = (guint)g_ascii_strtoull(group->id + strlen("group-"), &end, 10);
+	if (end != group->id + strlen("group-") &&
+	    id_number >= model->next_group_id)
+		model->next_group_id = id_number + 1;
+}
+
+
+static void
+sakura_workspace_model_update_task_id(SakuraWorkspaceModel *model,
+                                       SakuraTask *task)
+{
+	gchar *end = NULL;
+	guint id_number;
+
+	if (model == NULL || task == NULL ||
+	    !g_str_has_prefix(task->id, "task-"))
+		return;
+	id_number = (guint)g_ascii_strtoull(task->id + strlen("task-"), &end, 10);
+	if (end != task->id + strlen("task-") &&
+	    id_number >= model->next_task_id)
+		model->next_task_id = id_number + 1;
+}
+
+
+gboolean
+sakura_workspace_model_restore_snapshot(SakuraWorkspaceModel *model,
+                                         const SakuraSessionSnapshot *snapshot)
+{
+	guint remaining, pass;
+
+	if (model == NULL || snapshot == NULL || model->root_group == NULL)
+		return FALSE;
+
+	remaining = snapshot->groups != NULL ? snapshot->groups->len : 0;
+	for (pass = 0; remaining > 0 && pass <= remaining; pass++) {
+		gboolean progress = FALSE;
+
+		for (guint index = 0; index < snapshot->groups->len; index++) {
+			SakuraSessionGroupRecord *record =
+				g_ptr_array_index(snapshot->groups, index);
+			SakuraGroup *parent, *group;
+
+			if (record == NULL || record->id == NULL ||
+			    sakura_workspace_model_find_group(model, record->id) != NULL)
+				continue;
+			parent = sakura_workspace_model_find_group(model, record->parent_id);
+			if (parent == NULL)
+				continue;
+			group = sakura_group_new(record->id, record->title, parent);
+			group->directory = g_strdup(record->directory);
+			group->order = record->order;
+			if (!sakura_workspace_model_add_group(model, group)) {
+				sakura_group_free(group);
+				continue;
+			}
+			sakura_workspace_model_update_group_id(model, group);
+			remaining--;
+			progress = TRUE;
+		}
+		if (!progress)
+			break;
+	}
+	/* Preserve malformed/orphaned group records without allowing a parent cycle
+	 * to prevent the rest of the workspace from being restored. */
+	if (remaining > 0) {
+		for (guint index = 0; index < snapshot->groups->len; index++) {
+			SakuraSessionGroupRecord *record =
+				g_ptr_array_index(snapshot->groups, index);
+			SakuraGroup *group;
+
+			if (record == NULL || record->id == NULL ||
+			    sakura_workspace_model_find_group(model, record->id) != NULL)
+				continue;
+			group = sakura_group_new(record->id, record->title,
+			                         model->root_group);
+			group->directory = g_strdup(record->directory);
+			group->order = record->order;
+			if (sakura_workspace_model_add_group(model, group))
+				sakura_workspace_model_update_group_id(model, group);
+			else
+				sakura_group_free(group);
+		}
+	}
+
+	remaining = snapshot->tasks != NULL ? snapshot->tasks->len : 0;
+	for (pass = 0; remaining > 0 && pass <= remaining; pass++) {
+		gboolean progress = FALSE;
+
+		for (guint index = 0; index < snapshot->tasks->len; index++) {
+			SakuraSessionTaskRecord *record =
+				g_ptr_array_index(snapshot->tasks, index);
+			SakuraTask *parent, *task;
+			SakuraGroup *group, *parent_group;
+
+			if (record == NULL || record->id == NULL ||
+			    sakura_workspace_model_find_task(model, record->id) != NULL)
+				continue;
+			parent = record->parent_id != NULL &&
+			         g_strcmp0(record->parent_id, "root") != 0
+			       ? sakura_workspace_model_find_task(model, record->parent_id)
+			       : NULL;
+			parent_group = parent == NULL && record->parent_id != NULL &&
+			               record->parent_id[0] != '\0' &&
+			               g_strcmp0(record->parent_id, "root") != 0
+			             ? sakura_workspace_model_find_group(model, record->parent_id)
+			             : NULL;
+			if (record->parent_id != NULL && record->parent_id[0] != '\0' &&
+			    g_strcmp0(record->parent_id, "root") != 0 &&
+			    parent == NULL && parent_group == NULL)
+				continue;
+			group = parent != NULL ? parent->group
+			                     : parent_group != NULL ? parent_group
+			                     : sakura_workspace_model_find_group(model, record->group_id);
+			if (group == NULL)
+				continue;
+			task = g_new0(SakuraTask, 1);
+			task->id = g_strdup(record->id);
+			task->title = g_strdup(record->title != NULL ? record->title : "");
+			task->provider = g_strdup(record->provider != NULL ? record->provider : "local");
+			task->external_id = g_strdup(record->external_id);
+			task->url = g_strdup(record->url);
+			task->status = record->status;
+			task->order = record->order;
+			task->parent = parent;
+			task->group = group;
+			if (!sakura_workspace_model_add_task(model, task)) {
+				sakura_task_free(task);
+				continue;
+			}
+			sakura_workspace_model_update_task_id(model, task);
+			remaining--;
+			progress = TRUE;
+		}
+		if (!progress)
+			break;
+	}
+	/* Cyclic or orphaned task parents become top-level tasks in their recorded
+	 * group. The data remains visible and can be repaired by the user. */
+	if (remaining > 0) {
+		for (guint index = 0; index < snapshot->tasks->len; index++) {
+			SakuraSessionTaskRecord *record =
+				g_ptr_array_index(snapshot->tasks, index);
+			SakuraTask *task;
+			SakuraGroup *group;
+
+			if (record == NULL || record->id == NULL ||
+			    sakura_workspace_model_find_task(model, record->id) != NULL)
+				continue;
+			group = sakura_workspace_model_find_group(model, record->group_id);
+			if (group == NULL)
+				group = model->root_group;
+			task = g_new0(SakuraTask, 1);
+			task->id = g_strdup(record->id);
+			task->title = g_strdup(record->title != NULL ? record->title : "");
+			task->provider = g_strdup(record->provider != NULL ? record->provider : "local");
+			task->external_id = g_strdup(record->external_id);
+			task->url = g_strdup(record->url);
+			task->status = record->status;
+			task->order = record->order;
+			task->group = group;
+			if (!sakura_workspace_model_add_task(model, task)) {
+				sakura_task_free(task);
+				continue;
+			}
+			sakura_workspace_model_update_task_id(model, task);
+		}
+	}
+	return TRUE;
+}
+
+
 static gboolean
 sakura_workspace_model_group_is_child_of(SakuraWorkspaceModel *model,
                                           SakuraGroup *group,

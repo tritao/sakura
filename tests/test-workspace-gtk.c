@@ -36,6 +36,20 @@ test_workspace_register_page_panes(SakuraPage *page)
 }
 
 
+static SakuraGroup *
+test_workspace_model_group_by_id(SakuraWorkspaceModel *model, const gchar *id)
+{
+	for (GList *link = model != NULL ? model->groups : NULL;
+	     link != NULL; link = link->next) {
+		SakuraGroup *group = link->data;
+
+		if (group != NULL && g_strcmp0(group->id, id) == 0)
+			return group;
+	}
+	return NULL;
+}
+
+
 static void
 test_sidebar_add_page(SakuraPage *page)
 {
@@ -2032,6 +2046,64 @@ test_workspace_model_instance_ownership(void)
 
 
 static void
+test_workspace_model_restores_hierarchy_without_view(void)
+{
+	SakuraWorkspaceModel *model = sakura_workspace_model_new();
+	SakuraSessionSnapshot *snapshot = sakura_session_snapshot_new();
+	SakuraGroup *root = sakura_group_new("root", "Root", NULL);
+	SakuraSessionGroupRecord *parent_group = g_new0(SakuraSessionGroupRecord, 1);
+	SakuraSessionGroupRecord *child_group = g_new0(SakuraSessionGroupRecord, 1);
+	SakuraSessionTaskRecord *parent_task = g_new0(SakuraSessionTaskRecord, 1);
+	SakuraSessionTaskRecord *child_task = g_new0(SakuraSessionTaskRecord, 1);
+	SakuraGroup *restored_parent, *restored_child;
+	SakuraTask *restored_parent_task, *restored_child_task;
+
+	g_assert_true(sakura_workspace_model_set_root(model, root));
+	parent_group->id = g_strdup("parent-group");
+	parent_group->parent_id = g_strdup("root");
+	parent_group->title = g_strdup("Parent group");
+	parent_group->order = 1;
+	child_group->id = g_strdup("child-group");
+	child_group->parent_id = g_strdup("parent-group");
+	child_group->title = g_strdup("Child group");
+	child_group->order = 0;
+	/* Child records intentionally precede their parents. */
+	g_ptr_array_add(snapshot->groups, child_group);
+	g_ptr_array_add(snapshot->groups, parent_group);
+
+	parent_task->id = g_strdup("parent-task");
+	parent_task->parent_id = g_strdup("parent-group");
+	parent_task->group_id = g_strdup("parent-group");
+	parent_task->title = g_strdup("Parent task");
+	child_task->id = g_strdup("child-task");
+	child_task->parent_id = g_strdup("parent-task");
+	child_task->group_id = g_strdup("parent-group");
+	child_task->title = g_strdup("Child task");
+	g_ptr_array_add(snapshot->tasks, child_task);
+	g_ptr_array_add(snapshot->tasks, parent_task);
+
+	g_assert_true(sakura_workspace_model_restore_snapshot(model, snapshot));
+	restored_parent = test_workspace_model_group_by_id(model, "parent-group");
+	restored_child = test_workspace_model_group_by_id(model, "child-group");
+	g_assert_nonnull(restored_parent);
+	g_assert_nonnull(restored_child);
+	g_assert_true(restored_parent->parent == root);
+	g_assert_true(restored_child->parent == restored_parent);
+	restored_parent_task = sakura_workspace_model_find_task(model, "parent-task");
+	restored_child_task = sakura_workspace_model_find_task(model, "child-task");
+	g_assert_nonnull(restored_parent_task);
+	g_assert_nonnull(restored_child_task);
+	g_assert_true(restored_parent_task->parent == NULL);
+	g_assert_true(restored_parent_task->group == restored_parent);
+	g_assert_true(restored_child_task->parent == restored_parent_task);
+	g_assert_true(restored_child_task->group == restored_parent);
+
+	sakura_session_snapshot_free(snapshot);
+	sakura_workspace_model_free(model);
+}
+
+
+static void
 test_remove_random_pane(SakuraPage *page, GRand *random)
 {
 	SakuraTab *pane;
@@ -2192,6 +2264,8 @@ main(int argc, char **argv)
 	                test_sidebar_drag_policy_rejects_invalid_targets);
 	g_test_add_func("/workspace/model-instance-ownership",
 	                test_workspace_model_instance_ownership);
+	g_test_add_func("/workspace/model-restores-without-view",
+	                test_workspace_model_restores_hierarchy_without_view);
 	g_test_add_func("/workspace/seeded-operations",
 	                test_seeded_workspace_operations);
 	return g_test_run();

@@ -760,6 +760,8 @@ SakuraWorkspaceModel *sakura_workspace_model_new(void);
 void sakura_workspace_model_free(SakuraWorkspaceModel *model);
 gboolean sakura_workspace_model_set_root(SakuraWorkspaceModel *model,
                                           SakuraGroup *root_group);
+gboolean sakura_workspace_model_restore_snapshot(
+	SakuraWorkspaceModel *model, const SakuraSessionSnapshot *snapshot);
 SakuraTask *sakura_workspace_model_find_task(SakuraWorkspaceModel *model,
                                               const gchar *id);
 SakuraGroup *sakura_group_new(const gchar *id, const gchar *title,

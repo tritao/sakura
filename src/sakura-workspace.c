@@ -3934,7 +3934,8 @@ sakura_sidebar_init (gboolean restore_session)
 	GtkCellRenderer *icon_renderer, *attention_renderer, *status_renderer,
 	                *spinner_renderer, *text_renderer;
 	GtkTreeViewColumn *column;
-	gchar **group_ids, **group_parents, **group_titles, **group_directories;
+	gchar **group_ids = NULL, **group_parents = NULL, **group_titles = NULL,
+	       **group_directories = NULL;
 	gsize n_ids = 0, n_parents = 0, n_titles = 0, n_directories = 0;
 	gsize i, n_groups;
 	gboolean session_has_groups;
@@ -4087,19 +4088,9 @@ sakura_sidebar_init (gboolean restore_session)
 	}
 	sakura_sidebar_update_group_row(sakura.sidebar_root);
 	if (session_has_groups) {
-		n_groups = sakura.session_snapshot->groups->len;
-		group_ids = g_new0(gchar *, n_groups + 1);
-		group_parents = g_new0(gchar *, n_groups + 1);
-		group_titles = g_new0(gchar *, n_groups + 1);
-		group_directories = g_new0(gchar *, n_groups + 1);
-		for (i = 0; i < n_groups; i++) {
-			SakuraSessionGroupRecord *record =
-				g_ptr_array_index(sakura.session_snapshot->groups, i);
-			group_ids[i] = g_strdup(record->id);
-			group_parents[i] = g_strdup(record->parent_id);
-			group_titles[i] = g_strdup(record->title);
-			group_directories[i] = g_strdup(record->directory);
-		}
+		if (!sakura_workspace_model_restore_snapshot(
+				sakura.workspace, sakura.session_snapshot))
+			g_warning("Could not restore workspace hierarchy model");
 	} else {
 		group_ids = g_key_file_get_string_list(sakura.cfg, SAKURA_CONFIG_GROUP, "sidebar_group_ids", &n_ids, NULL);
 		group_parents = g_key_file_get_string_list(sakura.cfg, SAKURA_CONFIG_GROUP, "sidebar_group_parents", &n_parents, NULL);
@@ -4111,109 +4102,36 @@ sakura_sidebar_init (gboolean restore_session)
 		if (group_directories == NULL)
 			group_directories = g_new0(gchar *, n_groups + 1);
 	}
-	for (i = 0; i < n_groups; i++) {
-		struct sakura_sidebar_node *node, *parent;
-		SakuraGroup *model_group, *parent_group;
-		gchar *end = NULL;
-		guint id_number;
+	if (!session_has_groups) {
+		for (i = 0; i < n_groups; i++) {
+			struct sakura_sidebar_node *node, *parent;
+			SakuraGroup *model_group, *parent_group;
 
-		parent = sakura_sidebar_find_group_by_id(group_parents[i]);
-		if (parent == NULL)
-			parent = sakura.sidebar_root;
-		parent_group = parent->group != NULL ? parent->group : sakura.workspace->root_group;
-		model_group = sakura_group_new(group_ids[i], group_titles[i], parent_group);
-		model_group->order = i;
-		if (session_has_groups)
-			model_group->order = ((SakuraSessionGroupRecord *)g_ptr_array_index(
-				sakura.session_snapshot->groups, i))->order;
-		if (i < n_directories || session_has_groups)
-			model_group->directory = g_strdup(group_directories[i]);
-		sakura_workspace_model_add_group(sakura.workspace, model_group);
-		node = g_new0(struct sakura_sidebar_node, 1);
-		node->type = SAKURA_SIDEBAR_GROUP;
-		node->id = g_strdup(model_group->id);
-		node->title = g_strdup(model_group->title);
-		node->group = model_group;
-		model_group->sidebar_node = node;
-		node->parent = parent;
-		sakura_sidebar_insert_node(node);
-
-		if (g_str_has_prefix(model_group->id, "group-")) {
-			id_number = (guint)g_ascii_strtoull(model_group->id + strlen("group-"), &end, 10);
-			if (end != model_group->id + strlen("group-") && id_number >= sakura.workspace->next_group_id)
-				sakura.workspace->next_group_id = id_number + 1;
+			parent = sakura_sidebar_find_group_by_id(group_parents[i]);
+			if (parent == NULL)
+				parent = sakura.sidebar_root;
+			parent_group = parent->group != NULL
+			             ? parent->group : sakura.workspace->root_group;
+			model_group = sakura_group_new(group_ids[i], group_titles[i],
+			                              parent_group);
+			model_group->order = i;
+			if (i < n_directories)
+				model_group->directory = g_strdup(group_directories[i]);
+			sakura_workspace_model_add_group(sakura.workspace, model_group);
+			node = g_new0(struct sakura_sidebar_node, 1);
+			node->type = SAKURA_SIDEBAR_GROUP;
+			node->id = g_strdup(model_group->id);
+			node->title = g_strdup(model_group->title);
+			node->group = model_group;
+			model_group->sidebar_node = node;
+			node->parent = parent;
+			sakura_sidebar_insert_node(node);
 		}
 	}
 	g_strfreev(group_ids);
 	g_strfreev(group_parents);
 	g_strfreev(group_titles);
 	g_strfreev(group_directories);
-
-	if (session_has_groups && sakura.session_snapshot->tasks != NULL) {
-		guint remaining = sakura.session_snapshot->tasks->len;
-		guint pass;
-
-		/* Task records may be serialized in an order that differs from their
-		 * parent order. Resolve them in passes so nested tasks remain nested. */
-		for (pass = 0; remaining > 0 && pass <= sakura.session_snapshot->tasks->len;
-		     pass++) {
-			gboolean progress = FALSE;
-			for (i = 0; i < sakura.session_snapshot->tasks->len; i++) {
-				SakuraSessionTaskRecord *record = g_ptr_array_index(
-					sakura.session_snapshot->tasks, i);
-				SakuraSidebarNode *parent, *node;
-				SakuraTask *task;
-				gchar *end = NULL;
-				guint id_number;
-
-				if (record == NULL || sakura_workspace_model_find_task(sakura.workspace, record->id) != NULL)
-					continue;
-				parent = sakura_sidebar_find_container_by_id(record->parent_id);
-				if (parent == NULL &&
-				    (record->parent_id == NULL || record->parent_id[0] == '\0' ||
-				     g_strcmp0(record->parent_id, "root") == 0))
-					parent = sakura_sidebar_find_container_by_id(record->group_id);
-				if (parent == NULL ||
-				    (parent->type != SAKURA_SIDEBAR_GROUP &&
-				     parent->type != SAKURA_SIDEBAR_TASK))
-					continue;
-
-				task = g_new0(SakuraTask, 1);
-				task->id = g_strdup(record->id);
-				task->title = g_strdup(record->title != NULL ? record->title : "");
-				task->provider = g_strdup(record->provider != NULL ? record->provider : "local");
-				task->external_id = g_strdup(record->external_id);
-				task->url = g_strdup(record->url);
-				task->status = record->status;
-				task->order = record->order;
-				task->parent = parent->type == SAKURA_SIDEBAR_TASK ? parent->task : NULL;
-				task->group = parent->type == SAKURA_SIDEBAR_TASK
-				            ? sakura_workspace_model_group_for_task(sakura.workspace, parent->task)
-				            : parent->group;
-				node = g_new0(SakuraSidebarNode, 1);
-				node->type = SAKURA_SIDEBAR_TASK;
-				node->id = g_strdup(task->id);
-				node->parent = parent;
-				node->task = task;
-				task->sidebar_node = node;
-				sakura_workspace_model_add_task(sakura.workspace, task);
-				sakura_sidebar_insert_node(node);
-				sakura_task_update_row(task);
-				remaining--;
-				progress = TRUE;
-
-				if (g_str_has_prefix(task->id, "task-")) {
-					id_number = (guint)g_ascii_strtoull(
-						task->id + strlen("task-"), &end, 10);
-					if (end != task->id + strlen("task-") &&
-					    id_number >= sakura.workspace->next_task_id)
-						sakura.workspace->next_task_id = id_number + 1;
-				}
-			}
-			if (!progress)
-				break;
-		}
-	}
 
 	sakura_sidebar_rebuild_projection();
 
