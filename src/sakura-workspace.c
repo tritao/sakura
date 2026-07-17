@@ -187,6 +187,7 @@ sakura_task_attach_page(SakuraTask *task, SakuraPage *page)
 	if (task == NULL || task->sidebar_node == NULL || page == NULL ||
 	    page->sidebar_node == NULL || page->sidebar_node->parent == task->sidebar_node)
 		return;
+	sakura_workspace_begin_mutation();
 	node = page->sidebar_node;
 	sakura_sidebar_cancel_pending_selection();
 	sakura_sidebar_hide_page_panes(page);
@@ -198,8 +199,11 @@ sakura_task_attach_page(SakuraTask *task, SakuraPage *page)
 	sakura_sidebar_update_page(page);
 	sakura.active_task = task;
 	sakura_sidebar_set_scope(sakura_sidebar_group_ancestor(task->sidebar_node));
-	sakura_tab_bar_refresh();
+	sakura_workspace_mark_changed(SAKURA_WORKSPACE_CHANGE_STRUCTURE |
+	                              SAKURA_WORKSPACE_CHANGE_SCOPE |
+	                              SAKURA_WORKSPACE_CHANGE_SELECTION);
 	sakura_session_mark_dirty();
+	sakura_workspace_end_mutation();
 }
 
 
@@ -211,6 +215,7 @@ sakura_task_detach_page(SakuraPage *page)
 
 	if (page == NULL || page->sidebar_node == NULL || page->task == NULL)
 		return;
+	sakura_workspace_begin_mutation();
 	node = page->sidebar_node;
 	old_parent = node->parent;
 	old_task = page->task;
@@ -225,7 +230,10 @@ sakura_task_detach_page(SakuraPage *page)
 	sakura_sidebar_insert_node(node);
 	sakura_sidebar_show_page_panes(page);
 	sakura_sidebar_update_page(page);
+	sakura_workspace_mark_changed(SAKURA_WORKSPACE_CHANGE_STRUCTURE |
+	                              SAKURA_WORKSPACE_CHANGE_SCOPE);
 	sakura_session_mark_dirty();
+	sakura_workspace_end_mutation();
 }
 
 
@@ -812,7 +820,7 @@ sakura_select_tab (struct sakura_tab *sk_tab, gboolean focus)
 				sk_tab->sidebar_node, selection_reason);
 	}
 
-	sakura_tab_bar_refresh();
+	sakura_workspace_mark_changed(SAKURA_WORKSPACE_CHANGE_SELECTION);
 	sakura_sidebar_update_page(sk_tab->page);
 	if (focus)
 		sakura_focus_tab(sk_tab);
@@ -827,10 +835,49 @@ sakura_workspace_begin_mutation(void)
 
 
 void
+sakura_workspace_reconcile(void)
+{
+	const guint view_changes = SAKURA_WORKSPACE_CHANGE_STRUCTURE |
+	                           SAKURA_WORKSPACE_CHANGE_SCOPE |
+	                           SAKURA_WORKSPACE_CHANGE_SELECTION |
+	                           SAKURA_WORKSPACE_CHANGE_METADATA;
+
+	if (sakura_workspace_is_mutating() || sakura.workspace_reconciling)
+		return;
+
+	sakura.workspace_reconciling = TRUE;
+	while (sakura.workspace_pending_changes != SAKURA_WORKSPACE_CHANGE_NONE) {
+		guint changes = sakura.workspace_pending_changes;
+
+		sakura.workspace_pending_changes = SAKURA_WORKSPACE_CHANGE_NONE;
+		if ((changes & view_changes) != 0)
+			sakura_tab_bar_refresh();
+		if ((changes & (SAKURA_WORKSPACE_CHANGE_STRUCTURE |
+		                SAKURA_WORKSPACE_CHANGE_SCOPE)) != 0 &&
+		    sakura.notebook != NULL &&
+		    gtk_notebook_get_n_pages(GTK_NOTEBOOK(sakura.notebook)) > 0)
+			sakura_set_size();
+	}
+	sakura.workspace_reconciling = FALSE;
+}
+
+
+void
+sakura_workspace_mark_changed(SakuraWorkspaceChange changes)
+{
+	sakura.workspace_pending_changes |= (guint)changes;
+	if (!sakura_workspace_is_mutating())
+		sakura_workspace_reconcile();
+}
+
+
+void
 sakura_workspace_end_mutation(void)
 {
 	if (sakura.workspace_mutation_depth > 0)
 		sakura.workspace_mutation_depth--;
+	if (!sakura_workspace_is_mutating())
+		sakura_workspace_reconcile();
 }
 
 
@@ -875,7 +922,7 @@ sakura_select_scope_default (void)
 	/* An empty scope has no active terminal, but the scope itself remains
 	 * selected so the next terminal is created in the right group. */
 	sakura.active_tab = NULL;
-	sakura_tab_bar_refresh();
+	sakura_workspace_mark_changed(SAKURA_WORKSPACE_CHANGE_SELECTION);
 	sakura_sidebar_queue_select_node(sakura.active_group_scope);
 }
 
@@ -934,15 +981,13 @@ sakura_sidebar_set_scope (struct sakura_sidebar_node *scope)
 		return;
 
 	if (sakura.active_group_scope == scope) {
-		sakura_tab_bar_refresh();
+		sakura_workspace_mark_changed(SAKURA_WORKSPACE_CHANGE_SCOPE);
 		return;
 	}
 
 	sakura_remember_current_scope_tab(NULL);
 	sakura.active_group_scope = scope;
-	sakura_tab_bar_refresh();
-	if (sakura.notebook != NULL && gtk_notebook_get_n_pages(GTK_NOTEBOOK(sakura.notebook)) > 0)
-		sakura_set_size();
+	sakura_workspace_mark_changed(SAKURA_WORKSPACE_CHANGE_SCOPE);
 	sakura_session_mark_dirty();
 }
 
@@ -957,6 +1002,7 @@ sakura_sidebar_add_terminal (struct sakura_tab *sk_tab, struct sakura_sidebar_no
 
 	if (sk_tab == NULL || sk_tab->page == NULL)
 		return;
+	sakura_workspace_begin_mutation();
 	page = sk_tab->page;
 	group = sakura_sidebar_group_ancestor(parent);
 	page_parent = parent != NULL && parent->type == SAKURA_SIDEBAR_TASK
@@ -985,9 +1031,9 @@ sakura_sidebar_add_terminal (struct sakura_tab *sk_tab, struct sakura_sidebar_no
 	         (sakura.active_tab == NULL ||
 	          !sakura_tab_is_in_active_scope(sakura.active_tab)))
 		sakura_select_tab(sk_tab, TRUE);
-	else
-		sakura_tab_bar_refresh();
-	sakura_set_size();
+	sakura_workspace_mark_changed(SAKURA_WORKSPACE_CHANGE_STRUCTURE |
+	                              SAKURA_WORKSPACE_CHANGE_SELECTION);
+	sakura_workspace_end_mutation();
 }
 
 
@@ -1065,19 +1111,25 @@ sakura_sidebar_selection_changed_cb (GtkTreeSelection *selection, void *data)
 	if (node == NULL)
 		return;
 	if (node->type == SAKURA_SIDEBAR_GROUP) {
+		sakura_workspace_begin_mutation();
 		sakura.active_task = NULL;
 		sakura_sidebar_set_scope(node);
 		sakura_select_scope_default();
+		sakura_workspace_end_mutation();
 		return;
 	}
 	if (node->type == SAKURA_SIDEBAR_TASK) {
 		SakuraPage *page;
+		sakura_workspace_begin_mutation();
 		sakura.active_task = node->task;
 		sakura_sidebar_set_scope(sakura_sidebar_group_ancestor(node));
 		page = sakura_sidebar_first_task_page(node->task);
 		if (page != NULL && page->active_tab != NULL)
 			sakura_select_tab(page->active_tab, TRUE);
 		sakura_sidebar_queue_select_node(node);
+		sakura_workspace_mark_changed(SAKURA_WORKSPACE_CHANGE_SCOPE |
+		                              SAKURA_WORKSPACE_CHANGE_SELECTION);
+		sakura_workspace_end_mutation();
 		sakura_session_mark_dirty();
 		return;
 	}
@@ -1168,6 +1220,7 @@ sakura_new_tab_in_scope_cb (GtkWidget *widget, void *data)
 	SakuraSidebarNode *node = data;
 	SakuraSidebarNode *insert_after = NULL;
 
+	sakura_workspace_begin_mutation();
 	if (node != NULL && node->type == SAKURA_SIDEBAR_TERMINAL &&
 	    node->parent != NULL && node->parent->type == SAKURA_SIDEBAR_PAGE)
 		insert_after = node->parent;
@@ -1183,6 +1236,7 @@ sakura_new_tab_in_scope_cb (GtkWidget *widget, void *data)
 	else
 		sakura_new_tab_cb(widget, NULL);
 	sakura.sidebar_pending_insert_after = NULL;
+	sakura_workspace_end_mutation();
 }
 
 
@@ -1191,11 +1245,13 @@ sakura_new_codex_in_scope_cb (GtkWidget *widget, void *data)
 {
 	SakuraSidebarNode *parent = sakura_sidebar_creation_parent_for_context(data);
 
+	sakura_workspace_begin_mutation();
 	sakura_sidebar_prepare_context(data);
 	/* Preserve the row that opened the context menu. The generic Codex action
 	 * otherwise falls back to the currently selected tab's group, which may be
 	 * a child group of the clicked group. */
 	sakura_new_codex_cb(widget, parent);
+	sakura_workspace_end_mutation();
 }
 
 
@@ -1249,15 +1305,19 @@ sakura_sidebar_move_terminal_cb (GtkWidget *widget, void *data)
 	if (target == NULL || target->tab == NULL || target->group == NULL ||
 	    target->tab->sidebar_node == NULL || target->tab->page == NULL)
 		return;
+	sakura_workspace_begin_mutation();
 	page = target->tab->page;
-	if (!sakura_sidebar_move_page_to_group(page, target->group))
+	if (!sakura_sidebar_move_page_to_group(page, target->group)) {
+		sakura_workspace_end_mutation();
 		return;
+	}
 
 	if (sakura.active_tab == target->tab)
 		sakura_select_tab(target->tab, TRUE);
 	else
-		sakura_tab_bar_refresh();
+		sakura_workspace_mark_changed(SAKURA_WORKSPACE_CHANGE_STRUCTURE);
 	sakura_sidebar_save_groups();
+	sakura_workspace_end_mutation();
 }
 
 
@@ -1272,6 +1332,7 @@ sakura_sidebar_move_page_to_group(SakuraPage *page, SakuraSidebarNode *group)
 	node = page->sidebar_node;
 	if (node == NULL || node->parent == group)
 		return FALSE;
+	sakura_workspace_begin_mutation();
 	old_parent = node->parent;
 	old_task = page->task;
 
@@ -1291,6 +1352,9 @@ sakura_sidebar_move_page_to_group(SakuraPage *page, SakuraSidebarNode *group)
 	    g_strcmp0(old_parent->last_terminal_id, page->active_tab->terminal_id) == 0)
 		g_clear_pointer(&old_parent->last_terminal_id, g_free);
 	sakura_sidebar_update_page(page);
+	sakura_workspace_mark_changed(SAKURA_WORKSPACE_CHANGE_STRUCTURE |
+	                              SAKURA_WORKSPACE_CHANGE_SCOPE);
+	sakura_workspace_end_mutation();
 	return TRUE;
 }
 
@@ -2264,7 +2328,7 @@ sakura_sidebar_rename_group_cb (GtkWidget *widget, void *data)
 			node->title = g_strdup(title);
 			if (sakura_sidebar_get_iter(node, &iter))
 				sakura_sidebar_set_node_row(node, &iter);
-			sakura_tab_bar_refresh();
+			sakura_workspace_mark_changed(SAKURA_WORKSPACE_CHANGE_METADATA);
 			sakura_sidebar_save_groups();
 		}
 	}
@@ -2890,7 +2954,8 @@ sakura_workspace_restore_snapshot (SakuraSessionSnapshot *snapshot)
 			sakura_select_scope_default();
 	}
 	if (restored == 0)
-		sakura_tab_bar_refresh();
+		sakura_workspace_mark_changed(SAKURA_WORKSPACE_CHANGE_STRUCTURE |
+		                              SAKURA_WORKSPACE_CHANGE_SCOPE);
 	return restored > 0;
 }
 SakuraSessionSnapshot *
@@ -3041,7 +3106,7 @@ sakura_sidebar_model_reordered_cb (GtkTreeModel *model, GtkTreePath *path,
                                    GtkTreeIter *iter, gint *new_order, void *data)
 {
 	sakura_sidebar_save_groups();
-	sakura_tab_bar_refresh();
+	sakura_workspace_mark_changed(SAKURA_WORKSPACE_CHANGE_STRUCTURE);
 	sakura_session_mark_dirty();
 }
 
@@ -3493,7 +3558,7 @@ sakura_switch_page_cb (GtkWidget *widget, GtkWidget *widget_page,
 		if (title != NULL && title[0] != '\0')
 			sakura_set_window_title(title);
 	}
-	sakura_tab_bar_refresh();
+	sakura_workspace_mark_changed(SAKURA_WORKSPACE_CHANGE_SELECTION);
 	sakura_session_mark_dirty();
 }
 
@@ -3504,8 +3569,8 @@ sakura_page_removed_cb (GtkWidget *widget, void *data)
 	(void)widget;
 	(void)data;
 	if (gtk_notebook_get_n_pages(GTK_NOTEBOOK(sakura.notebook)) == 1)
-		/* If the first tab is disabled, recalculate the terminal size. */
-		sakura_set_size();
+		/* If the first tab is disabled, recalculate the terminal surface. */
+		sakura_workspace_mark_changed(SAKURA_WORKSPACE_CHANGE_STRUCTURE);
 }
 
 
@@ -4148,10 +4213,7 @@ sakura_sidebar_select_created_tab(SakuraTab *tab)
 	 * while the new page and its sidebar rows were being assembled. */
 	sakura_sidebar_cancel_pending_selection();
 	sakura_sidebar_select_node_now(node);
-	/* The active-tab creation branch only queues the tree selection. Refresh
-	 * the scoped surface now that the tab belongs to the tree so an empty group
-	 * immediately swaps its placeholder for the terminal notebook. */
-	sakura_tab_bar_refresh();
+	sakura_workspace_mark_changed(SAKURA_WORKSPACE_CHANGE_SELECTION);
 }
 
 

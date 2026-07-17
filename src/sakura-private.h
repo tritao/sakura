@@ -108,6 +108,14 @@ typedef enum {
 } SakuraSidebarSelectionReason;
 
 typedef enum {
+	SAKURA_WORKSPACE_CHANGE_NONE = 0,
+	SAKURA_WORKSPACE_CHANGE_STRUCTURE = 1 << 0,
+	SAKURA_WORKSPACE_CHANGE_SCOPE = 1 << 1,
+	SAKURA_WORKSPACE_CHANGE_SELECTION = 1 << 2,
+	SAKURA_WORKSPACE_CHANGE_METADATA = 1 << 3
+} SakuraWorkspaceChange;
+
+typedef enum {
 	SAKURA_TASK_READY,
 	SAKURA_TASK_WORKING,
 	SAKURA_TASK_BLOCKED,
@@ -230,6 +238,8 @@ struct sakura_app {
 	bool session_shutting_down;
 	bool session_restore_failed;
 	guint workspace_mutation_depth;
+	guint workspace_pending_changes;
+	gboolean workspace_reconciling;
 	bool session_dirty;
 	bool session_new_window;
 	guint session_save_source_id;
@@ -704,6 +714,8 @@ void sakura_sidebar_cancel_pending_selection(void);
 void sakura_workspace_begin_mutation(void);
 void sakura_workspace_end_mutation(void);
 gboolean sakura_workspace_is_mutating(void);
+void sakura_workspace_mark_changed(SakuraWorkspaceChange changes);
+void sakura_workspace_reconcile(void);
 void sakura_sidebar_set_node_row(SakuraSidebarNode *node, GtkTreeIter *iter);
 const gchar *sakura_task_status_label(SakuraTaskStatus status);
 const gchar *sakura_task_status_symbol(SakuraTaskStatus status);

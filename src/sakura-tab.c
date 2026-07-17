@@ -741,10 +741,6 @@ sakura_tab_add_with_options (const gchar *restore_cwd,
 			gtk_widget_hide(sk_tab->scrollbar);
 		}
 
-		if (npages == 2 && sakura.show_tab_bar != SHOW_TAB_BAR_NEVER) {
-			sakura_tab_bar_refresh();
-			sakura_set_size();
-		}
 		/* Call set_current page after showing the widget: gtk ignores this
 		 * function in the window is not visible *sigh*. Gtk documentation
 		 * says this is for "historical" reasons. Me arse */
@@ -850,11 +846,11 @@ sakura_tab_delete_pane(SakuraTab *tab)
 		sakura.active_tab = page->active_tab;
 	sakura.active_page = page;
 	sakura_tab_free(tab);
-	sakura_tab_bar_refresh();
+	sakura_workspace_mark_changed(SAKURA_WORKSPACE_CHANGE_STRUCTURE |
+	                              SAKURA_WORKSPACE_CHANGE_SELECTION);
 	sakura_sidebar_update_attention_count();
 	if (sakura.active_tab != NULL)
 		sakura_select_tab(sakura.active_tab, TRUE);
-	sakura_set_size();
 	sakura_session_mark_dirty();
 	sakura_session_flush();
 	sakura_workspace_end_mutation();
@@ -930,9 +926,7 @@ sakura_tab_delete_page(gint page)
 	} else {
 		sakura_tab_free(sk_tab);
 	}
-	sakura_tab_bar_refresh();
-	if (gtk_notebook_get_n_pages(GTK_NOTEBOOK(sakura.notebook)) > 0)
-		sakura_set_size();
+	sakura_workspace_mark_changed(SAKURA_WORKSPACE_CHANGE_STRUCTURE);
 	sakura_sidebar_update_attention_count();
 
 	/* Commit the deletion before selecting a replacement. This lets the normal
@@ -942,7 +936,7 @@ sakura_tab_delete_page(gint page)
 	if (removed_active)
 		sakura_select_scope_default();
 	else
-		sakura_tab_bar_refresh();
+		sakura_workspace_mark_changed(SAKURA_WORKSPACE_CHANGE_SELECTION);
 	sakura_session_mark_dirty();
 	sakura_session_flush();
 	return TRUE;
@@ -1642,7 +1636,8 @@ sakura_tab_move_relative(gint direction)
 	} else if (page > 0) {
 		gtk_notebook_reorder_child(GTK_NOTEBOOK(sakura.notebook), child, page - 1);
 	}
-	sakura_tab_bar_refresh();
+	sakura_workspace_mark_changed(SAKURA_WORKSPACE_CHANGE_STRUCTURE |
+	                              SAKURA_WORKSPACE_CHANGE_SELECTION);
 }
 
 
@@ -1798,7 +1793,7 @@ sakura_pane_focus_in_cb(GtkWidget *widget, GdkEventFocus *event, gpointer data)
 	else
 		sakura_sidebar_queue_select_node(tab->sidebar_node);
 	sakura_sidebar_update_page(tab->page);
-	sakura_tab_bar_refresh();
+	sakura_workspace_mark_changed(SAKURA_WORKSPACE_CHANGE_SELECTION);
 	return FALSE;
 }
 

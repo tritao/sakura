@@ -845,6 +845,54 @@ test_sidebar_selects_created_tab(void)
 
 
 static void
+test_workspace_reconciles_at_outer_mutation_boundary(void)
+{
+	setup_workspace();
+	setup_sidebar_fixture();
+	sakura.tab_bar = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
+	sakura.tab_bar_scope_label = gtk_label_new("");
+	sakura.tab_bar_scrolled = gtk_scrolled_window_new(NULL, NULL);
+	sakura.tab_bar_shell = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
+	sakura.tab_bar_empty = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
+	gtk_widget_hide(sakura.notebook);
+	gtk_widget_show(sakura.tab_bar_empty);
+
+	sakura_workspace_begin_mutation();
+	sakura_workspace_begin_mutation();
+	sakura_workspace_mark_changed(SAKURA_WORKSPACE_CHANGE_SELECTION);
+	g_assert_false(gtk_widget_get_visible(sakura.notebook));
+	g_assert_true(gtk_widget_get_visible(sakura.tab_bar_empty));
+	g_assert_cmpuint(sakura.workspace_mutation_depth, ==, 2);
+	g_assert_cmpuint(sakura.workspace_pending_changes, !=,
+	                 SAKURA_WORKSPACE_CHANGE_NONE);
+
+	sakura_workspace_end_mutation();
+	g_assert_false(gtk_widget_get_visible(sakura.notebook));
+	g_assert_true(gtk_widget_get_visible(sakura.tab_bar_empty));
+	g_assert_cmpuint(sakura.workspace_mutation_depth, ==, 1);
+
+	sakura_workspace_end_mutation();
+	g_assert_true(gtk_widget_get_visible(sakura.notebook));
+	g_assert_false(gtk_widget_get_visible(sakura.tab_bar_empty));
+	g_assert_cmpuint(sakura.workspace_mutation_depth, ==, 0);
+	g_assert_cmpuint(sakura.workspace_pending_changes, ==,
+	                 SAKURA_WORKSPACE_CHANGE_NONE);
+
+	gtk_widget_destroy(sakura.tab_bar);
+	gtk_widget_destroy(sakura.tab_bar_scope_label);
+	gtk_widget_destroy(sakura.tab_bar_scrolled);
+	gtk_widget_destroy(sakura.tab_bar_shell);
+	gtk_widget_destroy(sakura.tab_bar_empty);
+	sakura.tab_bar = NULL;
+	sakura.tab_bar_scope_label = NULL;
+	sakura.tab_bar_scrolled = NULL;
+	sakura.tab_bar_shell = NULL;
+	sakura.tab_bar_empty = NULL;
+	teardown_workspace();
+}
+
+
+static void
 test_sidebar_selection_priority(void)
 {
 	SakuraPage *page_a, *page_b, *page_c;
@@ -1259,6 +1307,8 @@ main(int argc, char **argv)
 	                test_sidebar_pulses_nested_rows);
 	g_test_add_func("/workspace/sidebar-selects-created-tab",
 	                test_sidebar_selects_created_tab);
+	g_test_add_func("/workspace/reconciles-at-outer-mutation-boundary",
+	                test_workspace_reconciles_at_outer_mutation_boundary);
 	g_test_add_func("/workspace/sidebar-selection-priority",
 	                test_sidebar_selection_priority);
 	g_test_add_func("/workspace/close-active-page-preserves-group",

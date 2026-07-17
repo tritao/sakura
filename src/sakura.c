@@ -1520,9 +1520,11 @@ sakura_split_current_cb (GtkWidget *widget, void *data)
 	config.target_ratio = 0.5;
 	config.split_direction = direction;
 	sakura_session_accept_changes();
-		sakura_tab_add_with_options(NULL, NULL, NULL, FALSE,
-		                            SAKURA_TAB_SHELL, SAKURA_TOOL_NONE,
-		                            NULL, NULL, NULL, NULL, NULL, -1, &config);
+	sakura_workspace_begin_mutation();
+	sakura_tab_add_with_options(NULL, NULL, NULL, FALSE,
+	                            SAKURA_TAB_SHELL, SAKURA_TOOL_NONE,
+	                            NULL, NULL, NULL, NULL, NULL, -1, &config);
+	sakura_workspace_end_mutation();
 }
 
 
@@ -1577,38 +1579,39 @@ sakura_apply_layout_preset_cb(GtkWidget *widget, void *data)
 
 	root = page->layout_root;
 	sakura_session_accept_changes();
+	sakura_workspace_begin_mutation();
 	switch (preset) {
 		case SAKURA_LAYOUT_PRESET_TWO_COLUMNS:
 			if (!sakura_layout_preset_add_pane(page, root,
 			                                  SAKURA_SPLIT_RIGHT, 0.5, &new_tab))
-				return;
+				goto out;
 			break;
 		case SAKURA_LAYOUT_PRESET_TWO_ROWS:
 			if (!sakura_layout_preset_add_pane(page, root,
 			                                  SAKURA_SPLIT_DOWN, 0.5, &new_tab))
-				return;
+				goto out;
 			break;
 		case SAKURA_LAYOUT_PRESET_GRID_2X2:
 			if (!sakura_layout_preset_add_pane(page, root,
 			                                  SAKURA_SPLIT_RIGHT, 0.5, &new_tab))
-				return;
+				goto out;
 			first = root;
 			second = new_tab->layout_leaf;
 			if (!sakura_layout_preset_add_pane(page, first,
 			                                  SAKURA_SPLIT_DOWN, 0.5, NULL) ||
 			    !sakura_layout_preset_add_pane(page, second,
 			                                  SAKURA_SPLIT_DOWN, 0.5, NULL))
-				return;
+				goto out;
 			break;
 		case SAKURA_LAYOUT_PRESET_MAIN_STACK:
 			if (!sakura_layout_preset_add_pane(page, root,
 			                                  SAKURA_SPLIT_RIGHT, 0.65, &new_tab) ||
 			    !sakura_layout_preset_add_pane(page, new_tab->layout_leaf,
 			                                  SAKURA_SPLIT_DOWN, 0.5, NULL))
-				return;
+				goto out;
 			break;
 		default:
-			return;
+			goto out;
 	}
 
 	page->active_tab = active;
@@ -1617,6 +1620,8 @@ sakura_apply_layout_preset_cb(GtkWidget *widget, void *data)
 	sakura_select_tab(active, TRUE);
 	sakura_update_geometry_hints();
 	sakura_session_mark_dirty();
+out:
+	sakura_workspace_end_mutation();
 }
 
 
@@ -3553,12 +3558,14 @@ sakura_add_tab_with_options (const gchar *restore_cwd,
 			.split_direction = SAKURA_SPLIT_RIGHT
 		};
 
+	sakura_workspace_begin_mutation();
 	sakura_tab_add_with_options(restore_cwd, restore_parent, restore_title,
 	                            restore_title_set, restore_kind, restore_tool,
 	                            restore_codex_session_id, restore_codex_session_name,
 	                            restore_codex_reasoning_effort,
 	                            restore_tool_target, restore_terminal_id, restore_colorset,
 	                            &launch_config);
+	sakura_workspace_end_mutation();
 }
 
 
@@ -3581,10 +3588,12 @@ sakura_new_tab_for_group (SakuraSidebarNode *group)
 	if (group == NULL || group->type != SAKURA_SIDEBAR_GROUP)
 		return;
 
+	sakura_workspace_begin_mutation();
 	sakura_session_accept_changes();
 	sakura_tab_add_with_options(NULL, group, NULL, FALSE,
 	                            SAKURA_TAB_SHELL, SAKURA_TOOL_NONE,
 	                            NULL, NULL, NULL, NULL, NULL, -1, &launch_config);
+	sakura_workspace_end_mutation();
 }
 
 
@@ -3607,10 +3616,12 @@ sakura_new_tab_for_task (SakuraTask *task)
 	if (task == NULL || task->sidebar_node == NULL)
 		return;
 
+	sakura_workspace_begin_mutation();
 	sakura_session_accept_changes();
 	sakura_tab_add_with_options(NULL, task->sidebar_node, NULL, FALSE,
 	                            SAKURA_TAB_SHELL, SAKURA_TOOL_NONE,
 	                            NULL, NULL, NULL, NULL, NULL, -1, &launch_config);
+	sakura_workspace_end_mutation();
 }
 
 
