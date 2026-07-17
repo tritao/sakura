@@ -1696,7 +1696,7 @@ sakura_tab_spawn_tool(SakuraTab *tab, const gchar *cwd, gchar **env)
 	}
 	vte_terminal_spawn_async(VTE_TERMINAL(tab->vte), VTE_PTY_NO_HELPER, cwd,
 	                         argv, env, G_SPAWN_SEARCH_PATH, NULL, NULL, NULL,
-	                         -1, NULL, sakura_spawn_callback, tab);
+	                         -1, NULL, sakura_spawn_callback, NULL);
 	g_free(executable);
 }
 

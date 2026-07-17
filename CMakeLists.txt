@@ -57,6 +57,7 @@ SET (SAKURA_APP_SOURCES
 	src/sakura-layout.c
 	src/sakura-tab.c
 	src/sakura-workspace.c
+	src/sakura-workspace-model.c
 	src/sakura-integrations.c
 	src/sakura-session.c)
 
@@ -174,13 +175,23 @@ IF (Python3_Interpreter_FOUND)
 	FIND_PROGRAM (XVFB_EXECUTABLE Xvfb)
 	FIND_PROGRAM (XVFB_RUN_EXECUTABLE xvfb-run)
 	FIND_PROGRAM (XDOTOOL_EXECUTABLE xdotool)
+	EXECUTE_PROCESS (
+		COMMAND ${Python3_EXECUTABLE} -c "import Xlib"
+		RESULT_VARIABLE PYTHON_XLIB_RESULT
+		OUTPUT_QUIET ERROR_QUIET)
+	IF (PYTHON_XLIB_RESULT EQUAL 0)
+		SET (SAKURA_PYTHON_XLIB_FOUND TRUE)
+	ELSE ()
+		SET (SAKURA_PYTHON_XLIB_FOUND FALSE)
+	ENDIF ()
 	IF (BUILD_TESTING AND XVFB_RUN_EXECUTABLE)
 		ADD_TEST (NAME workspace-gtk
 		          COMMAND ${XVFB_RUN_EXECUTABLE} -a
 		                  $<TARGET_FILE:sakura-workspace-gtk-test>)
 		SET_TESTS_PROPERTIES (workspace-gtk PROPERTIES TIMEOUT 30)
 	ENDIF (BUILD_TESTING AND XVFB_RUN_EXECUTABLE)
-	IF (BUILD_TESTING AND XVFB_EXECUTABLE AND XDOTOOL_EXECUTABLE)
+	IF (BUILD_TESTING AND XVFB_EXECUTABLE AND XDOTOOL_EXECUTABLE AND
+	    SAKURA_PYTHON_XLIB_FOUND)
 		# Keep packaged-process coverage for X11 input/startup/shutdown and the
 		# dedicated drag test for real pointer-driven sidebar mutations.
 		ADD_TEST (NAME ui-smoke
@@ -195,7 +206,12 @@ IF (Python3_Interpreter_FOUND)
 		                  --binary $<TARGET_FILE:sakura>
 		                  --iterations 1 --drag-only)
 		SET_TESTS_PROPERTIES (ui-drag PROPERTIES TIMEOUT 90)
-	ENDIF (BUILD_TESTING AND XVFB_EXECUTABLE AND XDOTOOL_EXECUTABLE)
+	ENDIF (BUILD_TESTING AND XVFB_EXECUTABLE AND XDOTOOL_EXECUTABLE AND
+	       SAKURA_PYTHON_XLIB_FOUND)
+	IF (BUILD_TESTING AND XVFB_EXECUTABLE AND XDOTOOL_EXECUTABLE AND
+	    NOT SAKURA_PYTHON_XLIB_FOUND)
+		MESSAGE (WARNING "Skipping packaged UI tests: python-xlib is required by tests/session-stress.py")
+	ENDIF ()
 ENDIF (Python3_Interpreter_FOUND)
 
 ADD_SUBDIRECTORY (po)

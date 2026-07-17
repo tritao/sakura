@@ -514,6 +514,7 @@ gboolean sakura_tab_is_current(SakuraTab *tab);
 gboolean sakura_tab_can_split(SakuraTab *tab);
 SakuraTab *sakura_tab_new(void);
 void sakura_tab_free(SakuraTab *tab);
+void sakura_tab_disconnect_exit_handler(SakuraTab *tab);
 SakuraTab *sakura_tab_for_vte(VteTerminal *vte);
 SakuraTab *sakura_find_pane_by_terminal_id(const gchar *terminal_id);
 void sakura_set_tab_label_text(const gchar *title, gint page);
@@ -643,6 +644,8 @@ SakuraSidebarNode *sakura_sidebar_creation_parent_for_context(
                                       SakuraSidebarNode *context);
 gboolean sakura_sidebar_move_page_to_group(SakuraPage *page,
                                             SakuraSidebarNode *group);
+gboolean sakura_sidebar_can_reorder_node_to_group(SakuraSidebarNode *source,
+                                                    SakuraSidebarNode *target);
 void sakura_sidebar_sync_projection_links(void);
 SakuraSessionSnapshot *sakura_workspace_snapshot_new(void);
 gboolean sakura_workspace_restore_snapshot(SakuraSessionSnapshot *snapshot);
@@ -745,9 +748,26 @@ const gchar *sakura_task_status_label(SakuraTaskStatus status);
 const gchar *sakura_task_status_symbol(SakuraTaskStatus status);
 const gchar *sakura_task_status_color(SakuraTaskStatus status);
 SakuraTask *sakura_task_find_by_id(const gchar *id);
+SakuraGroup *sakura_group_new(const gchar *id, const gchar *title,
+                              SakuraGroup *parent);
 SakuraGroup *sakura_group_for_task(SakuraTask *task);
 SakuraGroup *sakura_group_for_session(SakuraSession *session);
 void sakura_group_free(SakuraGroup *group);
+gboolean sakura_workspace_model_add_group(SakuraGroup *group);
+gboolean sakura_workspace_model_can_remove_group(SakuraGroup *group);
+gboolean sakura_workspace_model_remove_group(SakuraGroup *group);
+gboolean sakura_workspace_model_add_task(SakuraTask *task);
+gboolean sakura_workspace_model_can_remove_task(SakuraTask *task);
+gboolean sakura_workspace_model_remove_task(SakuraTask *task);
+gboolean sakura_workspace_model_move_page_to_group(SakuraPage *page,
+                                                    SakuraGroup *group);
+gboolean sakura_workspace_model_attach_page(SakuraTask *task, SakuraPage *page);
+gboolean sakura_workspace_model_detach_page(SakuraPage *page);
+gboolean sakura_workspace_model_reorder_group(SakuraGroup *source,
+                                               SakuraGroup *target,
+                                               gboolean after);
+gboolean sakura_workspace_model_append_task(SakuraTask *task,
+                                             SakuraGroup *group);
 void sakura_task_update_row(SakuraTask *task);
 void sakura_task_attach_page(SakuraTask *task, SakuraPage *page);
 void sakura_task_detach_page(SakuraPage *page);

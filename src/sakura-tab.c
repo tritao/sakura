@@ -20,7 +20,7 @@
 #define TAB_MAX_SIZE 40
 #define TAB_MIN_SIZE 6
 
-static void
+void
 sakura_tab_disconnect_exit_handler(SakuraTab *tab)
 {
 	if (tab == NULL || tab->vte == NULL || tab->exit_handler_id == 0)
@@ -230,9 +230,17 @@ void
 sakura_spawn_callback(VteTerminal *vte, GPid pid, GError *error,
                       gpointer user_data)
 {
-	SakuraTab *tab = user_data;
+	SakuraTab *tab;
 
-	(void)vte;
+	(void)user_data;
+	/* VTE invokes this asynchronously. The tab can be closed before the
+	 * spawn completes, so never retain a raw SakuraTab pointer as callback
+	 * data. Resolve it through the still-live VTE and ignore late completions. */
+	if (sakura.session_shutting_down)
+		return;
+	tab = sakura_tab_for_vte(vte);
+	if (tab == NULL)
+		return;
 	if (pid == -1) {
 		g_warning("Could not spawn terminal child: %s",
 		          error != NULL ? error->message : "unknown error");
@@ -272,7 +280,7 @@ sakura_tab_spawn_shell(SakuraTab *tab, const gchar *cwd, gchar **env,
 	                         argv, env,
 	                         G_SPAWN_SEARCH_PATH | G_SPAWN_FILE_AND_ARGV_ZERO,
 	                         NULL, NULL, NULL, -1, NULL,
-	                         sakura_spawn_callback, tab);
+	                         sakura_spawn_callback, NULL);
 }
 
 
@@ -318,7 +326,7 @@ sakura_tab_spawn_codex(SakuraTab *tab, const gchar *cwd, gchar **env)
 	codex_env = g_environ_unsetenv(codex_env, "NO_COLOR");
 	vte_terminal_spawn_async(VTE_TERMINAL(tab->vte), VTE_PTY_NO_HELPER, cwd,
 	                         argv, codex_env, G_SPAWN_SEARCH_PATH, NULL, NULL, NULL,
-	                         -1, NULL, sakura_spawn_callback, tab);
+	                         -1, NULL, sakura_spawn_callback, NULL);
 	g_strfreev(codex_env);
 	g_free(reasoning_config);
 }
@@ -696,7 +704,12 @@ sakura_tab_add_with_options (const gchar *restore_cwd,
 			gtk_widget_hide(sk_tab->scrollbar);
 		}
 
-		gtk_widget_show(sakura.main_window);
+		/* During restore, keep the window undiscoverable until the complete
+		 * workspace projection and all initial tab spawns have been assembled.
+		 * Showing the first tab here exposes a partially-restored window and
+		 * allows a close request to race the remaining restore callbacks. */
+		if (!sakura.session_restoring)
+			gtk_widget_show(sakura.main_window);
 
 		sakura_set_colors();
 #ifdef GDK_WINDOWING_X11
@@ -929,14 +942,16 @@ sakura_tab_delete_page(gint page)
 	sakura_workspace_mark_changed(SAKURA_WORKSPACE_CHANGE_STRUCTURE);
 	sakura_sidebar_update_attention_count();
 
-	/* Commit the deletion before selecting a replacement. This lets the normal
-	 * notebook callback run for the replacement page and keeps the fallback
-	 * scoped to the group/task that owned the deleted page. */
-	sakura_workspace_end_mutation();
+	/* Select the replacement while the deletion transaction is still open. GTK
+	 * may report the old page during the detach, so the mutation guard keeps
+	 * intermediate switch-page signals from overwriting this authoritative
+	 * result. Ending the transaction then reconciles and validates the final
+	 * active page together with the model. */
 	if (removed_active)
 		sakura_select_scope_default();
 	else
 		sakura_workspace_mark_changed(SAKURA_WORKSPACE_CHANGE_SELECTION);
+	sakura_workspace_end_mutation();
 	sakura_session_mark_dirty();
 	sakura_session_flush();
 	return TRUE;
@@ -1075,7 +1090,7 @@ sakura_tab_spawn_command(SakuraTab *tab, const gchar *cwd, gchar **env,
 	vte_terminal_spawn_async(VTE_TERMINAL(tab->vte), VTE_PTY_NO_HELPER, NULL,
 	                         command_argv, env, G_SPAWN_SEARCH_PATH,
 	                         NULL, NULL, NULL, -1, NULL,
-	                         sakura_spawn_callback, tab);
+	                         sakura_spawn_callback, NULL);
 	g_free(path);
 	g_strfreev(command_argv);
 	return TRUE;
@@ -1610,6 +1625,8 @@ sakura_beep_cb (GtkWidget *widget, void *data)
 	SakuraTab *tab = sakura_tab_for_vte(VTE_TERMINAL(widget));
 
 	(void)data;
+	if (sakura.session_shutting_down)
+		return;
 	if (tab != NULL)
 		sakura_tab_set_status(tab, SAKURA_TAB_STATUS_READY, TRUE);
 	gtk_window_set_urgency_hint(GTK_WINDOW(sakura.main_window), FALSE);
@@ -1710,7 +1727,10 @@ sakura_child_exited_cb (GtkWidget *widget, void *data)
 	SakuraTab *tab;
 
 	(void)data;
-	if (sakura_workspace_is_mutating())
+	/* Closing the main window destroys VTEs and can make their children exit
+	 * while GTK is already disposing the widget tree. Do not turn that normal
+	 * teardown into a page deletion/reselection pass. */
+	if (sakura.session_shutting_down || sakura_workspace_is_mutating())
 		return;
 	tab = sakura_tab_for_vte(VTE_TERMINAL(widget));
 	page = sakura_page_for_tab(tab);
@@ -1782,7 +1802,7 @@ sakura_pane_focus_in_cb(GtkWidget *widget, GdkEventFocus *event, gpointer data)
 	SakuraTab *tab = data != NULL ? data : sakura_tab_for_vte(VTE_TERMINAL(widget));
 
 	(void)event;
-	if (tab == NULL || tab->page == NULL)
+	if (sakura.session_shutting_down || tab == NULL || tab->page == NULL)
 		return FALSE;
 	sakura.active_tab = tab;
 	sakura.active_page = tab->page;
@@ -1806,6 +1826,8 @@ sakura_tab_title_changed_cb(GtkWidget *widget, void *data)
 	gint page;
 
 	(void)data;
+	if (sakura.session_shutting_down)
+		return;
 	tab = sakura_tab_for_vte(VTE_TERMINAL(widget));
 	page = sakura_page_for_tab(tab);
 	if (tab == NULL || page < 0)
@@ -1936,7 +1958,8 @@ sakura_tab_bar_refresh(void)
 	const gchar *scope_title;
 	gchar *scope_label;
 
-	if (sakura.tab_bar == NULL || sakura.notebook == NULL)
+	if (sakura.session_shutting_down || sakura.tab_bar == NULL ||
+	    sakura.notebook == NULL)
 		return;
 	/* Changing the notebook page emits switch-page synchronously. During
 	 * startup GTK can still report no current page while emitting that signal,
@@ -2389,6 +2412,6 @@ sakura_notebook_page_reordered_cb(GtkNotebook *notebook, GtkWidget *child,
 	(void)child;
 	(void)page_num;
 	(void)data;
-	if (sakura_notebook_sync_page_order())
+	if (!sakura.session_shutting_down && sakura_notebook_sync_page_order())
 		sakura_session_mark_dirty();
 }

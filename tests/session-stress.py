@@ -11,11 +11,21 @@ import configparser
 import os
 from pathlib import Path
 import random
+import shlex
 import signal
 import subprocess
 import sys
 import tempfile
 import time
+
+try:
+    from Xlib import X as X11
+    from Xlib import display as x11_display
+    from Xlib.protocol import event as x11_event
+except ImportError:
+    X11 = None
+    x11_display = None
+    x11_event = None
 
 
 GROUPS = [
@@ -932,30 +942,74 @@ def run_task_drag_reorder_case(binary, config_file, session_file, env, log_file)
         raise
 
 
+def request_window_close(window, env):
+    if x11_display is None:
+        raise RuntimeError("python-xlib is required for graceful X11 close tests")
+    run(["xdotool", "windowactivate", "--sync", window], env, timeout=5,
+        check=False)
+    display = x11_display.Display(env["DISPLAY"])
+    window_object = display.create_resource_object("window", int(window, 0))
+    wm_protocols = display.intern_atom("WM_PROTOCOLS")
+    wm_delete_window = display.intern_atom("WM_DELETE_WINDOW")
+    close_event = x11_event.ClientMessage(
+        window=window_object,
+        client_type=wm_protocols,
+        data=(32, [wm_delete_window, X11.CurrentTime, 0, 0, 0]),
+    )
+    # Match the protocol a window manager uses for a graceful close. In
+    # particular, do not call xdotool windowclose, which destroys the X
+    # window directly and bypasses GTK's delete-event lifecycle.
+    window_object.send_event(close_event, propagate=False)
+    display.flush()
+    display.close()
+
+
 def close_window(process, window, env):
     if process.poll() is None:
         # Allow queued GTK focus/selection idles to finish before asking X11
         # to close the window. Closing while one of those callbacks is still
         # dispatching can produce a nondeterministic BadWindow in Xvfb.
-        time.sleep(0.25)
-        run(["xdotool", "windowclose", window], env, timeout=5, check=False)
+        # Allow restored VTE spawn completions and the initial GTK projection
+        # to settle. Instrumented builds can still be dispatching those
+        # callbacks when the window first becomes discoverable; callers can
+        # raise this without changing the normal test cadence.
+        default_settle = "10.0" if os.environ.get("ASAN_OPTIONS") else "3.0"
+        settle_seconds = float(os.environ.get("SAKURA_STRESS_STARTUP_SETTLE",
+                                               default_settle))
+        time.sleep(max(0.0, settle_seconds))
+        request_window_close(window, env)
         try:
-            process.wait(timeout=12)
+            process.wait(timeout=5)
         except subprocess.TimeoutExpired:
-            process.send_signal(signal.SIGTERM)
             try:
-                process.wait(timeout=3)
+                request_window_close(window, env)
+            except Exception:
+                pass
+            try:
+                # Sanitizer-instrumented GTK/VTE teardown can take longer than
+                # a normal close while child processes and async I/O unwind.
+                process.wait(timeout=25)
             except subprocess.TimeoutExpired:
-                process.kill()
-                process.wait(timeout=3)
+                process.send_signal(signal.SIGTERM)
+                try:
+                    process.wait(timeout=3)
+                except subprocess.TimeoutExpired:
+                    process.kill()
+                    process.wait(timeout=3)
     if process.returncode not in (0, None):
         raise RuntimeError(f"Sakura exited with status {process.returncode}")
 
 
 def launch_sakura(binary, config_file, env, log_file):
     log_handle = log_file.open("a", encoding="utf-8")
+    command = [str(binary), "--config-file", str(config_file)]
+    launcher = env.get("SAKURA_STRESS_LAUNCHER")
+    if launcher:
+        command = shlex.split(launcher) + command
+        if env.get("SAKURA_STRESS_VERBOSE"):
+            print("launch:", command, file=sys.stderr)
     process = subprocess.Popen(
-        [str(binary), "--config-file", str(config_file)],
+        command,
         env=env, stdout=log_handle, stderr=subprocess.STDOUT,
     )
     log_handle.close()
@@ -1384,13 +1438,7 @@ def main():
                 print("deterministic drag regressions: passed")
                 return
             for iteration in range(args.iterations):
-                log_handle = log_file.open("a", encoding="utf-8")
-                app = subprocess.Popen(
-                    [str(binary), "--config-file", str(config_file)],
-                    env=env, stdout=log_handle, stderr=subprocess.STDOUT,
-                )
-                log_handle.close()
-                window = find_window(env)
+                app, window = launch_sakura(binary, config_file, env, log_file)
                 if args.screenshot:
                     run(["import", "-display", display, "-window", window,
                          args.screenshot], env, timeout=5)

@@ -783,6 +783,8 @@ sakura_key_press_cb (GtkWidget *widget, GdkEventKey *event, gpointer user_data)
 static gboolean
 sakura_resized_window_cb (GtkWidget *widget, GdkEventConfigure *event, void *data)
 {
+	if (sakura.session_shutting_down)
+		return FALSE;
 	if (event->width != sakura.width || event->height != sakura.height) {
 		//SAY("Configure event received. Current w %d h %d ConfigureEvent w %d h %d",
 		//sakura.width, sakura.height, event->width, event->height);
@@ -798,6 +800,8 @@ sakura_resized_window_cb (GtkWidget *widget, GdkEventConfigure *event, void *dat
 static gboolean
 sakura_focus_in_cb (GtkWidget *widget, GdkEvent *event, void *data)
 {
+	if (sakura.session_shutting_down)
+		return FALSE;
 	if (event->type != GDK_FOCUS_CHANGE) return FALSE;
 	//if (!sakura.use_fading) return FALSE;
 
@@ -823,6 +827,8 @@ sakura_focus_out_cb (GtkWidget *widget, GdkEvent *event, void *data)
 {
 	gint ax, ay, mx, my, x, y;
 
+	if (sakura.session_shutting_down)
+		return FALSE;
 	if (event->type != GDK_FOCUS_CHANGE) return FALSE;
 	if (!sakura.use_fading || sakura.fade_window == NULL) return FALSE;
 
@@ -3182,57 +3188,20 @@ sakura_init_popup()
 }
 
 
-void
-sakura_destroy()
+static void
+sakura_destroy_cleanup(void)
 {
 	GList *group;
 	guint index;
 
-	if (sakura.session_shutting_down)
-		return;
-
-	/* A hook can be detected just before the window closes. Process any
-	 * pending tracking record and flush the debounced save before tearing down
-	 * the notebook, otherwise the freshly learned Codex ID is lost. */
-	if (!sakura.session_shutting_down && sakura.sessionfile != NULL &&
-	    !option_new_window && !sakura.dont_save) {
-		sakura_codex_tracking_poll_cb(NULL);
-		if (sakura.session_ready)
-			sakura_session_flush();
-	}
-	sakura.session_shutting_down = TRUE;
-
-	if (sakura.session_save_source_id != 0) {
-		g_source_remove(sakura.session_save_source_id);
-		sakura.session_save_source_id = 0;
-	}
-	if (sakura.codex_tracking_source_id != 0) {
-		g_source_remove(sakura.codex_tracking_source_id);
-		sakura.codex_tracking_source_id = 0;
-	}
-	if (sakura.cwd_tracking_source_id != 0) {
-		g_source_remove(sakura.cwd_tracking_source_id);
-		sakura.cwd_tracking_source_id = 0;
-	}
-	if (sakura.sidebar_spinner_source_id != 0) {
-		g_source_remove(sakura.sidebar_spinner_source_id);
-		sakura.sidebar_spinner_source_id = 0;
-	}
-	sakura_sidebar_cancel_pending_selection();
-
-	/* The destroy signal runs after GTK has begun tearing down the main
-	 * window. Do not call notebook/VTE widget APIs here: their native windows
-	 * may already be gone. Release the application-owned records directly and
-	 * let GTK finish destroying the widget tree. */
+	/* GTK has finished dispatching the close event and its main loop has
+	 * stopped. Application-owned records can now be released without leaving
+	 * widget callbacks pointing at freed SakuraTab or SakuraPage objects. */
 	if (sakura.pages != NULL) {
 		for (index = 0; index < sakura.pages->len; index++)
 			sakura_page_free(g_ptr_array_index(sakura.pages, index));
 		g_ptr_array_set_size(sakura.pages, 0);
 	}
-	/* The tab-bar collection has one representative per page; the pane
-	 * collection is authoritative and also contains every split pane. Free
-	 * panes from that collection so repeated split/restore cycles do not leak
-	 * the non-representative terminals. */
 	if (sakura.panes != NULL) {
 		for (index = 0; index < sakura.panes->len; index++) {
 			SakuraTab *tab = g_ptr_array_index(sakura.panes, index);
@@ -3266,27 +3235,83 @@ sakura_destroy()
 	sakura.active_group_scope = NULL;
 	sakura_codex_name_helper_shutdown();
 
-	g_key_file_free(sakura.cfg);
-	if (sakura.session_cfg != NULL)
-		g_key_file_free(sakura.session_cfg);
+	g_clear_pointer(&sakura.cfg, g_key_file_free);
+	g_clear_pointer(&sakura.session_cfg, g_key_file_free);
 	sakura_session_snapshot_free(sakura.session_snapshot);
 	sakura.session_snapshot = NULL;
 
-	pango_font_description_free(sakura.font);
+	g_clear_pointer(&sakura.font, pango_font_description_free);
 
 	free(sakura.configfile);
+	sakura.configfile = NULL;
 	g_free(sakura.sessionfile);
-	if (sakura.session_lock_fd >= 0)
+	sakura.sessionfile = NULL;
+	if (sakura.session_lock_fd >= 0) {
 		close(sakura.session_lock_fd);
+		sakura.session_lock_fd = -1;
+	}
 	g_free(sakura.session_lock_path);
+	sakura.session_lock_path = NULL;
 	g_free(sakura.codex_tracking_dir);
+	sakura.codex_tracking_dir = NULL;
 	g_free(sakura.history_dir);
+	sakura.history_dir = NULL;
 	g_free(sakura.bash_history_rc);
+	sakura.bash_history_rc = NULL;
 	g_free(sakura.editor_command);
+	sakura.editor_command = NULL;
 	g_clear_pointer(&sakura.tabs, g_ptr_array_unref);
 	g_clear_pointer(&sakura.pages, g_ptr_array_unref);
 	g_clear_pointer(&sakura.panes, g_ptr_array_unref);
+	sakura.main_window = NULL;
+}
 
+
+void
+sakura_destroy()
+{
+	gboolean window_disposing;
+
+	if (sakura.session_shutting_down)
+		return;
+	window_disposing = sakura.main_window != NULL &&
+	                   gtk_widget_in_destruction(sakura.main_window);
+
+	/* A hook can be detected just before the window closes. Process any
+	 * pending tracking record and flush the debounced save before tearing down
+	 * the notebook, otherwise the freshly learned Codex ID is lost. */
+	if (!window_disposing && sakura.sessionfile != NULL &&
+	    !option_new_window && !sakura.dont_save) {
+		sakura_codex_tracking_poll_cb(NULL);
+		if (sakura.session_ready)
+			sakura_session_flush();
+	}
+	sakura.session_shutting_down = TRUE;
+	if (sakura.panes != NULL) {
+		for (guint index = 0; index < sakura.panes->len; index++)
+			sakura_tab_disconnect_exit_handler(g_ptr_array_index(sakura.panes, index));
+	}
+
+	if (sakura.session_save_source_id != 0) {
+		g_source_remove(sakura.session_save_source_id);
+		sakura.session_save_source_id = 0;
+	}
+	if (sakura.codex_tracking_source_id != 0) {
+		g_source_remove(sakura.codex_tracking_source_id);
+		sakura.codex_tracking_source_id = 0;
+	}
+	if (sakura.cwd_tracking_source_id != 0) {
+		g_source_remove(sakura.cwd_tracking_source_id);
+		sakura.cwd_tracking_source_id = 0;
+	}
+	if (sakura.sidebar_spinner_source_id != 0) {
+		g_source_remove(sakura.sidebar_spinner_source_id);
+		sakura.sidebar_spinner_source_id = 0;
+	}
+	sakura_sidebar_cancel_pending_selection();
+	/* The window and its child widgets must finish their destroy dispatch before
+	 * model records are released. sakura_destroy_cleanup() runs after gtk_main
+	 * returns, when no GTK callback can observe those records. */
 	gtk_main_quit();
 }
 
@@ -4020,6 +4045,9 @@ sakura_run(int argc, char **argv)
 	}
 	sakura.session_restoring = FALSE;
 	sakura.session_ready = TRUE;
+	/* The first restored tab intentionally keeps the window hidden. Publish
+	 * the fully-built workspace as one GTK-visible state. */
+	gtk_widget_show(sakura.main_window);
 	if (!option_new_window && !preserve_failed_session) {
 		sakura_session_mark_dirty();
 		sakura_session_flush();
@@ -4037,6 +4065,7 @@ sakura_run(int argc, char **argv)
 	sakura_sanitize_working_directory();
 
 	gtk_main();
+	sakura_destroy_cleanup();
 
 	return 0;
 }
