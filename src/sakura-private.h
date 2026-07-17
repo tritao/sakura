@@ -579,6 +579,7 @@ void sakura_sidebar_init(gboolean restore_session);
 void sakura_sidebar_selection_changed_cb(GtkTreeSelection *selection, void *data);
 gboolean sakura_sidebar_button_press_cb(GtkWidget *widget, GdkEventButton *event,
                                          void *data);
+GtkWidget *sakura_sidebar_context_menu_new(SakuraSidebarNode *node);
 void sakura_sidebar_new_group_cb(GtkWidget *widget, void *data);
 void sakura_sidebar_new_task_cb(GtkWidget *widget, void *data);
 void sakura_sidebar_attach_page_to_task_cb(GtkWidget *widget, void *data);

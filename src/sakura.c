@@ -967,7 +967,7 @@ sakura_delete_event_cb (GtkWidget *widget, void *data)
 				if (response==GTK_RESPONSE_YES) {
 					sakura_session_flush();
 					sakura_config_done();
-					return FALSE;
+					break;
 				} else {
 					return TRUE;
 				}
@@ -978,6 +978,9 @@ sakura_delete_event_cb (GtkWidget *widget, void *data)
 
 	sakura_session_flush();
 	sakura_config_done();
+	/* Finish application-owned cleanup while the GTK object graph is still
+	 * valid. The destroy signal remains a fallback for programmatic teardown. */
+	sakura_destroy();
 	return FALSE;
 }
 

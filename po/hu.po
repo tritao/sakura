@@ -5,7 +5,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: sakura\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-07-16 20:14+0100\n"
+"POT-Creation-Date: 2026-07-17 11:09+0100\n"
 "PO-Revision-Date: 2018-04-29 13:18+0000\n"
 "Last-Translator: David Gómez <david@pleyades.net>\n"
 "Language-Team: hu\n"
@@ -401,6 +401,10 @@ msgstr ""
 
 msgid "Rename Codex session..."
 msgstr ""
+
+#, fuzzy
+msgid "Close page"
+msgstr "Lap bezárása"
 
 #, fuzzy
 msgid "New terminal here"

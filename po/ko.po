@@ -7,7 +7,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: sakura\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-07-16 20:14+0100\n"
+"POT-Creation-Date: 2026-07-17 11:09+0100\n"
 "PO-Revision-Date: 2019-09-30 05:48+0000\n"
 "Last-Translator: Minho Park <parkmino@gmail.com>\n"
 "Language-Team: Korean <ko@li.org>\n"
@@ -403,6 +403,10 @@ msgstr ""
 
 msgid "Rename Codex session..."
 msgstr ""
+
+#, fuzzy
+msgid "Close page"
+msgstr "탭 닫기"
 
 #, fuzzy
 msgid "New terminal here"

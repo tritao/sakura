@@ -264,6 +264,24 @@ def read_metadata(session_file):
     return records, selected_id
 
 
+def assert_no_stale_gobject_pointer_criticals(log_file):
+    """Catch stale Sakura widget pointers without flagging Xvfb teardown noise."""
+    if not log_file.is_file():
+        return
+    text = log_file.read_text(encoding="utf-8", errors="replace")
+    signatures = (
+        "invalid unclassed pointer in cast to 'GObject'",
+        "instance with invalid (NULL) class pointer",
+        "g_signal_handler_is_connected: assertion",
+    )
+    critical_lines = [line for line in text.splitlines()
+                      if any(signature in line for signature in signatures)]
+    if critical_lines:
+        raise AssertionError(
+            "Sakura emitted GLib-GObject criticals:\n" +
+            "\n".join(critical_lines[-8:]))
+
+
 def expected_metadata():
     records = {}
     for index, terminal_id in enumerate(
@@ -815,6 +833,7 @@ def main():
                 close_window(app, window, env)
                 app = None
                 window = None
+                assert_no_stale_gobject_pointer_criticals(log_file)
                 restored = read_session(session_file)
                 if restored != (expected_groups, expected_terminals, expected_terminal_ids):
                     raise AssertionError(

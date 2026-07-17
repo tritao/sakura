@@ -8,7 +8,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: Sakura 2.3.4\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-07-16 20:14+0100\n"
+"POT-Creation-Date: 2026-07-17 11:09+0100\n"
 "PO-Revision-Date: 2020-05-06 05:00+0000\n"
 "Last-Translator: Milo Ivir <Unknown>\n"
 "Language-Team: Deutsch <de@li.org>\n"
@@ -404,6 +404,10 @@ msgstr ""
 
 msgid "Rename Codex session..."
 msgstr ""
+
+#, fuzzy
+msgid "Close page"
+msgstr "Reiter schließen"
 
 #, fuzzy
 msgid "New terminal here"

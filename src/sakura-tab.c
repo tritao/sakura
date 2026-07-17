@@ -20,6 +20,17 @@
 #define TAB_MAX_SIZE 40
 #define TAB_MIN_SIZE 6
 
+static void
+sakura_tab_disconnect_exit_handler(SakuraTab *tab)
+{
+	if (tab == NULL || tab->vte == NULL || tab->exit_handler_id == 0)
+		return;
+	if (g_signal_handler_is_connected(G_OBJECT(tab->vte),
+	                                  tab->exit_handler_id))
+		g_signal_handler_disconnect(tab->vte, tab->exit_handler_id);
+	tab->exit_handler_id = 0;
+}
+
 const gchar *
 sakura_tab_status_label(SakuraTabStatus status)
 {
@@ -813,6 +824,9 @@ sakura_tab_delete_pane(SakuraTab *tab)
 	if (sakura.workspace_mutating)
 		return;
 	sakura.workspace_mutating = TRUE;
+	/* Removing the leaf can destroy its VTE. Disconnect while the widget is
+	 * still alive, before GTK reparents/removes the containing paned widget. */
+	sakura_tab_disconnect_exit_handler(tab);
 	if (!sakura_layout_remove_leaf_widgets(tab->layout_leaf))
 	{
 		sakura.workspace_mutating = FALSE;
@@ -823,9 +837,6 @@ sakura_tab_delete_pane(SakuraTab *tab)
 	was_representative = page->tab_bar_tab == tab;
 	sakura_sidebar_remove_tab(tab);
 	sakura_remove_history_file(tab);
-	if (tab->vte != NULL && tab->exit_handler_id != 0 &&
-	    g_signal_handler_is_connected(G_OBJECT(tab->vte), tab->exit_handler_id))
-		g_signal_handler_disconnect(tab->vte, tab->exit_handler_id);
 	if (sakura.panes != NULL)
 		g_ptr_array_remove_fast(sakura.panes, tab);
 	sakura_layout_remove_leaf(tab->layout_leaf);
@@ -875,6 +886,10 @@ sakura_tab_delete_page(gint page)
 	tab_page = sk_tab->page;
 	page_panes = tab_page != NULL && tab_page->panes != NULL
 	           ? g_ptr_array_ref(tab_page->panes) : NULL;
+	if (page_panes != NULL) {
+		for (guint index = 0; index < page_panes->len; index++)
+			sakura_tab_disconnect_exit_handler(g_ptr_array_index(page_panes, index));
+	}
 	if (tab_page != NULL && !sakura_notebook_detach_page(tab_page)) {
 		g_clear_pointer(&page_panes, g_ptr_array_unref);
 		sakura.workspace_mutating = FALSE;
@@ -893,9 +908,6 @@ sakura_tab_delete_page(gint page)
 				continue;
 			sakura_sidebar_remove_tab(pane);
 			sakura_remove_history_file(pane);
-			if (pane->vte != NULL && pane->exit_handler_id != 0 &&
-			    g_signal_handler_is_connected(G_OBJECT(pane->vte), pane->exit_handler_id))
-				g_signal_handler_disconnect(pane->vte, pane->exit_handler_id);
 			if (sakura.panes != NULL)
 				g_ptr_array_remove_fast(sakura.panes, pane);
 		}
@@ -971,6 +983,9 @@ sakura_tab_create_widgets(SakuraTab *tab)
 	gtk_widget_show_all(tab->tab_title_hbox);
 
 	tab->vte = vte_terminal_new();
+	/* The widget is owned by the GTK hierarchy; keep this model pointer weak so
+	 * teardown cannot leave a dangling GObject pointer behind. */
+	g_object_add_weak_pointer(G_OBJECT(tab->vte), (gpointer *)&tab->vte);
 	tab->scrollbar = gtk_scrollbar_new(
 		GTK_ORIENTATION_VERTICAL,
 		gtk_scrollable_get_vadjustment(GTK_SCROLLABLE(tab->vte)));
@@ -1814,6 +1829,9 @@ sakura_tab_free(SakuraTab *tab)
 		g_source_remove(tab->codex_name_retry_source_id);
 		tab->codex_name_retry_source_id = 0;
 	}
+	if (tab->vte != NULL)
+		g_object_remove_weak_pointer(G_OBJECT(tab->vte),
+		                             (gpointer *)&tab->vte);
 
 	g_free(tab->cwd);
 	g_free(tab->host);

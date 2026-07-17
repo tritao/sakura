@@ -657,6 +657,30 @@ test_sidebar_uint_column(SakuraTab *tab, guint column)
 }
 
 
+static gboolean
+test_menu_has_label(GtkWidget *menu, const gchar *label)
+{
+	GList *items, *item;
+	gboolean found = FALSE;
+
+	items = gtk_container_get_children(GTK_CONTAINER(menu));
+	for (item = items; item != NULL; item = item->next) {
+		GtkWidget *child;
+
+		if (!GTK_IS_MENU_ITEM(item->data))
+			continue;
+		child = gtk_bin_get_child(GTK_BIN(item->data));
+		if (GTK_IS_LABEL(child) &&
+		    g_strcmp0(gtk_label_get_text(GTK_LABEL(child)), label) == 0) {
+			found = TRUE;
+			break;
+		}
+	}
+	g_list_free(items);
+	return found;
+}
+
+
 static void
 test_sidebar_hides_redundant_directory(void)
 {
@@ -879,6 +903,32 @@ test_sidebar_move_page_preserves_whole_page_parent(void)
 
 
 static void
+test_sidebar_page_context_menu_names_page_close(void)
+{
+	SakuraPage *page;
+	SakuraTab *pane;
+	GtkWidget *menu;
+
+	setup_workspace();
+	page = sakura_page_at_page(1);
+	pane = g_new0(SakuraTab, 1);
+	pane->terminal_id = g_strdup("terminal-menu-pane");
+	pane->hbox = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
+	pane->label = gtk_label_new("Terminal");
+	g_assert_true(sakura_layout_split_node_widgets(
+		page->active_tab->layout_leaf, SAKURA_SPLIT_DOWN, pane));
+	setup_sidebar_fixture();
+
+	menu = sakura_sidebar_context_menu_new(page->sidebar_node);
+	g_assert_true(test_menu_has_label(menu, "Close page"));
+	g_assert_false(test_menu_has_label(menu, "Close terminal"));
+	gtk_widget_destroy(menu);
+
+	teardown_workspace();
+}
+
+
+static void
 test_restore_order_reconciliation(void)
 {
 	SakuraPage *first, *second, *third;
@@ -1036,6 +1086,8 @@ main(int argc, char **argv)
 	                test_sidebar_creation_parent_preserves_context);
 	g_test_add_func("/workspace/sidebar-move-page-parent",
 	                test_sidebar_move_page_preserves_whole_page_parent);
+	g_test_add_func("/workspace/sidebar-page-context-menu-close-label",
+	                test_sidebar_page_context_menu_names_page_close);
 	g_test_add_func("/workspace/restore-order-reconciliation",
 	                test_restore_order_reconciliation);
 	g_test_add_func("/workspace/seeded-operations",
