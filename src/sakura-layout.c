@@ -15,10 +15,10 @@ sakura_page_id_in_use(const gchar *id)
 #ifndef SAKURA_CORE_TEST
 	guint index;
 
-	if (id == NULL || sakura.pages == NULL)
+	if (id == NULL || sakura.workspace->pages == NULL)
 		return FALSE;
-	for (index = 0; index < sakura.pages->len; index++) {
-		SakuraPage *page = g_ptr_array_index(sakura.pages, index);
+	for (index = 0; index < sakura.workspace->pages->len; index++) {
+		SakuraPage *page = g_ptr_array_index(sakura.workspace->pages, index);
 		if (page != NULL && g_strcmp0(page->id, id) == 0)
 			return TRUE;
 	}

@@ -16,6 +16,7 @@
 #define SAKURA_CODEX_REASONING_EFFORT_DATA_KEY "sakura-codex-reasoning-effort"
 
 typedef struct sakura_app SakuraApp;
+typedef struct sakura_workspace_model SakuraWorkspaceModel;
 typedef struct sakura_page SakuraPage;
 /* Semantic vocabulary: a page is the user-facing session container, while a
  * tab is one terminal surface/pane inside that session. Keep the historical
@@ -160,6 +161,25 @@ enum {
 	SAKURA_SIDEBAR_N_COLUMNS
 };
 
+/* The workspace model owns the records and registries that define workspace
+ * identity, hierarchy, and selection. Sidebar rows remain a GTK projection
+ * held by SakuraApp; page/tab records may retain handles to their GTK surface,
+ * but the projection does not own those records. */
+struct sakura_workspace_model {
+	SakuraGroup *root_group;
+	GList *groups;
+	GPtrArray *tabs;
+	GPtrArray *pages;
+	GPtrArray *panes;
+	GPtrArray *tasks;
+	SakuraGroup *active_group;
+	SakuraTask *active_task;
+	SakuraPage *active_page;
+	SakuraTab *active_tab;
+	guint next_group_id;
+	guint next_task_id;
+};
+
 struct sakura_app {
 	GtkWidget *main_window;
 	GtkWidget *header_bar;
@@ -170,10 +190,7 @@ struct sakura_app {
 	GtkTreeStore *sidebar_model;
 	GtkTreeSelection *sidebar_selection;
 	SakuraSidebarNode *sidebar_root;
-	SakuraGroup *root_group;
-	GList *groups;                  /* Model groups; sidebar rows are a view. */
-	guint sidebar_next_group_id;
-	guint sidebar_next_task_id;
+	SakuraWorkspaceModel *workspace;
 	SakuraSidebarNode *sidebar_pending_insert_after;
 	gboolean sidebar_syncing;
 	GtkTreeRowReference *sidebar_pending_selection;
@@ -182,12 +199,6 @@ struct sakura_app {
 	gboolean sidebar_visible;
 	gint sidebar_width;
 	GtkWidget *notebook;
-	GPtrArray *tabs;               /* Legacy representative, one per session */
-	GPtrArray *pages;              /* Session containers, in notebook order */
-	GPtrArray *panes;              /* Terminal surfaces owned by sessions */
-	GPtrArray *tasks;              /* Local task records */
-	SakuraTask *active_task;
-	SakuraPage *active_page;        /* Active session (legacy field name) */
 	GtkWidget *content_box;
 	GtkWidget *tab_bar_shell;
 	GtkWidget *tab_bar_scope_label;
@@ -195,9 +206,7 @@ struct sakura_app {
 	GtkWidget *tab_bar;
 	GtkWidget *tab_bar_new_button;
 	GtkWidget *tab_bar_empty;
-	SakuraGroup *active_group;      /* Active scope in the workspace model. */
 	SakuraSidebarNode *active_group_scope;
-	SakuraTab *active_tab;          /* Active pane (legacy field name) */
 	gboolean tab_bar_refreshing;
 	GtkWidget *menu;
 	GtkWidget *fade_window;  /* Window used for fading effect */
@@ -747,26 +756,45 @@ void sakura_sidebar_set_node_row(SakuraSidebarNode *node, GtkTreeIter *iter);
 const gchar *sakura_task_status_label(SakuraTaskStatus status);
 const gchar *sakura_task_status_symbol(SakuraTaskStatus status);
 const gchar *sakura_task_status_color(SakuraTaskStatus status);
-SakuraTask *sakura_task_find_by_id(const gchar *id);
+SakuraWorkspaceModel *sakura_workspace_model_new(void);
+void sakura_workspace_model_free(SakuraWorkspaceModel *model);
+gboolean sakura_workspace_model_set_root(SakuraWorkspaceModel *model,
+                                          SakuraGroup *root_group);
+SakuraTask *sakura_workspace_model_find_task(SakuraWorkspaceModel *model,
+                                              const gchar *id);
 SakuraGroup *sakura_group_new(const gchar *id, const gchar *title,
                               SakuraGroup *parent);
-SakuraGroup *sakura_group_for_task(SakuraTask *task);
-SakuraGroup *sakura_group_for_session(SakuraSession *session);
+SakuraGroup *sakura_workspace_model_group_for_task(SakuraWorkspaceModel *model,
+                                                    SakuraTask *task);
+SakuraGroup *sakura_workspace_model_group_for_session(
+	SakuraWorkspaceModel *model, SakuraSession *session);
 void sakura_group_free(SakuraGroup *group);
-gboolean sakura_workspace_model_add_group(SakuraGroup *group);
-gboolean sakura_workspace_model_can_remove_group(SakuraGroup *group);
-gboolean sakura_workspace_model_remove_group(SakuraGroup *group);
-gboolean sakura_workspace_model_add_task(SakuraTask *task);
-gboolean sakura_workspace_model_can_remove_task(SakuraTask *task);
-gboolean sakura_workspace_model_remove_task(SakuraTask *task);
-gboolean sakura_workspace_model_move_page_to_group(SakuraPage *page,
+gboolean sakura_workspace_model_add_group(SakuraWorkspaceModel *model,
+                                           SakuraGroup *group);
+gboolean sakura_workspace_model_can_remove_group(SakuraWorkspaceModel *model,
+                                                  SakuraGroup *group);
+gboolean sakura_workspace_model_remove_group(SakuraWorkspaceModel *model,
+                                              SakuraGroup *group);
+gboolean sakura_workspace_model_add_task(SakuraWorkspaceModel *model,
+                                          SakuraTask *task);
+gboolean sakura_workspace_model_can_remove_task(SakuraWorkspaceModel *model,
+                                                 SakuraTask *task);
+gboolean sakura_workspace_model_remove_task(SakuraWorkspaceModel *model,
+                                             SakuraTask *task);
+gboolean sakura_workspace_model_move_page_to_group(SakuraWorkspaceModel *model,
+                                                    SakuraPage *page,
                                                     SakuraGroup *group);
-gboolean sakura_workspace_model_attach_page(SakuraTask *task, SakuraPage *page);
-gboolean sakura_workspace_model_detach_page(SakuraPage *page);
-gboolean sakura_workspace_model_reorder_group(SakuraGroup *source,
+gboolean sakura_workspace_model_attach_page(SakuraWorkspaceModel *model,
+                                             SakuraTask *task,
+                                             SakuraPage *page);
+gboolean sakura_workspace_model_detach_page(SakuraWorkspaceModel *model,
+                                             SakuraPage *page);
+gboolean sakura_workspace_model_reorder_group(SakuraWorkspaceModel *model,
+                                               SakuraGroup *source,
                                                SakuraGroup *target,
                                                gboolean after);
-gboolean sakura_workspace_model_append_task(SakuraTask *task,
+gboolean sakura_workspace_model_append_task(SakuraWorkspaceModel *model,
+                                             SakuraTask *task,
                                              SakuraGroup *group);
 void sakura_task_update_row(SakuraTask *task);
 void sakura_task_attach_page(SakuraTask *task, SakuraPage *page);

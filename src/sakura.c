@@ -811,8 +811,8 @@ sakura_focus_in_cb (GtkWidget *widget, GdkEvent *event, void *data)
 	/* Reset urgency hint */
 	gtk_window_set_urgency_hint(GTK_WINDOW(sakura.main_window), FALSE);
 	if (sakura.notebook != NULL) {
-		sakura_tab_clear_attention(sakura.active_tab != NULL
-		                         ? sakura.active_tab
+		sakura_tab_clear_attention(sakura.workspace->active_tab != NULL
+		                         ? sakura.workspace->active_tab
 		                         : sakura_tab_at_page(gtk_notebook_get_current_page(
 		                               GTK_NOTEBOOK(sakura.notebook))));
 	}
@@ -1103,7 +1103,7 @@ sakura_color_dialog_cb (GtkWidget *widget, void *data)
 	gint i;
 
 
-	sk_tab = sakura.active_tab != NULL ? sakura.active_tab :
+	sk_tab = sakura.workspace->active_tab != NULL ? sakura.workspace->active_tab :
 	         sakura_tab_at_page(gtk_notebook_get_current_page(GTK_NOTEBOOK(sakura.notebook)));
 	if (sk_tab == NULL)
 		return;
@@ -1433,7 +1433,7 @@ sakura_audible_bell_cb (GtkWidget *widget, void *data)
 {
 	struct sakura_tab *sk_tab;
 
-	sk_tab = sakura.active_tab != NULL ? sakura.active_tab :
+	sk_tab = sakura.workspace->active_tab != NULL ? sakura.workspace->active_tab :
 	         sakura_tab_at_page(gtk_notebook_get_current_page(GTK_NOTEBOOK(sakura.notebook)));
 	if (sk_tab == NULL)
 		return;
@@ -1453,7 +1453,7 @@ sakura_blinking_cursor_cb (GtkWidget *widget, void *data)
 {
 	struct sakura_tab *sk_tab;
 
-	sk_tab = sakura.active_tab != NULL ? sakura.active_tab :
+	sk_tab = sakura.workspace->active_tab != NULL ? sakura.workspace->active_tab :
 	         sakura_tab_at_page(gtk_notebook_get_current_page(GTK_NOTEBOOK(sakura.notebook)));
 	if (sk_tab == NULL)
 		return;
@@ -1486,8 +1486,8 @@ sakura_set_cursor_cb (GtkWidget *widget, void *data)
 			sakura.cursor_type=VTE_CURSOR_SHAPE_IBEAM;
 		}
 
-		for (i = sakura.panes != NULL ? (gint)sakura.panes->len - 1 : -1; i >= 0; i--) {
-			sk_tab = g_ptr_array_index(sakura.panes, i);
+		for (i = sakura.workspace->panes != NULL ? (gint)sakura.workspace->panes->len - 1 : -1; i >= 0; i--) {
+			sk_tab = g_ptr_array_index(sakura.workspace->panes, i);
 			if (sk_tab != NULL)
 				vte_terminal_set_cursor_shape(VTE_TERMINAL(sk_tab->vte), sakura.cursor_type);
 		}
@@ -1509,8 +1509,8 @@ void
 sakura_split_current_cb (GtkWidget *widget, void *data)
 {
 	SakuraTabLaunchConfig config = { 0 };
-	SakuraPage *page = sakura.active_page;
-	SakuraTab *tab = sakura.active_tab;
+	SakuraPage *page = sakura.workspace->active_page;
+	SakuraTab *tab = sakura.workspace->active_tab;
 	SakuraSplitDirection direction = data != NULL
 	                              ? GPOINTER_TO_INT(data) : SAKURA_SPLIT_RIGHT;
 
@@ -1572,8 +1572,8 @@ sakura_apply_layout_preset_cb(GtkWidget *widget, void *data)
 	SakuraLayoutPreset preset = data != NULL
 	                          ? GPOINTER_TO_INT(data)
 	                          : SAKURA_LAYOUT_PRESET_TWO_COLUMNS;
-	SakuraPage *page = sakura.active_page;
-	SakuraTab *active = sakura.active_tab;
+	SakuraPage *page = sakura.workspace->active_page;
+	SakuraTab *active = sakura.workspace->active_tab;
 	SakuraTab *new_tab = NULL;
 	SakuraLayoutNode *root, *first, *second;
 
@@ -1621,8 +1621,8 @@ sakura_apply_layout_preset_cb(GtkWidget *widget, void *data)
 	}
 
 	page->active_tab = active;
-	sakura.active_tab = active;
-	sakura.active_page = page;
+	sakura.workspace->active_tab = active;
+	sakura.workspace->active_page = page;
 	sakura_select_tab(active, TRUE);
 	sakura_update_geometry_hints();
 	sakura_session_mark_dirty();
@@ -1690,8 +1690,8 @@ sakura_focus_candidate_better(SakuraFocusDirection direction,
 void
 sakura_focus_direction_cb(GtkWidget *widget, void *data)
 {
-	SakuraPage *page = sakura.active_page;
-	SakuraTab *active = sakura.active_tab;
+	SakuraPage *page = sakura.workspace->active_page;
+	SakuraTab *active = sakura.workspace->active_tab;
 	SakuraTab *best = NULL;
 	SakuraFocusDirection direction = GPOINTER_TO_INT(data);
 	gint active_x, active_y, active_width, active_height;
@@ -1734,13 +1734,13 @@ sakura_focus_direction_cb(GtkWidget *widget, void *data)
 void
 sakura_toggle_zoom_current_cb(GtkWidget *widget, void *data)
 {
-	SakuraPage *page = sakura.active_page;
+	SakuraPage *page = sakura.workspace->active_page;
 
 	(void)widget;
 	(void)data;
-	if (page == NULL || sakura.active_tab == NULL)
+	if (page == NULL || sakura.workspace->active_tab == NULL)
 		return;
-	sakura_layout_set_zoomed(page, sakura.active_tab, !page->zoomed);
+	sakura_layout_set_zoomed(page, sakura.workspace->active_tab, !page->zoomed);
 	sakura_session_mark_dirty();
 }
 
@@ -1753,9 +1753,9 @@ sakura_equalize_current_cb(GtkWidget *widget, void *data)
 
 	(void)widget;
 	(void)data;
-	if (sakura.active_tab == NULL || sakura.active_tab->layout_leaf == NULL)
+	if (sakura.workspace->active_tab == NULL || sakura.workspace->active_tab->layout_leaf == NULL)
 		return;
-	split = sakura.active_tab->layout_leaf->parent;
+	split = sakura.workspace->active_tab->layout_leaf->parent;
 	if (split == NULL || split->kind != SAKURA_LAYOUT_SPLIT || split->widget == NULL)
 		return;
 	split->data.split.ratio = 0.5;
@@ -1773,10 +1773,10 @@ sakura_close_tab_cb (GtkWidget *widget, void *data)
 	struct sakura_tab *sk_tab = data;
 	gint page;
 
-	if (sk_tab == NULL && sakura.active_tab != NULL &&
-	    sakura.active_tab->page != NULL && sakura.active_tab->page->panes != NULL &&
-	    sakura.active_tab->page->panes->len > 1) {
-		sakura_tab_delete_pane(sakura.active_tab);
+	if (sk_tab == NULL && sakura.workspace->active_tab != NULL &&
+	    sakura.workspace->active_tab->page != NULL && sakura.workspace->active_tab->page->panes != NULL &&
+	    sakura.workspace->active_tab->page->panes->len > 1) {
+		sakura_tab_delete_pane(sakura.workspace->active_tab);
 		return;
 	}
 	page = sk_tab != NULL
@@ -1791,7 +1791,7 @@ sakura_close_tab_cb (GtkWidget *widget, void *data)
 static void
 sakura_pane_menu_show_cb(GtkWidget *widget, gpointer data)
 {
-	SakuraTab *tab = sakura.active_tab;
+	SakuraTab *tab = sakura.workspace->active_tab;
 	SakuraLayoutNode *parent = tab != NULL ? tab->layout_leaf != NULL
 	                                      ? tab->layout_leaf->parent : NULL : NULL;
 	gboolean can_split = sakura_tab_can_split(tab);
@@ -2101,9 +2101,7 @@ sakura_init()
 	char* configdir = NULL;
 	int i;
 
-	sakura.tabs = g_ptr_array_new();
-	sakura.pages = g_ptr_array_new();
-	sakura.panes = g_ptr_array_new();
+	sakura.workspace = sakura_workspace_model_new();
 	sakura.session_new_window = option_new_window;
 
 	/*** Config file initialization ***/
@@ -3197,41 +3195,25 @@ sakura_destroy_cleanup(void)
 	/* GTK has finished dispatching the close event and its main loop has
 	 * stopped. Application-owned records can now be released without leaving
 	 * widget callbacks pointing at freed SakuraTab or SakuraPage objects. */
-	if (sakura.pages != NULL) {
-		for (index = 0; index < sakura.pages->len; index++)
-			sakura_page_free(g_ptr_array_index(sakura.pages, index));
-		g_ptr_array_set_size(sakura.pages, 0);
-	}
-	if (sakura.panes != NULL) {
-		for (index = 0; index < sakura.panes->len; index++) {
-			SakuraTab *tab = g_ptr_array_index(sakura.panes, index);
-			if (tab != NULL)
-				sakura_tab_free(tab);
-		}
-		g_ptr_array_set_size(sakura.panes, 0);
-	}
-	if (sakura.tabs != NULL)
-		g_ptr_array_set_size(sakura.tabs, 0);
-	if (sakura.tasks != NULL) {
-		for (index = 0; index < sakura.tasks->len; index++) {
-			SakuraTask *task = g_ptr_array_index(sakura.tasks, index);
-			if (task != NULL && task->sidebar_node != NULL) {
-				sakura_sidebar_free_node(task->sidebar_node);
-				task->sidebar_node = NULL;
+	if (sakura.workspace != NULL) {
+		if (sakura.workspace->tasks != NULL) {
+			for (index = 0; index < sakura.workspace->tasks->len; index++) {
+				SakuraTask *task = g_ptr_array_index(sakura.workspace->tasks, index);
+				if (task != NULL && task->sidebar_node != NULL) {
+					sakura_sidebar_free_node(task->sidebar_node);
+					task->sidebar_node = NULL;
+				}
 			}
 		}
-		g_clear_pointer(&sakura.tasks, g_ptr_array_unref);
+		for (group = sakura.workspace->groups; group != NULL; group = group->next) {
+			SakuraGroup *model_group = group->data;
+			if (model_group != NULL && model_group->sidebar_node != NULL)
+				sakura_sidebar_free_node(model_group->sidebar_node);
+		}
+		sakura_workspace_model_free(sakura.workspace);
+		sakura.workspace = NULL;
 	}
-	for (group = sakura.groups; group != NULL; group = group->next) {
-		SakuraGroup *model_group = group->data;
-		if (model_group != NULL && model_group->sidebar_node != NULL)
-			sakura_sidebar_free_node(model_group->sidebar_node);
-	}
-	g_list_free_full(sakura.groups, (GDestroyNotify)sakura_group_free);
-	sakura.groups = NULL;
-	sakura.root_group = NULL;
 	sakura.sidebar_root = NULL;
-	sakura.active_group = NULL;
 	sakura.active_group_scope = NULL;
 	sakura_codex_name_helper_shutdown();
 
@@ -3260,9 +3242,6 @@ sakura_destroy_cleanup(void)
 	sakura.bash_history_rc = NULL;
 	g_free(sakura.editor_command);
 	sakura.editor_command = NULL;
-	g_clear_pointer(&sakura.tabs, g_ptr_array_unref);
-	g_clear_pointer(&sakura.pages, g_ptr_array_unref);
-	g_clear_pointer(&sakura.panes, g_ptr_array_unref);
 	sakura.main_window = NULL;
 }
 
@@ -3287,9 +3266,9 @@ sakura_destroy()
 			sakura_session_flush();
 	}
 	sakura.session_shutting_down = TRUE;
-	if (sakura.panes != NULL) {
-		for (guint index = 0; index < sakura.panes->len; index++)
-			sakura_tab_disconnect_exit_handler(g_ptr_array_index(sakura.panes, index));
+	if (sakura.workspace->panes != NULL) {
+		for (guint index = 0; index < sakura.workspace->panes->len; index++)
+			sakura_tab_disconnect_exit_handler(g_ptr_array_index(sakura.workspace->panes, index));
 	}
 
 	if (sakura.session_save_source_id != 0) {
@@ -3324,7 +3303,7 @@ sakura_show_scrollbar (void)
 	int i;
 
 	page = gtk_notebook_get_current_page(GTK_NOTEBOOK(sakura.notebook));
-	sk_tab = sakura.active_tab != NULL ? sakura.active_tab : sakura_tab_at_page(page);
+	sk_tab = sakura.workspace->active_tab != NULL ? sakura.workspace->active_tab : sakura_tab_at_page(page);
 
 	if (!g_key_file_get_boolean(sakura.cfg, cfg_group, "scrollbar", NULL)) {
 		sakura.show_scrollbar = true;
@@ -3335,8 +3314,8 @@ sakura_show_scrollbar (void)
 	}
 
 	/* Toggle/Untoggle the scrollbar for all tabs */
-	for (i = sakura.panes != NULL ? (gint)sakura.panes->len - 1 : -1; i >= 0; i--) {
-		sk_tab = g_ptr_array_index(sakura.panes, i);
+	for (i = sakura.workspace->panes != NULL ? (gint)sakura.workspace->panes->len - 1 : -1; i >= 0; i--) {
+		sk_tab = g_ptr_array_index(sakura.workspace->panes, i);
 		if (sk_tab == NULL)
 			continue;
 		if (!sakura.show_scrollbar)
@@ -3486,8 +3465,8 @@ sakura_set_font()
 	int i;
 
 	/* Set the font for all tabs */
-	for (i = sakura.panes != NULL ? (gint)sakura.panes->len - 1 : -1; i >= 0; i--) {
-		sk_tab = g_ptr_array_index(sakura.panes, i);
+	for (i = sakura.workspace->panes != NULL ? (gint)sakura.workspace->panes->len - 1 : -1; i >= 0; i--) {
+		sk_tab = g_ptr_array_index(sakura.workspace->panes, i);
 		if (sk_tab == NULL)
 			continue;
 		vte_terminal_set_font(VTE_TERMINAL(sk_tab->vte), sakura.font);
@@ -3504,7 +3483,7 @@ sakura_set_colorset (int cs)
 	if (cs < 0 || cs >= NUM_COLORSETS)
 		return;
 
-	sk_tab = sakura.active_tab != NULL ? sakura.active_tab :
+	sk_tab = sakura.workspace->active_tab != NULL ? sakura.workspace->active_tab :
 	         sakura_tab_at_page(gtk_notebook_get_current_page(GTK_NOTEBOOK(sakura.notebook)));
 	if (sk_tab == NULL)
 		return;
@@ -3527,8 +3506,8 @@ sakura_set_colors ()
 	struct sakura_tab *sk_tab;
 	gdouble window_opacity = 1.0;
 
-	for (i = sakura.panes != NULL ? (gint)sakura.panes->len - 1 : -1; i >= 0; i--) {
-		sk_tab = g_ptr_array_index(sakura.panes, i);
+	for (i = sakura.workspace->panes != NULL ? (gint)sakura.workspace->panes->len - 1 : -1; i >= 0; i--) {
+		sk_tab = g_ptr_array_index(sakura.workspace->panes, i);
 		if (sk_tab == NULL)
 			continue;
 		window_opacity = sakura.backcolors[sk_tab->colorset].alpha;
@@ -3655,16 +3634,16 @@ sakura_new_tab_for_task (SakuraTask *task)
 		parent = sakura.sidebar_root;
 	if (parent == NULL)
 		return;
-	previous_page = sakura.active_page;
+	previous_page = sakura.workspace->active_page;
 
 	sakura_workspace_begin_mutation();
 	sakura_session_accept_changes();
 	sakura_tab_add_with_options(NULL, parent, NULL, FALSE,
 	                            SAKURA_TAB_SHELL, SAKURA_TOOL_NONE,
 	                            NULL, NULL, NULL, NULL, NULL, -1, &launch_config);
-	if (task->sidebar_node == NULL && sakura.active_page != NULL &&
-	    sakura.active_page != previous_page)
-		sakura_task_attach_page(task, sakura.active_page);
+	if (task->sidebar_node == NULL && sakura.workspace->active_page != NULL &&
+	    sakura.workspace->active_page != previous_page)
+		sakura_task_attach_page(task, sakura.workspace->active_page);
 	sakura_workspace_end_mutation();
 }
 

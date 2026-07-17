@@ -1,13 +1,63 @@
 #include "sakura-private.h"
 
 
+SakuraWorkspaceModel *
+sakura_workspace_model_new(void)
+{
+	SakuraWorkspaceModel *model = g_new0(SakuraWorkspaceModel, 1);
+
+	model->tabs = g_ptr_array_new();
+	model->pages = g_ptr_array_new();
+	model->panes = g_ptr_array_new();
+	model->tasks = g_ptr_array_new_with_free_func(
+		(GDestroyNotify)sakura_task_free);
+	return model;
+}
+
+
+void
+sakura_workspace_model_free(SakuraWorkspaceModel *model)
+{
+	if (model == NULL)
+		return;
+	if (model->pages != NULL) {
+		for (guint index = 0; index < model->pages->len; index++)
+			sakura_page_free(g_ptr_array_index(model->pages, index));
+	}
+	if (model->panes != NULL) {
+		for (guint index = 0; index < model->panes->len; index++)
+			sakura_tab_free(g_ptr_array_index(model->panes, index));
+	}
+	g_clear_pointer(&model->tabs, g_ptr_array_unref);
+	g_clear_pointer(&model->pages, g_ptr_array_unref);
+	g_clear_pointer(&model->panes, g_ptr_array_unref);
+	g_clear_pointer(&model->tasks, g_ptr_array_unref);
+	g_list_free_full(model->groups, (GDestroyNotify)sakura_group_free);
+	g_free(model);
+}
+
+
+gboolean
+sakura_workspace_model_set_root(SakuraWorkspaceModel *model,
+                                SakuraGroup *root_group)
+{
+	if (model == NULL || root_group == NULL || model->root_group != NULL)
+		return FALSE;
+	root_group->parent = NULL;
+	model->root_group = root_group;
+	model->groups = g_list_append(model->groups, root_group);
+	return TRUE;
+}
+
+
 static gboolean
-sakura_workspace_model_group_is_child_of(SakuraGroup *group,
+sakura_workspace_model_group_is_child_of(SakuraWorkspaceModel *model,
+                                          SakuraGroup *group,
                                           SakuraGroup *parent)
 {
 	return group != NULL &&
 	       (group->parent == parent ||
-	        (group->parent == NULL && parent == sakura.root_group));
+	        (group->parent == NULL && parent == model->root_group));
 }
 
 
@@ -42,16 +92,17 @@ sakura_workspace_model_task_order_compare(gconstpointer first,
 
 
 static void
-sakura_workspace_model_normalize_task_orders(SakuraGroup *group,
+sakura_workspace_model_normalize_task_orders(SakuraWorkspaceModel *model,
+                                             SakuraGroup *group,
                                              SakuraTask *parent)
 {
 	GList *siblings = NULL, *link;
 	guint order = 0;
 
-	if (sakura.tasks == NULL)
+	if (model->tasks == NULL)
 		return;
-	for (guint index = 0; index < sakura.tasks->len; index++) {
-		SakuraTask *task = g_ptr_array_index(sakura.tasks, index);
+	for (guint index = 0; index < model->tasks->len; index++) {
+		SakuraTask *task = g_ptr_array_index(model->tasks, index);
 
 		if (task != NULL && task->group == group && task->parent == parent)
 			siblings = g_list_prepend(siblings, task);
@@ -89,49 +140,53 @@ sakura_group_free(SakuraGroup *group)
 
 
 gboolean
-sakura_workspace_model_add_group(SakuraGroup *group)
+sakura_workspace_model_add_group(SakuraWorkspaceModel *model,
+                                 SakuraGroup *group)
 {
 	GList *link;
 
-	if (group == NULL || group == sakura.root_group || group->id == NULL)
+	if (model == NULL || group == NULL || group == model->root_group ||
+	    group->id == NULL)
 		return FALSE;
-	for (link = sakura.groups; link != NULL; link = link->next) {
+	for (link = model->groups; link != NULL; link = link->next) {
 		SakuraGroup *existing = link->data;
 
 		if (existing != NULL && g_strcmp0(existing->id, group->id) == 0)
 			return FALSE;
 	}
-	sakura.groups = g_list_append(sakura.groups, group);
+	model->groups = g_list_append(model->groups, group);
 	return TRUE;
 }
 
 
 gboolean
-sakura_workspace_model_can_remove_group(SakuraGroup *group)
+sakura_workspace_model_can_remove_group(SakuraWorkspaceModel *model,
+                                        SakuraGroup *group)
 {
-	if (group == NULL || group == sakura.root_group || sakura.groups == NULL ||
-	    g_list_find(sakura.groups, group) == NULL)
+	if (model == NULL || group == NULL || group == model->root_group ||
+	    model->groups == NULL ||
+	    g_list_find(model->groups, group) == NULL)
 		return FALSE;
-	if (sakura.groups != NULL) {
-		for (GList *link = sakura.groups; link != NULL; link = link->next) {
+	if (model->groups != NULL) {
+		for (GList *link = model->groups; link != NULL; link = link->next) {
 			SakuraGroup *candidate = link->data;
 
 			if (candidate != NULL && candidate != group &&
-			    sakura_workspace_model_group_is_child_of(candidate, group))
+			    sakura_workspace_model_group_is_child_of(model, candidate, group))
 				return FALSE;
 		}
 	}
-	if (sakura.tasks != NULL) {
-		for (guint index = 0; index < sakura.tasks->len; index++) {
-			SakuraTask *task = g_ptr_array_index(sakura.tasks, index);
+	if (model->tasks != NULL) {
+		for (guint index = 0; index < model->tasks->len; index++) {
+			SakuraTask *task = g_ptr_array_index(model->tasks, index);
 
 			if (task != NULL && task->group == group)
 				return FALSE;
 		}
 	}
-	if (sakura.pages != NULL) {
-		for (guint index = 0; index < sakura.pages->len; index++) {
-			SakuraPage *page = g_ptr_array_index(sakura.pages, index);
+	if (model->pages != NULL) {
+		for (guint index = 0; index < model->pages->len; index++) {
+			SakuraPage *page = g_ptr_array_index(model->pages, index);
 
 			if (page != NULL && page->group == group)
 				return FALSE;
@@ -142,45 +197,49 @@ sakura_workspace_model_can_remove_group(SakuraGroup *group)
 
 
 gboolean
-sakura_workspace_model_remove_group(SakuraGroup *group)
+sakura_workspace_model_remove_group(SakuraWorkspaceModel *model,
+                                    SakuraGroup *group)
 {
-	if (!sakura_workspace_model_can_remove_group(group))
+	if (!sakura_workspace_model_can_remove_group(model, group))
 		return FALSE;
-	sakura.groups = g_list_remove(sakura.groups, group);
+	model->groups = g_list_remove(model->groups, group);
 	sakura_group_free(group);
 	return TRUE;
 }
 
 
 gboolean
-sakura_workspace_model_add_task(SakuraTask *task)
+sakura_workspace_model_add_task(SakuraWorkspaceModel *model,
+                                SakuraTask *task)
 {
-	if (task == NULL || task->id == NULL || sakura_task_find_by_id(task->id) != NULL)
+	if (model == NULL || task == NULL || task->id == NULL ||
+	    sakura_workspace_model_find_task(model, task->id) != NULL)
 		return FALSE;
-	if (sakura.tasks == NULL)
-		sakura.tasks = g_ptr_array_new_with_free_func((GDestroyNotify)sakura_task_free);
-	g_ptr_array_add(sakura.tasks, task);
+	if (model->tasks == NULL)
+		model->tasks = g_ptr_array_new_with_free_func((GDestroyNotify)sakura_task_free);
+	g_ptr_array_add(model->tasks, task);
 	return TRUE;
 }
 
 
 gboolean
-sakura_workspace_model_can_remove_task(SakuraTask *task)
+sakura_workspace_model_can_remove_task(SakuraWorkspaceModel *model,
+                                       SakuraTask *task)
 {
-	if (task == NULL || sakura.tasks == NULL ||
-	    sakura_task_find_by_id(task->id) != task)
+	if (model == NULL || task == NULL || model->tasks == NULL ||
+	    sakura_workspace_model_find_task(model, task->id) != task)
 		return FALSE;
-	if (sakura.tasks != NULL) {
-		for (guint index = 0; index < sakura.tasks->len; index++) {
-			SakuraTask *candidate = g_ptr_array_index(sakura.tasks, index);
+	if (model->tasks != NULL) {
+		for (guint index = 0; index < model->tasks->len; index++) {
+			SakuraTask *candidate = g_ptr_array_index(model->tasks, index);
 
 			if (candidate != NULL && candidate->parent == task)
 				return FALSE;
 		}
 	}
-	if (sakura.pages != NULL) {
-		for (guint index = 0; index < sakura.pages->len; index++) {
-			SakuraPage *page = g_ptr_array_index(sakura.pages, index);
+	if (model->pages != NULL) {
+		for (guint index = 0; index < model->pages->len; index++) {
+			SakuraPage *page = g_ptr_array_index(model->pages, index);
 
 			if (page != NULL && page->task == task)
 				return FALSE;
@@ -191,22 +250,24 @@ sakura_workspace_model_can_remove_task(SakuraTask *task)
 
 
 gboolean
-sakura_workspace_model_remove_task(SakuraTask *task)
+sakura_workspace_model_remove_task(SakuraWorkspaceModel *model,
+                                   SakuraTask *task)
 {
-	if (!sakura_workspace_model_can_remove_task(task) ||
-	    !g_ptr_array_remove(sakura.tasks, task))
+	if (!sakura_workspace_model_can_remove_task(model, task) ||
+	    !g_ptr_array_remove(model->tasks, task))
 		return FALSE;
 	return TRUE;
 }
 
 
 SakuraTask *
-sakura_task_find_by_id(const gchar *id)
+sakura_workspace_model_find_task(SakuraWorkspaceModel *model,
+                                 const gchar *id)
 {
-	if (id == NULL || sakura.tasks == NULL)
+	if (model == NULL || id == NULL || model->tasks == NULL)
 		return NULL;
-	for (guint index = 0; index < sakura.tasks->len; index++) {
-		SakuraTask *task = g_ptr_array_index(sakura.tasks, index);
+	for (guint index = 0; index < model->tasks->len; index++) {
+		SakuraTask *task = g_ptr_array_index(model->tasks, index);
 
 		if (task != NULL && g_strcmp0(task->id, id) == 0)
 			return task;
@@ -230,38 +291,46 @@ sakura_task_free(SakuraTask *task)
 
 
 SakuraGroup *
-sakura_group_for_task(SakuraTask *task)
+sakura_workspace_model_group_for_task(SakuraWorkspaceModel *model,
+                                      SakuraTask *task)
 {
+	if (model == NULL)
+		return NULL;
 	if (task == NULL || task->group == NULL)
-		return sakura.root_group;
+		return model->root_group;
 	return task->group;
 }
 
 
 SakuraGroup *
-sakura_group_for_session(SakuraSession *session)
+sakura_workspace_model_group_for_session(SakuraWorkspaceModel *model,
+                                         SakuraSession *session)
 {
+	if (model == NULL)
+		return NULL;
 	if (session == NULL)
-		return sakura.root_group;
+		return model->root_group;
 	if (session->group != NULL)
 		return session->group;
 	if (session->task != NULL)
-		return sakura_group_for_task(session->task);
-	return sakura.root_group;
+		return sakura_workspace_model_group_for_task(model, session->task);
+	return model->root_group;
 }
 
 
 gboolean
-sakura_workspace_model_move_page_to_group(SakuraPage *page,
-                                           SakuraGroup *group)
+sakura_workspace_model_move_page_to_group(SakuraWorkspaceModel *model,
+                                          SakuraPage *page,
+                                          SakuraGroup *group)
 {
 	SakuraGroup *old_group;
 
-	if (page == NULL || group == NULL ||
-	    (page->task == NULL && page->group == group))
+	if (model == NULL || page == NULL || group == NULL)
 		return FALSE;
-	if (g_list_find(sakura.groups, group) == NULL)
+	if (g_list_find(model->groups, group) == NULL)
 		return FALSE;
+	if (page->task == NULL && page->group == group)
+		return TRUE;
 	old_group = page->group;
 	page->task = NULL;
 	page->group = group;
@@ -274,53 +343,57 @@ sakura_workspace_model_move_page_to_group(SakuraPage *page,
 
 
 gboolean
-sakura_workspace_model_attach_page(SakuraTask *task, SakuraPage *page)
+sakura_workspace_model_attach_page(SakuraWorkspaceModel *model,
+                                   SakuraTask *task,
+                                   SakuraPage *page)
 {
-	if (task == NULL || page == NULL || page->task == task ||
-	    sakura_task_find_by_id(task->id) != task)
+	if (model == NULL || task == NULL || page == NULL || page->task == task ||
+	    sakura_workspace_model_find_task(model, task->id) != task)
 		return FALSE;
 	page->task = task;
-	page->group = sakura_group_for_task(task);
+	page->group = sakura_workspace_model_group_for_task(model, task);
 	return TRUE;
 }
 
 
 gboolean
-sakura_workspace_model_detach_page(SakuraPage *page)
+sakura_workspace_model_detach_page(SakuraWorkspaceModel *model,
+                                   SakuraPage *page)
 {
 	SakuraTask *task;
 
-	if (page == NULL || page->task == NULL)
+	if (model == NULL || page == NULL || page->task == NULL)
 		return FALSE;
 	task = page->task;
 	page->task = NULL;
-	page->group = sakura_group_for_task(task);
+	page->group = sakura_workspace_model_group_for_task(model, task);
 	return TRUE;
 }
 
 
 gboolean
-sakura_workspace_model_reorder_group(SakuraGroup *source,
+sakura_workspace_model_reorder_group(SakuraWorkspaceModel *model,
+                                      SakuraGroup *source,
                                       SakuraGroup *target,
                                       gboolean after)
 {
 	GList *ordered = NULL, *link, *target_link;
 	SakuraGroup *parent;
 
-	if (source == NULL || target == NULL || source == target ||
-	    source == sakura.root_group || target == sakura.root_group)
+	if (model == NULL || source == NULL || target == NULL || source == target ||
+	    source == model->root_group || target == model->root_group)
 		return FALSE;
-	if (g_list_find(sakura.groups, source) == NULL ||
-	    g_list_find(sakura.groups, target) == NULL)
+	if (g_list_find(model->groups, source) == NULL ||
+	    g_list_find(model->groups, target) == NULL)
 		return FALSE;
-	parent = source->parent != NULL ? source->parent : sakura.root_group;
-	if (!sakura_workspace_model_group_is_child_of(target, parent))
+	parent = source->parent != NULL ? source->parent : model->root_group;
+	if (!sakura_workspace_model_group_is_child_of(model, target, parent))
 		return FALSE;
-	for (link = sakura.groups; link != NULL; link = link->next) {
+	for (link = model->groups; link != NULL; link = link->next) {
 		SakuraGroup *group = link->data;
 
 		if (group != NULL && group != source &&
-		    sakura_workspace_model_group_is_child_of(group, parent))
+		    sakura_workspace_model_group_is_child_of(model, group, parent))
 			ordered = g_list_prepend(ordered, group);
 	}
 	ordered = g_list_sort(ordered, sakura_workspace_model_group_order_compare);
@@ -345,15 +418,18 @@ sakura_workspace_model_reorder_group(SakuraGroup *source,
 
 
 gboolean
-sakura_workspace_model_append_task(SakuraTask *task, SakuraGroup *group)
+sakura_workspace_model_append_task(SakuraWorkspaceModel *model,
+                                   SakuraTask *task,
+                                   SakuraGroup *group)
 {
-	if (task == NULL || group == NULL || task->group != group || task->parent != NULL)
+	if (model == NULL || task == NULL || group == NULL || task->group != group ||
+	    task->parent != NULL)
 		return FALSE;
-	if (g_list_find(sakura.groups, group) == NULL)
+	if (g_list_find(model->groups, group) == NULL)
 		return FALSE;
-	if (sakura_task_find_by_id(task->id) != task)
+	if (sakura_workspace_model_find_task(model, task->id) != task)
 		return FALSE;
 	task->order = G_MAXUINT;
-	sakura_workspace_model_normalize_task_orders(group, NULL);
+	sakura_workspace_model_normalize_task_orders(model, group, NULL);
 	return TRUE;
 }

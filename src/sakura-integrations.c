@@ -1785,8 +1785,8 @@ sakura_codex_tracking_poll_cb(gpointer data)
 			continue;
 		}
 
-		if (sakura.tabs != NULL) {
-			for (page = 0; page < sakura.tabs->len; page++) {
+		if (sakura.workspace->tabs != NULL) {
+			for (page = 0; page < sakura.workspace->tabs->len; page++) {
 				SakuraTab *tab = sakura_tab_at_page((gint)page);
 				if (tab == NULL || tab->codex_tracking_token == NULL ||
 				    g_strcmp0(tab->codex_tracking_token, filename) != 0)
@@ -1857,10 +1857,10 @@ sakura_find_tool_tab(SakuraToolKind tool, const gchar *cwd)
 {
 	guint page;
 
-	if (tool == SAKURA_TOOL_NONE || sakura.tabs == NULL)
+	if (tool == SAKURA_TOOL_NONE || sakura.workspace->tabs == NULL)
 		return NULL;
 
-	for (page = 0; page < sakura.tabs->len; page++) {
+	for (page = 0; page < sakura.workspace->tabs->len; page++) {
 		SakuraTab *tab = sakura_tab_at_page((gint)page);
 
 		if (tab == NULL || tab->kind != SAKURA_TAB_TOOL || tab->tool != tool)
@@ -1879,10 +1879,10 @@ sakura_find_tool_target_tab(SakuraToolKind tool, const gchar *target)
 {
 	guint page;
 
-	if (tool == SAKURA_TOOL_NONE || target == NULL || sakura.tabs == NULL)
+	if (tool == SAKURA_TOOL_NONE || target == NULL || sakura.workspace->tabs == NULL)
 		return NULL;
 
-	for (page = 0; page < sakura.tabs->len; page++) {
+	for (page = 0; page < sakura.workspace->tabs->len; page++) {
 		SakuraTab *tab = sakura_tab_at_page((gint)page);
 
 		if (tab != NULL && tab->kind == SAKURA_TAB_TOOL &&
