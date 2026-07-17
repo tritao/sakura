@@ -1406,6 +1406,7 @@ test_sidebar_order_survives_snapshot_roundtrip(void)
 	                                  NULL, &first_iter, NULL, NULL);
 	g_assert_cmpuint(group_b->group->order, ==, 0);
 	g_assert_cmpuint(group_a->group->order, ==, 1);
+	assert_workspace_consistent();
 
 	sakura.tasks = g_ptr_array_new_with_free_func((GDestroyNotify)sakura_task_free);
 	task_a = g_new0(SakuraTask, 1);
@@ -1435,6 +1436,7 @@ test_sidebar_order_survives_snapshot_roundtrip(void)
 	                                  NULL, &first_iter, NULL, NULL);
 	g_assert_cmpuint(task_b->order, ==, 0);
 	g_assert_cmpuint(task_a->order, ==, 1);
+	assert_workspace_consistent();
 
 	source = sakura_workspace_snapshot_new();
 	g_assert_cmpuint(source->groups->len, ==, 2);
@@ -1524,7 +1526,8 @@ test_sidebar_move_page_preserves_whole_page_parent(void)
 {
 	SakuraPage *page;
 	SakuraTab *pane;
-	SakuraSidebarNode *group;
+	SakuraSidebarNode *group, *other_group, *original_parent;
+	GError *error = NULL;
 
 	setup_workspace();
 	page = sakura_page_at_page(1);
@@ -1536,6 +1539,7 @@ test_sidebar_move_page_preserves_whole_page_parent(void)
 		page->active_tab->layout_leaf, SAKURA_SPLIT_DOWN, pane));
 	setup_sidebar_fixture();
 	group = test_sidebar_add_group("freecad", "FreeCAD", sakura.sidebar_root);
+	other_group = test_sidebar_add_group("docs", "Website & Docs", sakura.sidebar_root);
 
 	g_assert_true(sakura_sidebar_move_page_to_group(page, group));
 	g_assert_true(page->sidebar_node->parent == group);
@@ -1545,12 +1549,33 @@ test_sidebar_move_page_preserves_whole_page_parent(void)
 		g_assert_true(tab->sidebar_node->parent == page->sidebar_node);
 	}
 
+	/* A broken projection link must be observable instead of being silently
+	 * copied back into the model by a sidebar synchronization pass. */
+	original_parent = page->sidebar_node->parent;
+	page->sidebar_node->parent = other_group;
+	g_assert_false(sakura_workspace_validate(&error));
+	g_assert_nonnull(error);
+	g_clear_error(&error);
+	page->sidebar_node->parent = original_parent;
+
+	/* Selecting a moved page must switch the group scope, otherwise the tab bar
+	 * can continue displaying every terminal from the previous group. */
+	sakura.active_group = other_group->group;
+	sakura.active_group_scope = other_group;
+	sakura.active_task = NULL;
+	sakura_select_tab(page->active_tab, FALSE);
+	g_assert_true(sakura.active_group_scope == group);
+	g_assert_true(sakura.active_group == group->group);
+	g_assert_null(sakura.active_task);
+	g_assert_true(sakura_tab_is_in_active_scope(page->active_tab));
+
 	/* The persisted/model parent must agree with the GTK tree after a move. */
 	sakura_sidebar_sync_projection_links();
 	g_assert_true(page->sidebar_node->parent == group);
 	assert_workspace_consistent();
 
 	test_sidebar_remove_group(group);
+	test_sidebar_remove_group(other_group);
 	teardown_workspace();
 }
 
