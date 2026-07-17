@@ -2546,6 +2546,18 @@ sakura_workspace_layout_leftmost(GHashTable *records,
 }
 
 
+static void
+sakura_workspace_discard_pages(void)
+{
+	while (sakura.pages != NULL && sakura.pages->len > 0) {
+		if (!sakura_tab_delete_page(0)) {
+			g_warning("Could not discard a partially restored Sakura page");
+			break;
+		}
+	}
+}
+
+
 static SakuraLayoutNode *
 sakura_workspace_restore_layout_subtree(SakuraPage *page,
                                         GHashTable *layout_records,
@@ -2616,6 +2628,7 @@ static gboolean
 sakura_workspace_restore_layout_snapshot(SakuraSessionSnapshot *snapshot)
 {
 	GHashTable *layout_records, *tab_records, *page_records;
+	gboolean failed = FALSE;
 	guint index;
 
 	layout_records = g_hash_table_new(g_str_hash, g_str_equal);
@@ -2646,11 +2659,15 @@ sakura_workspace_restore_layout_snapshot(SakuraSessionSnapshot *snapshot)
 		SakuraTab *tab;
 		SakuraSidebarNode *parent;
 
-		if (root_leaf == NULL || root_leaf->terminal_id == NULL)
-			continue;
+		if (root_leaf == NULL || root_leaf->terminal_id == NULL) {
+			failed = TRUE;
+			break;
+		}
 		tab_record = sakura_workspace_tab_record(tab_records, root_leaf->terminal_id);
-		if (tab_record == NULL)
-			continue;
+		if (tab_record == NULL) {
+			failed = TRUE;
+			break;
+		}
 		parent = sakura_sidebar_find_container_by_id(
 			page_record->task_id != NULL && page_record->task_id[0] != '\0'
 			? page_record->task_id : tab_record->parent_id);
@@ -2666,8 +2683,10 @@ sakura_workspace_restore_layout_snapshot(SakuraSessionSnapshot *snapshot)
 		                            tab_record->terminal_id,
 		                            tab_record->colorset, NULL);
 		tab = sakura_find_pane_by_terminal_id(tab_record->terminal_id);
-		if (tab == NULL || tab->page == NULL)
-			continue;
+		if (tab == NULL || tab->page == NULL) {
+			failed = TRUE;
+			break;
+		}
 		g_free(tab->page->id);
 		tab->page->id = g_strdup(page_record->id);
 		tab->page->title = g_strdup(page_record->title);
@@ -2677,9 +2696,19 @@ sakura_workspace_restore_layout_snapshot(SakuraSessionSnapshot *snapshot)
 			tab->page->sidebar_node->id = g_strdup(tab->page->id);
 			sakura_sidebar_update_page(tab->page);
 		}
-		if (root != NULL && g_strcmp0(root->type, "split") == 0)
-			sakura_workspace_restore_layout_subtree(tab->page, layout_records,
-			                                       tab_records, root, tab, NULL);
+		if (root != NULL && g_strcmp0(root->type, "split") == 0 &&
+		    sakura_workspace_restore_layout_subtree(tab->page, layout_records,
+		                                             tab_records, root, tab, NULL) == NULL) {
+			failed = TRUE;
+			break;
+		}
+	}
+	if (failed) {
+		sakura_workspace_discard_pages();
+		g_hash_table_destroy(layout_records);
+		g_hash_table_destroy(tab_records);
+		g_hash_table_destroy(page_records);
+		return FALSE;
 	}
 	/* Restoration may insert pages relative to the current GTK page. Rebuild
 	 * the persistence caches from the notebook widgets before resolving the

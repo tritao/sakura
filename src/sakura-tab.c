@@ -471,7 +471,7 @@ sakura_tab_add_with_options (const gchar *restore_cwd,
 	SakuraPage *tab_page;
 	GtkWidget *tab_title_hbox; GtkWidget *close_button; /* We could put them inside struct sakura_tab, but it is not necessary */
 	GtkWidget *event_box;
-	gint index, page, npages;
+	gint index, page, npages, target_page_index = -1;
 	gchar *cwd = NULL; gchar *group_cwd = NULL; gchar *default_label_text = NULL;
 	struct sakura_sidebar_node *sidebar_parent;
 	const SakuraTabLaunchConfig default_config = {
@@ -492,6 +492,18 @@ sakura_tab_add_with_options (const gchar *restore_cwd,
 
 	sk_tab = sakura_tab_new();
 	tab_page = config->target_page;
+	if (split_into_page) {
+		/* Resolve the notebook position before changing the layout. A split
+		 * target that is no longer attached must not leave a new model leaf
+		 * behind when creation is rejected. */
+		if (tab_page == NULL || tab_page->active_tab == NULL ||
+		    tab_page->active_tab->layout_leaf == NULL ||
+		    (target_page_index = sakura_page_for_tab(tab_page->active_tab)) < 0) {
+			sakura_tab_free(sk_tab);
+			sakura_error("Cannot find the split notebook page");
+			return;
+		}
+	}
 	if (!split_into_page) {
 		tab_page = sakura_page_new(NULL);
 		tab_page->container = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
@@ -604,12 +616,7 @@ sakura_tab_add_with_options (const gchar *restore_cwd,
 	} else {
 		/* A split adds a pane inside the current notebook page; it must not
 		 * create another notebook tab. */
-		index = sakura_page_for_tab(tab_page->active_tab);
-		if (index < 0) {
-			sakura_tab_free(sk_tab);
-			sakura_error("Cannot find the split notebook page");
-			return;
-		}
+		index = target_page_index;
 	}
 
 	if (!split_into_page) {
@@ -803,8 +810,14 @@ sakura_tab_delete_pane(SakuraTab *tab)
 			sakura_tab_delete_page(page_index);
 		return;
 	}
-	if (!sakura_layout_remove_leaf_widgets(tab->layout_leaf))
+	if (sakura.workspace_mutating)
 		return;
+	sakura.workspace_mutating = TRUE;
+	if (!sakura_layout_remove_leaf_widgets(tab->layout_leaf))
+	{
+		sakura.workspace_mutating = FALSE;
+		return;
+	}
 
 	was_active = sakura.active_tab == tab;
 	was_representative = page->tab_bar_tab == tab;
@@ -833,10 +846,11 @@ sakura_tab_delete_pane(SakuraTab *tab)
 	sakura_set_size();
 	sakura_session_mark_dirty();
 	sakura_session_flush();
+	sakura.workspace_mutating = FALSE;
 }
 
 
-void
+gboolean
 sakura_tab_delete_page(gint page)
 {
 	struct sakura_tab *sk_tab;
@@ -851,13 +865,21 @@ sakura_tab_delete_page(gint page)
 	if (page < 0)
 		page = gtk_notebook_get_n_pages(GTK_NOTEBOOK(sakura.notebook)) - 1;
 	if (page < 0)
-		return;
+		return FALSE;
 	sk_tab = sakura_tab_at_page(page);
 	if (sk_tab == NULL)
-		return;
+		return FALSE;
+	if (sakura.workspace_mutating)
+		return FALSE;
+	sakura.workspace_mutating = TRUE;
 	tab_page = sk_tab->page;
 	page_panes = tab_page != NULL && tab_page->panes != NULL
 	           ? g_ptr_array_ref(tab_page->panes) : NULL;
+	if (tab_page != NULL && !sakura_notebook_detach_page(tab_page)) {
+		g_clear_pointer(&page_panes, g_ptr_array_unref);
+		sakura.workspace_mutating = FALSE;
+		return FALSE;
+	}
 	removed_active = tab_page != NULL && sakura.active_page == tab_page;
 	if (removed_active)
 		sakura.active_tab = NULL;
@@ -878,8 +900,6 @@ sakura_tab_delete_page(gint page)
 				g_ptr_array_remove_fast(sakura.panes, pane);
 		}
 	}
-	if (tab_page != NULL)
-		sakura_notebook_detach_page(tab_page);
 	if (sakura.active_page == tab_page)
 		sakura.active_page = NULL;
 	if (tab_page != NULL) {
@@ -904,6 +924,8 @@ sakura_tab_delete_page(gint page)
 		sakura_tab_bar_refresh();
 	sakura_session_mark_dirty();
 	sakura_session_flush();
+	sakura.workspace_mutating = FALSE;
+	return TRUE;
 }
 
 
@@ -1601,28 +1623,45 @@ sakura_tab_move_relative(gint direction)
 }
 
 
-void
+static gboolean
+sakura_page_has_running_process(SakuraPage *page)
+{
+	guint index;
+
+	if (page == NULL || page->panes == NULL)
+		return FALSE;
+	for (index = 0; index < page->panes->len; index++) {
+		SakuraTab *pane = g_ptr_array_index(page->panes, index);
+		VtePty *pty;
+		pid_t pgid;
+
+		if (pane == NULL || pane->vte == NULL)
+			continue;
+		pty = vte_terminal_get_pty(VTE_TERMINAL(pane->vte));
+		pgid = pty != NULL ? tcgetpgrp(vte_pty_get_fd(pty)) : -1;
+		if (pgid != -1 && pgid != pane->pid)
+			return TRUE;
+	}
+	return FALSE;
+}
+
+
+gboolean
 sakura_close_tab(gint page)
 {
 	gint pages;
 	gint response;
-	pid_t pgid;
-	VtePty *pty;
 	SakuraTab *tab;
+	SakuraPage *tab_page;
 	GtkWidget *dialog;
+	gboolean deleted = FALSE;
 
-	sakura_session_accept_changes();
 	pages = gtk_notebook_get_n_pages(GTK_NOTEBOOK(sakura.notebook));
 	tab = sakura_tab_at_page(page);
 	if (tab == NULL)
-		return;
-
-	/* Only write configuration to disk if this is the last tab. */
-	if (pages == 1)
-		sakura_config_done();
-	pty = vte_terminal_get_pty(VTE_TERMINAL(tab->vte));
-	pgid = pty != NULL ? tcgetpgrp(vte_pty_get_fd(pty)) : -1;
-	if (pgid != -1 && pgid != tab->pid && !sakura.less_questions) {
+		return FALSE;
+	tab_page = tab->page;
+	if (sakura_page_has_running_process(tab_page) && !sakura.less_questions) {
 		dialog = gtk_message_dialog_new(
 			GTK_WINDOW(sakura.main_window), GTK_DIALOG_MODAL,
 			GTK_MESSAGE_QUESTION, GTK_BUTTONS_YES_NO,
@@ -1630,13 +1669,19 @@ sakura_close_tab(gint page)
 		response = gtk_dialog_run(GTK_DIALOG(dialog));
 		gtk_widget_destroy(dialog);
 		if (response == GTK_RESPONSE_YES)
-			sakura_tab_delete_page(page);
+			deleted = sakura_tab_delete_page(page);
 	} else {
-		sakura_tab_delete_page(page);
+		deleted = sakura_tab_delete_page(page);
 	}
 
-	if (pages == 1)
+	if (deleted && pages == 1) {
+		sakura_session_accept_changes();
+		sakura_config_done();
 		sakura_destroy();
+	} else if (deleted) {
+		sakura_session_accept_changes();
+	}
+	return deleted;
 }
 
 
@@ -1647,6 +1692,8 @@ sakura_child_exited_cb (GtkWidget *widget, void *data)
 	SakuraTab *tab;
 
 	(void)data;
+	if (sakura.workspace_mutating)
+		return;
 	tab = sakura_tab_for_vte(VTE_TERMINAL(widget));
 	page = sakura_page_for_tab(tab);
 	pages = gtk_notebook_get_n_pages(GTK_NOTEBOOK(sakura.notebook));
@@ -1763,6 +1810,10 @@ sakura_tab_free(SakuraTab *tab)
 {
 	if (tab == NULL)
 		return;
+	if (tab->codex_name_retry_source_id != 0) {
+		g_source_remove(tab->codex_name_retry_source_id);
+		tab->codex_name_retry_source_id = 0;
+	}
 
 	g_free(tab->cwd);
 	g_free(tab->host);

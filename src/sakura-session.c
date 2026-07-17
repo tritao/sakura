@@ -129,7 +129,8 @@ sakura_session_flush(void)
 	if (!sakura.session_dirty)
 		return;
 	if (sakura.sessionfile == NULL || sakura.session_new_window || sakura.dont_save ||
-	    sakura.session_shutting_down || sakura.session_restore_failed ||
+	    sakura.session_shutting_down || sakura.session_restoring ||
+	    sakura.session_restore_failed ||
 	    sakura.sidebar_model == NULL)
 		return;
 

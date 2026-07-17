@@ -219,6 +219,7 @@ struct sakura_app {
 	bool session_ready;
 	bool session_shutting_down;
 	bool session_restore_failed;
+	bool workspace_mutating;
 	bool session_dirty;
 	bool session_new_window;
 	guint session_save_source_id;
@@ -611,7 +612,7 @@ void sakura_copy_cb(GtkWidget *widget, void *data);
 void sakura_paste_cb(GtkWidget *widget, void *data);
 void sakura_select_text_cb(GtkWidget *widget, void *data);
 void sakura_search_dialog(void);
-void sakura_close_tab(gint page);
+gboolean sakura_close_tab(gint page);
 void sakura_tab_move_relative(gint direction);
 void sakura_new_tool_cb(GtkWidget *widget, void *data);
 void sakura_apply_layout_preset_cb(GtkWidget *widget, void *data);
@@ -639,7 +640,7 @@ void sakura_tab_add_with_options(const gchar *restore_cwd,
                                  const gchar *restore_terminal_id,
                                  gint restore_colorset,
                                  const SakuraTabLaunchConfig *launch_config);
-void sakura_tab_delete_page(gint page);
+gboolean sakura_tab_delete_page(gint page);
 void sakura_tab_delete_pane(SakuraTab *tab);
 gboolean sakura_codex_session_id_is_uuid(const gchar *value);
 gboolean sakura_codex_reasoning_effort_is_valid(const gchar *value);

@@ -517,7 +517,7 @@ void            sakura_add_tab_with_options (const gchar *, struct sakura_sideba
                                              SakuraToolKind, const gchar *, const gchar *,
                                              const gchar *, const gchar *, const gchar *,
                                              gint);
-void            sakura_close_tab (gint); /* Save config, del tab and destroy sakura */
+gboolean        sakura_close_tab (gint); /* Save config, del tab and destroy sakura */
 void            sakura_destroy ();
 void            sakura_set_font ();
 static gboolean sakura_prefers_dark_theme (void);
@@ -3178,7 +3178,6 @@ void
 sakura_destroy()
 {
 	GList *group;
-	SakuraTab *tab;
 	guint index;
 
 	if (sakura.session_shutting_down)
@@ -3222,18 +3221,20 @@ sakura_destroy()
 			sakura_page_free(g_ptr_array_index(sakura.pages, index));
 		g_ptr_array_set_size(sakura.pages, 0);
 	}
-	if (sakura.tabs != NULL) {
-		for (index = 0; index < sakura.tabs->len; index++) {
-			tab = g_ptr_array_index(sakura.tabs, index);
-			if (tab != NULL) {
-				sakura_remove_history_file(tab);
+	/* The tab-bar collection has one representative per page; the pane
+	 * collection is authoritative and also contains every split pane. Free
+	 * panes from that collection so repeated split/restore cycles do not leak
+	 * the non-representative terminals. */
+	if (sakura.panes != NULL) {
+		for (index = 0; index < sakura.panes->len; index++) {
+			SakuraTab *tab = g_ptr_array_index(sakura.panes, index);
+			if (tab != NULL)
 				sakura_tab_free(tab);
-			}
 		}
-		g_ptr_array_set_size(sakura.tabs, 0);
-	}
-	if (sakura.panes != NULL)
 		g_ptr_array_set_size(sakura.panes, 0);
+	}
+	if (sakura.tabs != NULL)
+		g_ptr_array_set_size(sakura.tabs, 0);
 	if (sakura.tasks != NULL) {
 		for (index = 0; index < sakura.tasks->len; index++) {
 			SakuraTask *task = g_ptr_array_index(sakura.tasks, index);

@@ -535,6 +535,45 @@ def run_pane_switch_case(binary, config_file, session_file, env, log_file):
         raise
 
 
+def run_create_delete_case(binary, config_file, session_file, env, log_file):
+    """Exercise real split-pane, pane-close, and page-close mutations."""
+    write_pane_switch_fixture(config_file, session_file)
+    process, window = launch_sakura(binary, config_file, env, log_file)
+    try:
+        wait_for_session(session_file, lambda value: len(value[2]) == 3)
+        run(["xdotool", "windowfocus", "--sync", window], env)
+
+        run(["xdotool", "key", "ctrl+shift+e"], env)
+        wait_for_session(session_file, lambda value: len(value[2]) == 4)
+
+        # The split shortcut focuses the new pane. Pane close must remove only
+        # that pane and preserve the containing notebook page.
+        run(["xdotool", "key", "ctrl+shift+w"], env)
+        wait_for_session(
+            session_file,
+            lambda value: len(value[2]) == 3 and
+            set(value[2]) == {
+                "switch-terminal-a", "switch-terminal-b", "switch-terminal-c"
+            },
+        )
+
+        # Closing again removes the now single-pane page. This used to be a
+        # common source of stale notebook/sidebar/session entries.
+        run(["xdotool", "key", "ctrl+shift+w"], env)
+        wait_for_session(
+            session_file,
+            lambda value: len(value[2]) == 2 and
+            set(value[2]) == {"switch-terminal-a", "switch-terminal-b"},
+        )
+        close_window(process, window, env)
+        process = None
+    except Exception:
+        if process is not None and process.poll() is None:
+            process.kill()
+            process.wait(timeout=3)
+        raise
+
+
 def run_visible_terminal_case(binary, config_file, session_file, env, log_file):
     """Verify sidebar selection focuses the VTE belonging to the selected page."""
     write_fixture(config_file, session_file)
@@ -791,6 +830,8 @@ def main():
 
             run_pane_switch_case(binary, config_file, session_file, env, log_file)
             print("terminal key switching: passed")
+            run_create_delete_case(binary, config_file, session_file, env, log_file)
+            print("create/delete lifecycle: passed")
             run_visible_terminal_case(binary, config_file, session_file, env, log_file)
             print("restored sidebar-to-VTE mapping: passed")
             run_failed_restore_case(binary, config_file, session_file, env, log_file)
@@ -803,7 +844,7 @@ def main():
                     print(f"cleanup error: {cleanup_error}", file=sys.stderr)
             print(f"Sakura log: {log_file}", file=sys.stderr)
             if log_file.exists():
-                print(log_file.read_text(encoding="utf-8", errors="replace")[-4000:],
+                print(log_file.read_text(encoding="utf-8", errors="replace")[-12000:],
                       file=sys.stderr)
             raise
         finally:

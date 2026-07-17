@@ -546,6 +546,15 @@ sakura_layout_remove_leaf_widgets(SakuraLayoutNode *leaf)
 	if (sibling == NULL || sibling->widget == NULL)
 		return FALSE;
 	grandparent = parent->parent;
+	/* Validate the complete replacement path before detaching either child.
+	 * Once the surviving widget is removed from its parent, a later failure
+	 * cannot restore the GTK hierarchy safely. */
+	if (grandparent != NULL &&
+	    (grandparent->kind != SAKURA_LAYOUT_SPLIT ||
+	     grandparent->widget == NULL ||
+	     (grandparent->data.split.first != parent &&
+	      grandparent->data.split.second != parent)))
+		return FALSE;
 	parent_widget = parent->widget;
 	sibling_widget = sibling->widget;
 
@@ -560,13 +569,6 @@ sakura_layout_remove_leaf_widgets(SakuraLayoutNode *leaf)
 		gtk_container_remove(GTK_CONTAINER(container), parent_widget);
 		gtk_box_pack_start(GTK_BOX(container), sibling_widget, TRUE, TRUE, 0);
 	} else {
-		if (grandparent->kind != SAKURA_LAYOUT_SPLIT ||
-		    grandparent->widget == NULL ||
-		    (grandparent->data.split.first != parent &&
-	     grandparent->data.split.second != parent)) {
-			g_object_unref(sibling_widget);
-			return FALSE;
-		}
 		container = grandparent->widget;
 		gtk_container_remove(GTK_CONTAINER(container), parent_widget);
 		if (grandparent->data.split.first == parent)
