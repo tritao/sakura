@@ -32,6 +32,12 @@ static void sakura_sidebar_show_page_panes(SakuraPage *page);
 static void sakura_sidebar_hide_page_panes(SakuraPage *page);
 static void sakura_sidebar_add_page(SakuraPage *page, SakuraSidebarNode *parent);
 static void sakura_sidebar_remove_node_row(SakuraSidebarNode *node);
+static gboolean sakura_sidebar_reorder_node_to_group(
+                                      SakuraSidebarNode *source,
+                                      SakuraSidebarNode *target,
+                                      GtkTreeViewDropPosition position);
+static void sakura_sidebar_update_model_order_for_parent(GtkTreeModel *model,
+                                                          GtkTreeIter *parent_iter);
 static void sakura_sidebar_drag_begin_cb(GtkWidget *widget,
                                           GdkDragContext *context,
                                           gpointer data);
@@ -2270,6 +2276,21 @@ sakura_sidebar_can_reorder_node_to_group(SakuraSidebarNode *source,
 }
 
 
+static gboolean
+sakura_sidebar_drag_position(GtkWidget *widget, gint x, gint y,
+                             GtkTreeViewDropPosition *position)
+{
+	GtkTreePath *path = NULL;
+	gboolean valid;
+
+	valid = gtk_tree_view_get_dest_row_at_pos(GTK_TREE_VIEW(widget), x, y,
+	                                         &path, position);
+	if (path != NULL)
+		gtk_tree_path_free(path);
+	return valid;
+}
+
+
 static void
 sakura_sidebar_drag_begin_cb(GtkWidget *widget, GdkDragContext *context,
                              gpointer data)
@@ -2277,13 +2298,16 @@ sakura_sidebar_drag_begin_cb(GtkWidget *widget, GdkDragContext *context,
 	GtkTreeSelection *selection;
 	GtkTreeModel *model;
 	GtkTreeIter iter;
-	SakuraSidebarNode *node = NULL;
+	SakuraSidebarNode *node = g_object_get_data(
+		G_OBJECT(widget), "sakura-sidebar-drag-node");
 
 	(void)context;
 	(void)data;
-	selection = gtk_tree_view_get_selection(GTK_TREE_VIEW(widget));
-	if (gtk_tree_selection_get_selected(selection, &model, &iter))
-		gtk_tree_model_get(model, &iter, SAKURA_SIDEBAR_COLUMN_NODE, &node, -1);
+	if (node == NULL) {
+		selection = gtk_tree_view_get_selection(GTK_TREE_VIEW(widget));
+		if (gtk_tree_selection_get_selected(selection, &model, &iter))
+			gtk_tree_model_get(model, &iter, SAKURA_SIDEBAR_COLUMN_NODE, &node, -1);
+	}
 	g_object_set_data(G_OBJECT(widget), "sakura-sidebar-drag-node", node);
 }
 
@@ -2316,9 +2340,7 @@ sakura_sidebar_drag_motion_cb(GtkWidget *widget, GdkDragContext *context,
 			return TRUE;
 		}
 		gdk_drag_status(context, GDK_ACTION_MOVE, time);
-		/* Let GtkTreeView perform an in-parent reorder. The rows-reordered
-		 * handler records that order in the model. */
-		return FALSE;
+		return TRUE;
 	}
 	/* Prevent GtkTreeView's reorderable default handler from accepting a
 	 * terminal/page row as a drop target. */
@@ -2335,6 +2357,7 @@ sakura_sidebar_drag_drop_cb(GtkWidget *widget, GdkDragContext *context,
 	SakuraSidebarNode *source = sakura_sidebar_drag_node(widget);
 	SakuraPage *page = sakura_sidebar_page_for_drag_node(source);
 	struct sakura_sidebar_move_target *move;
+	GtkTreeViewDropPosition position = GTK_TREE_VIEW_DROP_INTO_OR_AFTER;
 
 	(void)data;
 	if (target != NULL && page != NULL && page->active_tab != NULL) {
@@ -2348,9 +2371,18 @@ sakura_sidebar_drag_drop_cb(GtkWidget *widget, GdkDragContext *context,
 		gtk_drag_finish(context, TRUE, FALSE, time);
 		return TRUE;
 	}
-	if (target != NULL)
-		return FALSE;
+	if (target != NULL && sakura_sidebar_can_reorder_node_to_group(source, target)) {
+		if (sakura_sidebar_drag_position(widget, x, y, &position) &&
+		    sakura_sidebar_reorder_node_to_group(source, target, position)) {
+			gtk_drag_finish(context, TRUE, FALSE, time);
+			return TRUE;
+		}
+		gtk_drag_finish(context, FALSE, FALSE, time);
+		return TRUE;
+	}
 	gdk_drag_status(context, 0, time);
+	if (target != NULL)
+		gtk_drag_finish(context, FALSE, FALSE, time);
 	return TRUE;
 }
 
@@ -2363,6 +2395,24 @@ sakura_sidebar_button_press_cb (GtkWidget *widget, GdkEventButton *event, void *
 	GtkTreeIter iter;
 	GtkWidget *menu;
 	struct sakura_sidebar_node *node;
+
+	/* GTK starts a drag before its default selection handling necessarily runs.
+	 * Capture the row under the pointer so drag-begin cannot reuse a previously
+	 * selected page or task when the user drags an unselected group. */
+	if (event->button == GDK_BUTTON_PRIMARY && GTK_IS_TREE_VIEW(widget)) {
+		if (gtk_tree_view_get_path_at_pos(GTK_TREE_VIEW(widget), event->x, event->y,
+		                                  &path, &column, NULL, NULL)) {
+			if (gtk_tree_model_get_iter(GTK_TREE_MODEL(sakura.sidebar_model), &iter, path))
+				gtk_tree_model_get(GTK_TREE_MODEL(sakura.sidebar_model), &iter,
+				                   SAKURA_SIDEBAR_COLUMN_NODE, &node, -1);
+			else
+				node = NULL;
+			g_object_set_data(G_OBJECT(widget), "sakura-sidebar-drag-node", node);
+			gtk_tree_path_free(path);
+			path = NULL;
+		} else
+			g_object_set_data(G_OBJECT(widget), "sakura-sidebar-drag-node", NULL);
+	}
 
 	/* A folder label is a row, not the expander itself. GTK therefore does
 	 * not expand it when it receives a double click. Keep single-click
@@ -4843,6 +4893,53 @@ sakura_sidebar_insert_node_after(SakuraSidebarNode *node,
                                  SakuraSidebarNode *sibling)
 {
 	sakura_sidebar_insert_node_relative(node, sibling);
+}
+
+
+static gboolean
+sakura_sidebar_reorder_node_to_group(SakuraSidebarNode *source,
+                                     SakuraSidebarNode *target,
+                                     GtkTreeViewDropPosition position)
+{
+	SakuraSidebarNode *parent;
+	GtkTreeIter source_iter, target_iter, parent_iter;
+	GtkTreeViewDropPosition relative_position = position;
+
+	if (source == NULL || target == NULL || source == target ||
+	    !sakura_sidebar_can_reorder_node_to_group(source, target))
+		return FALSE;
+	parent = source->type == SAKURA_SIDEBAR_GROUP ? target->parent : target;
+	if (parent == NULL)
+		return FALSE;
+
+	sakura_workspace_begin_mutation();
+	sakura_sidebar_cancel_pending_selection();
+	if (!sakura_sidebar_get_iter(source, &source_iter) ||
+	    !sakura_sidebar_get_iter(parent, &parent_iter)) {
+		sakura_workspace_end_mutation();
+		return FALSE;
+	}
+	if (source->type == SAKURA_SIDEBAR_TASK) {
+		/* A task row owns a page subtree. Moving the existing GTK row keeps all
+		 * descendant row references valid. NULL means append within the parent. */
+		gtk_tree_store_move_before(sakura.sidebar_model, &source_iter, NULL);
+	} else if (!sakura_sidebar_get_iter(target, &target_iter)) {
+		sakura_workspace_end_mutation();
+		return FALSE;
+	} else if (relative_position == GTK_TREE_VIEW_DROP_AFTER ||
+	           relative_position == GTK_TREE_VIEW_DROP_INTO_OR_AFTER)
+		gtk_tree_store_move_after(sakura.sidebar_model, &source_iter, &target_iter);
+	else
+		gtk_tree_store_move_before(sakura.sidebar_model, &source_iter, &target_iter);
+
+	if (sakura_sidebar_get_iter(parent, &parent_iter))
+		sakura_sidebar_update_model_order_for_parent(
+		GTK_TREE_MODEL(sakura.sidebar_model), &parent_iter);
+	sakura_sidebar_save_groups();
+	sakura_workspace_mark_changed(SAKURA_WORKSPACE_CHANGE_STRUCTURE);
+	sakura_session_mark_dirty();
+	sakura_workspace_end_mutation();
+	return TRUE;
 }
 
 

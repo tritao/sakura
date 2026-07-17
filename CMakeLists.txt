@@ -181,14 +181,20 @@ IF (Python3_Interpreter_FOUND)
 		SET_TESTS_PROPERTIES (workspace-gtk PROPERTIES TIMEOUT 30)
 	ENDIF (BUILD_TESTING AND XVFB_RUN_EXECUTABLE)
 	IF (BUILD_TESTING AND XVFB_EXECUTABLE AND XDOTOOL_EXECUTABLE)
-		# Keep one packaged-process smoke test for X11 input/startup/shutdown.
-		# Detailed workspace behavior belongs to the in-process GTK target.
+		# Keep packaged-process coverage for X11 input/startup/shutdown and the
+		# dedicated drag test for real pointer-driven sidebar mutations.
 		ADD_TEST (NAME ui-smoke
 		          COMMAND ${Python3_EXECUTABLE}
 		                  ${CMAKE_SOURCE_DIR}/tests/session-stress.py
 		                  --binary $<TARGET_FILE:sakura>
 		                  --iterations 1 --no-drag)
 		SET_TESTS_PROPERTIES (ui-smoke PROPERTIES TIMEOUT 90)
+		ADD_TEST (NAME ui-drag
+		          COMMAND ${Python3_EXECUTABLE}
+		                  ${CMAKE_SOURCE_DIR}/tests/session-stress.py
+		                  --binary $<TARGET_FILE:sakura>
+		                  --iterations 1 --drag-only)
+		SET_TESTS_PROPERTIES (ui-drag PROPERTIES TIMEOUT 90)
 	ENDIF (BUILD_TESTING AND XVFB_EXECUTABLE AND XDOTOOL_EXECUTABLE)
 ENDIF (Python3_Interpreter_FOUND)
 

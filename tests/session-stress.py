@@ -46,7 +46,7 @@ def run(command, env, timeout=5, check=True):
                           timeout=timeout, check=check)
 
 
-def write_fixture(config_file, session_file):
+def write_fixture(config_file, session_file, active_group_id=None):
     config_file.write_text(
         "[sakura]\n"
         "less_questions=true\n"
@@ -66,8 +66,10 @@ def write_fixture(config_file, session_file):
         f"selected_terminal={SELECTED_TERMINAL_INDEX}",
         "sidebar_visible=true",
         "sidebar_width=300",
-        "",
     ]
+    if active_group_id is not None:
+        lines.append(f"active_group_id={active_group_id}")
+    lines.append("")
     for index, (group_id, parent, title) in enumerate(GROUPS):
         lines.extend([
             f"[Group{index}]",
@@ -441,6 +443,36 @@ def read_metadata(session_file):
     return records, selected_id
 
 
+def read_active_group_id(session_file):
+    parser = configparser.ConfigParser(interpolation=None)
+    parser.read(session_file, encoding="utf-8")
+    return parser.get("Session", "active_group_id", fallback="root")
+
+
+def read_group_orders(session_file):
+    parser = configparser.ConfigParser(interpolation=None)
+    parser.read(session_file, encoding="utf-8")
+    count = parser.getint("Session", "group_count", fallback=0)
+    orders = {}
+    for index in range(count):
+        section = f"Group{index}"
+        group_id = parser.get(section, "id")
+        orders[group_id] = parser.getint(section, "order", fallback=index)
+    return orders
+
+
+def read_task_orders(session_file):
+    parser = configparser.ConfigParser(interpolation=None)
+    parser.read(session_file, encoding="utf-8")
+    count = parser.getint("Session", "task_count", fallback=0)
+    orders = {}
+    for index in range(count):
+        section = f"Task{index}"
+        task_id = parser.get(section, "id")
+        orders[task_id] = parser.getint(section, "order", fallback=index)
+    return orders
+
+
 def assert_no_stale_gobject_pointer_criticals(log_file):
     """Catch stale Sakura widget pointers without flagging Xvfb teardown noise."""
     if not log_file.is_file():
@@ -654,8 +686,9 @@ def session_has_terminal_ids(session_file):
                for index in range(count))
 
 
-def drag_terminal_into_group(window, rows, source_row, target_row, env, row_top,
-                             group_row_height, terminal_row_height, sidebar_width):
+def drag_sidebar_row(window, rows, source_row, target_row, env, row_top,
+                     group_row_height, terminal_row_height, sidebar_width,
+                     target_edge=None):
     window_x, window_y, _, _ = window_geometry(window, env)
     # Selection changes can scroll the tree to the active terminal.  Return to
     # the top so our model-to-pixel mapping is deterministic.
@@ -677,6 +710,12 @@ def drag_terminal_into_group(window, rows, source_row, target_row, env, row_top,
 
     source_y = row_y(source_row)
     target_y = row_y(target_row)
+    if target_edge == "before":
+        target_y -= (group_row_height if target_row[0] == "group"
+                     else terminal_row_height) // 2 - 3
+    elif target_edge == "after":
+        target_y += (group_row_height if target_row[0] == "group"
+                     else terminal_row_height) // 2 - 3
     if os.environ.get("SAKURA_STRESS_VERBOSE"):
         print(f"drag rows {source_row[1]} -> {target_row[1]} at "
               f"({source_x},{source_y}) -> ({target_x},{target_y})")
@@ -691,6 +730,206 @@ def drag_terminal_into_group(window, rows, source_row, target_row, env, row_top,
         time.sleep(0.08)
     time.sleep(0.25)
     run(["xdotool", "mouseup", "1"], env)
+
+
+def drag_terminal_into_group(window, rows, source_row, target_row, env, row_top,
+                             group_row_height, terminal_row_height, sidebar_width):
+    drag_sidebar_row(window, rows, source_row, target_row, env, row_top,
+                     group_row_height, terminal_row_height, sidebar_width)
+
+
+def terminal_parent(value, terminal_id):
+    for index, candidate in enumerate(value[2]):
+        if candidate == terminal_id:
+            return value[1][index]
+    raise AssertionError(f"terminal {terminal_id} is missing from the session")
+
+
+def visual_rows_for_session(value):
+    return [
+        (kind, value[2][item] if kind == "page" else item)
+        for kind, item in visible_rows(value[0], value[1])
+    ]
+
+
+def visual_group_depth(groups, group_id):
+    depth = 0
+    seen = set()
+    while group_id != "root":
+        if group_id in seen or group_id not in groups:
+            raise AssertionError(f"invalid group hierarchy at {group_id}")
+        seen.add(group_id)
+        group_id = groups[group_id]
+        depth += 1
+    return depth
+
+
+def visual_row_depth(row, groups, terminal_parents):
+    if row[0] == "group":
+        return visual_group_depth(groups, row[1])
+    return visual_group_depth(groups, terminal_parents[row[1]]) + 1
+
+
+def visual_rows_after_page_move(rows, value, source_id, target_group):
+    terminal_parents = {
+        terminal_id: value[1][index]
+        for index, terminal_id in enumerate(value[2])
+    }
+    rows.remove(("page", source_id))
+    target_index = rows.index(("group", target_group))
+    target_depth = visual_group_depth(value[0], target_group)
+    insert_index = target_index + 1
+    while (insert_index < len(rows) and
+           visual_row_depth(rows[insert_index], value[0], terminal_parents) >
+           target_depth):
+        insert_index += 1
+    rows.insert(insert_index, ("page", source_id))
+
+
+def run_drag_regression_case(binary, config_file, session_file, env, log_file):
+    """Exercise nested-group page moves and verify scope after each drag."""
+    write_fixture(config_file, session_file, active_group_id="group-c")
+    process, window = launch_sakura(binary, config_file, env, log_file)
+    source_id = "stress-terminal-01"
+    steps = [
+        ("group-b", "group-a"),
+        ("group-a", "group-c"),
+        ("group-c", "group-b"),
+    ]
+    try:
+        current = wait_for_session(
+            session_file,
+            lambda value: terminal_parent(value, source_id) == "group-b",
+        )
+        expected_groups = dict(current[0])
+        visual_rows = visual_rows_for_session(current)
+        for expected_source, target_group in steps:
+            actual_source = terminal_parent(current, source_id)
+            if actual_source != expected_source:
+                raise AssertionError(
+                    f"drag precondition failed: {source_id} is in {actual_source}, "
+                    f"expected {expected_source}"
+                )
+
+            source_row = ("page", visual_rows.index(("page", source_id)))
+            target_row = ("group", visual_rows.index(("group", target_group)))
+            drag_terminal_into_group(
+                window, visual_rows, source_row, target_row, env, 73, 25, 41, 300,
+            )
+
+            current = wait_for_session(
+                session_file,
+                lambda value: terminal_parent(value, source_id) == target_group,
+            )
+            if current[0] != expected_groups:
+                raise AssertionError("group model changed during page drag")
+            visual_rows_after_page_move(visual_rows, current, source_id, target_group)
+
+            # Selecting the moved page must make its owning group the active
+            # scope; otherwise the tab bar can retain the previous group.
+            sidebar_click_row(window, env, visual_rows,
+                              visual_rows.index(("page", source_id)), 1)
+            wait_for_session(
+                session_file,
+                lambda value: terminal_parent(value, source_id) == target_group and
+                read_active_group_id(session_file) == target_group and
+                read_metadata(session_file)[1] == source_id,
+            )
+
+        # Reorder two top-level groups through the sidebar's explicit reorder
+        # handler, keeping both groups under root while exercising persisted
+        # sibling order.
+        source_row = ("group", visual_rows.index(("group", "group-c")))
+        target_row = ("group", visual_rows.index(("group", "group-e")))
+        initial_group_orders = read_group_orders(session_file)
+        drag_sidebar_row(
+            window, visual_rows, source_row, target_row, env, 73, 25, 41, 300,
+            target_edge="after",
+        )
+        current = wait_for_session(
+            session_file,
+            lambda value: terminal_parent(value, source_id) == "group-b" and
+            read_group_orders(session_file) != initial_group_orders,
+        )
+        final_group_orders = read_group_orders(session_file)
+
+        close_window(process, window, env)
+        process = None
+        restored = read_session(session_file)
+        if terminal_parent(restored, source_id) != "group-b":
+            raise AssertionError("final dragged parent was not persisted")
+        if read_group_orders(session_file) != final_group_orders:
+            raise AssertionError("group reorder was not persisted")
+
+        # A second launch proves the persisted parent survives restore, not just
+        # the in-memory projection.
+        process, window = launch_sakura(binary, config_file, env, log_file)
+        restored = wait_for_session(
+            session_file,
+            lambda value: terminal_parent(value, source_id) == "group-b",
+        )
+        if restored[0].get("group-b") != "group-a":
+            raise AssertionError("nested group parent changed during drag restore")
+        if read_group_orders(session_file) != final_group_orders:
+            raise AssertionError("group reorder changed during restore")
+        close_window(process, window, env)
+        process = None
+        assert_no_stale_gobject_pointer_criticals(log_file)
+    except Exception:
+        if process is not None and process.poll() is None:
+            process.kill()
+            process.wait(timeout=3)
+        raise
+
+
+def run_task_drag_reorder_case(binary, config_file, session_file, env, log_file):
+    """Verify dragging a task preserves its page subtree and sibling order."""
+    write_task_fixture(config_file, session_file)
+    process, window = launch_sakura(binary, config_file, env, log_file)
+    rows = [
+        ("group", "root"),
+        ("group", "group-a"),
+        ("task", "task-a"),
+        ("page", "task-page-a"),
+        ("task", "task-empty"),
+        ("group", "group-b"),
+        ("task", "task-b"),
+        ("page", "task-page-b"),
+    ]
+    try:
+        wait_for_task_state(
+            session_file,
+            lambda value: value[0]["task-a"]["parent"] == "group-a",
+        )
+        initial_orders = read_task_orders(session_file)
+        drag_sidebar_row(
+            window, rows, ("task", 2), ("group", 1), env, 73, 25, 41, 300,
+        )
+        wait_for_session(
+            session_file,
+            lambda value: value[1][value[2].index("task-terminal-a")] == "task-a" and
+            read_task_orders(session_file) != initial_orders,
+        )
+        task_state = read_task_state(session_file)
+        if task_state[0]["task-a"]["parent"] != "group-a":
+            raise AssertionError("task reorder changed task ownership")
+
+        close_window(process, window, env)
+        process = None
+        final_orders = read_task_orders(session_file)
+        process, window = launch_sakura(binary, config_file, env, log_file)
+        wait_for_task_state(
+            session_file,
+            lambda value: value[0]["task-a"]["parent"] == "group-a" and
+            read_task_orders(session_file) == final_orders,
+        )
+        close_window(process, window, env)
+        process = None
+    except Exception:
+        if process is not None and process.poll() is None:
+            process.kill()
+            process.wait(timeout=3)
+        raise
 
 
 def close_window(process, window, env):
@@ -1080,6 +1319,8 @@ def main():
                         help="largest visible row index used for automated drags")
     parser.add_argument("--no-drag", action="store_true",
                         help="only stress restore/save cycles")
+    parser.add_argument("--drag-only", action="store_true",
+                        help="run the deterministic nested-group drag regression")
     parser.add_argument("--screenshot", metavar="PATH",
                         help="capture the sidebar window before dragging")
     args = parser.parse_args()
@@ -1135,6 +1376,13 @@ def main():
         expected_terminals = fixture_terminals
         expected_terminal_ids = fixture_terminal_ids
         try:
+            if args.drag_only:
+                run_drag_regression_case(binary, config_file, session_file,
+                                         env, log_file)
+                run_task_drag_reorder_case(binary, config_file, session_file,
+                                            env, log_file)
+                print("deterministic drag regressions: passed")
+                return
             for iteration in range(args.iterations):
                 log_handle = log_file.open("a", encoding="utf-8")
                 app = subprocess.Popen(
