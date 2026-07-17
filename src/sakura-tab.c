@@ -821,15 +821,15 @@ sakura_tab_delete_pane(SakuraTab *tab)
 			sakura_tab_delete_page(page_index);
 		return;
 	}
-	if (sakura.workspace_mutating)
+	if (sakura_workspace_is_mutating())
 		return;
-	sakura.workspace_mutating = TRUE;
+	sakura_workspace_begin_mutation();
 	/* Removing the leaf can destroy its VTE. Disconnect while the widget is
 	 * still alive, before GTK reparents/removes the containing paned widget. */
 	sakura_tab_disconnect_exit_handler(tab);
 	if (!sakura_layout_remove_leaf_widgets(tab->layout_leaf))
 	{
-		sakura.workspace_mutating = FALSE;
+		sakura_workspace_end_mutation();
 		return;
 	}
 
@@ -857,7 +857,7 @@ sakura_tab_delete_pane(SakuraTab *tab)
 	sakura_set_size();
 	sakura_session_mark_dirty();
 	sakura_session_flush();
-	sakura.workspace_mutating = FALSE;
+	sakura_workspace_end_mutation();
 }
 
 
@@ -880,9 +880,9 @@ sakura_tab_delete_page(gint page)
 	sk_tab = sakura_tab_at_page(page);
 	if (sk_tab == NULL)
 		return FALSE;
-	if (sakura.workspace_mutating)
+	if (sakura_workspace_is_mutating())
 		return FALSE;
-	sakura.workspace_mutating = TRUE;
+	sakura_workspace_begin_mutation();
 	tab_page = sk_tab->page;
 	page_panes = tab_page != NULL && tab_page->panes != NULL
 	           ? g_ptr_array_ref(tab_page->panes) : NULL;
@@ -898,7 +898,7 @@ sakura_tab_delete_page(gint page)
 	}
 	if (tab_page != NULL && !sakura_notebook_detach_page(tab_page)) {
 		g_clear_pointer(&page_panes, g_ptr_array_unref);
-		sakura.workspace_mutating = FALSE;
+		sakura_workspace_end_mutation();
 		return FALSE;
 	}
 	if (removed_active)
@@ -938,7 +938,7 @@ sakura_tab_delete_page(gint page)
 	/* Commit the deletion before selecting a replacement. This lets the normal
 	 * notebook callback run for the replacement page and keeps the fallback
 	 * scoped to the group/task that owned the deleted page. */
-	sakura.workspace_mutating = FALSE;
+	sakura_workspace_end_mutation();
 	if (removed_active)
 		sakura_select_scope_default();
 	else
@@ -1715,7 +1715,7 @@ sakura_child_exited_cb (GtkWidget *widget, void *data)
 	SakuraTab *tab;
 
 	(void)data;
-	if (sakura.workspace_mutating)
+	if (sakura_workspace_is_mutating())
 		return;
 	tab = sakura_tab_for_vte(VTE_TERMINAL(widget));
 	page = sakura_page_for_tab(tab);

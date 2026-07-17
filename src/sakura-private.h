@@ -98,6 +98,15 @@ typedef enum {
 	SAKURA_SIDEBAR_TERMINAL
 } SakuraSidebarNodeType;
 
+/* Selection requests are coalesced until GTK has finished the current
+ * workspace operation. Higher-priority requests must not be overwritten by
+ * incidental synchronization from a notebook or sidebar callback. */
+typedef enum {
+	SAKURA_SIDEBAR_SELECTION_SYNC,
+	SAKURA_SIDEBAR_SELECTION_RESTORE,
+	SAKURA_SIDEBAR_SELECTION_CREATION
+} SakuraSidebarSelectionReason;
+
 typedef enum {
 	SAKURA_TASK_READY,
 	SAKURA_TASK_WORKING,
@@ -151,6 +160,7 @@ struct sakura_app {
 	SakuraSidebarNode *sidebar_pending_insert_after;
 	gboolean sidebar_syncing;
 	GtkTreeRowReference *sidebar_pending_selection;
+	SakuraSidebarSelectionReason sidebar_pending_selection_reason;
 	guint sidebar_selection_source_id;
 	gboolean sidebar_visible;
 	gint sidebar_width;
@@ -219,7 +229,7 @@ struct sakura_app {
 	bool session_ready;
 	bool session_shutting_down;
 	bool session_restore_failed;
-	bool workspace_mutating;
+	guint workspace_mutation_depth;
 	bool session_dirty;
 	bool session_new_window;
 	guint session_save_source_id;
@@ -687,8 +697,13 @@ SakuraSidebarNode *sakura_sidebar_selected_node(void);
 SakuraSidebarNode *sakura_sidebar_selected_group(void);
 void sakura_sidebar_remove_tab(SakuraTab *tab);
 void sakura_sidebar_queue_select_node(SakuraSidebarNode *node);
+void sakura_sidebar_queue_select_node_with_reason(
+	SakuraSidebarNode *node, SakuraSidebarSelectionReason reason);
 void sakura_sidebar_select_created_tab(SakuraTab *tab);
 void sakura_sidebar_cancel_pending_selection(void);
+void sakura_workspace_begin_mutation(void);
+void sakura_workspace_end_mutation(void);
+gboolean sakura_workspace_is_mutating(void);
 void sakura_sidebar_set_node_row(SakuraSidebarNode *node, GtkTreeIter *iter);
 const gchar *sakura_task_status_label(SakuraTaskStatus status);
 const gchar *sakura_task_status_symbol(SakuraTaskStatus status);

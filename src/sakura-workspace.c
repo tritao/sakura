@@ -777,6 +777,7 @@ sakura_select_tab (struct sakura_tab *sk_tab, gboolean focus)
 {
 	gint page, current_page;
 	struct sakura_sidebar_node *scope;
+	SakuraSidebarSelectionReason selection_reason;
 
 	if (sk_tab == NULL || sk_tab->hbox == NULL || sakura.notebook == NULL)
 		return;
@@ -798,17 +799,45 @@ sakura_select_tab (struct sakura_tab *sk_tab, gboolean focus)
 	current_page = gtk_notebook_get_current_page(GTK_NOTEBOOK(sakura.notebook));
 	if (current_page != page)
 		gtk_notebook_set_current_page(GTK_NOTEBOOK(sakura.notebook), page);
-	else
+	else {
+		selection_reason = sakura.session_restoring
+		                 ? SAKURA_SIDEBAR_SELECTION_RESTORE
+		                 : SAKURA_SIDEBAR_SELECTION_SYNC;
 		if (sk_tab->page != NULL && sk_tab->page->panes != NULL &&
 		    sk_tab->page->panes->len <= 1)
-			sakura_sidebar_queue_select_node(sk_tab->page->sidebar_node);
+			sakura_sidebar_queue_select_node_with_reason(
+				sk_tab->page->sidebar_node, selection_reason);
 		else
-			sakura_sidebar_queue_select_node(sk_tab->sidebar_node);
+			sakura_sidebar_queue_select_node_with_reason(
+				sk_tab->sidebar_node, selection_reason);
+	}
 
 	sakura_tab_bar_refresh();
 	sakura_sidebar_update_page(sk_tab->page);
 	if (focus)
 		sakura_focus_tab(sk_tab);
+}
+
+
+void
+sakura_workspace_begin_mutation(void)
+{
+	sakura.workspace_mutation_depth++;
+}
+
+
+void
+sakura_workspace_end_mutation(void)
+{
+	if (sakura.workspace_mutation_depth > 0)
+		sakura.workspace_mutation_depth--;
+}
+
+
+gboolean
+sakura_workspace_is_mutating(void)
+{
+	return sakura.workspace_mutation_depth > 0;
 }
 
 
@@ -1027,6 +1056,10 @@ sakura_sidebar_selection_changed_cb (GtkTreeSelection *selection, void *data)
 
 	if (sakura.sidebar_syncing)
 		return;
+	/* A real sidebar interaction is authoritative. It must invalidate any
+	 * lower-level request queued by a notebook or creation callback before we
+	 * interpret the newly selected node. */
+	sakura_sidebar_cancel_pending_selection();
 
 	node = sakura_sidebar_selected_node();
 	if (node == NULL)
@@ -3415,6 +3448,7 @@ sakura_switch_page_cb (GtkWidget *widget, GtkWidget *widget_page,
 {
 	SakuraPage *page;
 	SakuraTab *tab;
+	SakuraSidebarSelectionReason selection_reason;
 
 	(void)widget;
 	(void)widget_page;
@@ -3422,7 +3456,7 @@ sakura_switch_page_cb (GtkWidget *widget, GtkWidget *widget_page,
 	/* Page removal is a transaction. GTK may emit switch-page while the old
 	 * page is being detached; the delete path performs the authoritative
 	 * group-aware selection once the model is consistent again. */
-	if (sakura.workspace_mutating)
+	if (sakura_workspace_is_mutating())
 		return;
 	/* Don't use gtk_notebook_get_current_page here; GTK still reports the
 	 * previous page while this callback is dispatched. */
@@ -3439,10 +3473,15 @@ sakura_switch_page_cb (GtkWidget *widget, GtkWidget *widget_page,
 	/* A notebook switch can be triggered while a sidebar click is still being
 	 * dispatched. Queue the tree update so the original click's target wins
 	 * over any intermediate scope/fallback switch. */
+	selection_reason = sakura.session_restoring
+	                 ? SAKURA_SIDEBAR_SELECTION_RESTORE
+	                 : SAKURA_SIDEBAR_SELECTION_SYNC;
 	if (tab->page != NULL && tab->page->panes != NULL && tab->page->panes->len <= 1)
-		sakura_sidebar_queue_select_node(tab->page->sidebar_node);
+		sakura_sidebar_queue_select_node_with_reason(
+			tab->page->sidebar_node, selection_reason);
 	else
-		sakura_sidebar_queue_select_node(tab->sidebar_node);
+		sakura_sidebar_queue_select_node_with_reason(
+			tab->sidebar_node, selection_reason);
 	sakura_sidebar_update_page(tab->page);
 	sakura_codex_sync_name(tab);
 	sakura_update_geometry_hints();
@@ -4109,6 +4148,10 @@ sakura_sidebar_select_created_tab(SakuraTab *tab)
 	 * while the new page and its sidebar rows were being assembled. */
 	sakura_sidebar_cancel_pending_selection();
 	sakura_sidebar_select_node_now(node);
+	/* The active-tab creation branch only queues the tree selection. Refresh
+	 * the scoped surface now that the tab belongs to the tree so an empty group
+	 * immediately swaps its placeholder for the terminal notebook. */
+	sakura_tab_bar_refresh();
 }
 
 
@@ -4123,6 +4166,7 @@ sakura_sidebar_cancel_pending_selection(void)
 		gtk_tree_row_reference_free(sakura.sidebar_pending_selection);
 		sakura.sidebar_pending_selection = NULL;
 	}
+	sakura.sidebar_pending_selection_reason = SAKURA_SIDEBAR_SELECTION_SYNC;
 }
 
 
@@ -4157,11 +4201,15 @@ sakura_sidebar_select_pending_cb(gpointer data)
 
 
 void
-sakura_sidebar_queue_select_node(SakuraSidebarNode *node)
+sakura_sidebar_queue_select_node_with_reason(SakuraSidebarNode *node,
+                                             SakuraSidebarSelectionReason reason)
 {
 	GtkTreePath *path;
 
 	if (sakura.sidebar_selection == NULL || node == NULL || node->row == NULL)
+		return;
+	if (sakura.sidebar_pending_selection != NULL &&
+	    reason < sakura.sidebar_pending_selection_reason)
 		return;
 
 	path = gtk_tree_row_reference_get_path(node->row);
@@ -4171,6 +4219,15 @@ sakura_sidebar_queue_select_node(SakuraSidebarNode *node)
 	sakura_sidebar_cancel_pending_selection();
 	sakura.sidebar_pending_selection = gtk_tree_row_reference_new(
 		GTK_TREE_MODEL(sakura.sidebar_model), path);
+	sakura.sidebar_pending_selection_reason = reason;
 	sakura.sidebar_selection_source_id = g_idle_add(sakura_sidebar_select_pending_cb, NULL);
 	gtk_tree_path_free(path);
+}
+
+
+void
+sakura_sidebar_queue_select_node(SakuraSidebarNode *node)
+{
+	sakura_sidebar_queue_select_node_with_reason(
+		node, SAKURA_SIDEBAR_SELECTION_SYNC);
 }

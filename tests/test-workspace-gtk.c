@@ -794,17 +794,96 @@ test_sidebar_selects_created_tab(void)
 {
 	GtkTreeModel *model = NULL;
 	GtkTreeIter iter;
+	SakuraSidebarNode *group;
 	SakuraSidebarNode *node = NULL;
+	SakuraPage *page;
 	SakuraTab *tab;
 
 	setup_workspace();
 	setup_sidebar_fixture();
-	tab = sakura_page_at_page(1)->active_tab;
+	group = test_sidebar_add_group("group-created", "Created", sakura.sidebar_root);
+	page = sakura_page_at_page(1);
+	g_assert_true(sakura_sidebar_move_page_to_group(page, group));
+	sakura.active_group_scope = group;
+	tab = page->active_tab;
+
+	/* Reproduce the state immediately before the first terminal appears in an
+	 * empty group. Selection used to update the tree without refreshing these
+	 * main-pane widgets, leaving the empty placeholder on screen. */
+	sakura.tab_bar = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
+	sakura.tab_bar_scope_label = gtk_label_new("");
+	sakura.tab_bar_scrolled = gtk_scrolled_window_new(NULL, NULL);
+	sakura.tab_bar_shell = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
+	sakura.tab_bar_empty = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
+	gtk_widget_hide(sakura.notebook);
+	gtk_widget_show(sakura.tab_bar_empty);
+
 	sakura_sidebar_select_created_tab(tab);
 	g_assert_true(gtk_tree_selection_get_selected(sakura.sidebar_selection,
 	                                               &model, &iter));
 	gtk_tree_model_get(model, &iter, SAKURA_SIDEBAR_COLUMN_NODE, &node, -1);
 	g_assert_true(node == tab->page->sidebar_node);
+	g_assert_cmpuint(sakura_tab_bar_visible_count(), ==, 1);
+	g_assert_true(gtk_widget_get_visible(sakura.notebook));
+	g_assert_false(gtk_widget_get_visible(sakura.tab_bar_empty));
+
+	gtk_widget_destroy(sakura.tab_bar);
+	gtk_widget_destroy(sakura.tab_bar_scope_label);
+	gtk_widget_destroy(sakura.tab_bar_scrolled);
+	gtk_widget_destroy(sakura.tab_bar_shell);
+	gtk_widget_destroy(sakura.tab_bar_empty);
+	sakura.tab_bar = NULL;
+	sakura.tab_bar_scope_label = NULL;
+	sakura.tab_bar_scrolled = NULL;
+	sakura.tab_bar_shell = NULL;
+	sakura.tab_bar_empty = NULL;
+	sakura.active_group_scope = sakura.sidebar_root;
+	g_assert_true(sakura_sidebar_move_page_to_group(page, sakura.sidebar_root));
+	test_sidebar_remove_group(group);
+	teardown_workspace();
+}
+
+
+static void
+test_sidebar_selection_priority(void)
+{
+	SakuraPage *page_a, *page_b, *page_c;
+	GtkTreeIter iter;
+	GtkTreePath *path;
+
+	setup_workspace();
+	setup_sidebar_fixture();
+	g_signal_connect(sakura.sidebar_selection, "changed",
+	                 G_CALLBACK(sakura_sidebar_selection_changed_cb), NULL);
+	page_a = sakura_page_at_page(0);
+	page_b = sakura_page_at_page(1);
+	page_c = sakura_page_at_page(2);
+
+	/* Notebook synchronization can produce several requests while a page is
+	 * being created or restored. The authoritative request must survive the
+	 * later, lower-priority sync noise. */
+	sakura_sidebar_queue_select_node_with_reason(
+		page_a->sidebar_node, SAKURA_SIDEBAR_SELECTION_SYNC);
+	sakura_sidebar_queue_select_node_with_reason(
+		page_b->sidebar_node, SAKURA_SIDEBAR_SELECTION_CREATION);
+	sakura_sidebar_queue_select_node_with_reason(
+		page_c->sidebar_node, SAKURA_SIDEBAR_SELECTION_SYNC);
+	while (g_main_context_pending(NULL))
+		g_main_context_iteration(NULL, FALSE);
+
+	g_assert_true(sakura_sidebar_selected_node() == page_b->sidebar_node);
+
+	/* A real user selection cancels an internal request, even when that
+	 * request has the higher internal priority. */
+	sakura_sidebar_queue_select_node_with_reason(
+		page_a->sidebar_node, SAKURA_SIDEBAR_SELECTION_CREATION);
+	g_assert_true(sakura_sidebar_get_iter(page_c->sidebar_node, &iter));
+	path = gtk_tree_model_get_path(GTK_TREE_MODEL(sakura.sidebar_model), &iter);
+	gtk_tree_selection_select_path(sakura.sidebar_selection, path);
+	gtk_tree_path_free(path);
+	while (g_main_context_pending(NULL))
+		g_main_context_iteration(NULL, FALSE);
+	g_assert_true(sakura_sidebar_selected_node() == page_c->sidebar_node);
 	teardown_workspace();
 }
 
@@ -1180,6 +1259,8 @@ main(int argc, char **argv)
 	                test_sidebar_pulses_nested_rows);
 	g_test_add_func("/workspace/sidebar-selects-created-tab",
 	                test_sidebar_selects_created_tab);
+	g_test_add_func("/workspace/sidebar-selection-priority",
+	                test_sidebar_selection_priority);
 	g_test_add_func("/workspace/close-active-page-preserves-group",
 	                test_close_active_page_preserves_group_scope);
 	g_test_add_func("/workspace/sidebar-task-owns-page",
