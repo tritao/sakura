@@ -791,8 +791,15 @@ sakura_select_tab (struct sakura_tab *sk_tab, gboolean focus)
 		return;
 
 	if (!sakura_tab_is_in_active_scope(sk_tab)) {
-		scope = sk_tab->sidebar_node != NULL && sk_tab->sidebar_node->parent != NULL
-		      ? sk_tab->sidebar_node->parent : sakura.sidebar_root;
+		/* A page owned by a task has the task node as its immediate parent.
+		 * The tab strip is scoped by groups, so always walk to the owning
+		 * group before changing scope. Selecting a tab also makes its task
+		 * context authoritative when the previous context filtered it out. */
+		if (sk_tab->page != NULL)
+			sakura.active_task = sk_tab->page->task;
+		scope = sk_tab->sidebar_node != NULL
+		      ? sakura_sidebar_group_ancestor(sk_tab->sidebar_node)
+		      : sakura.sidebar_root;
 		sakura_sidebar_set_scope(scope);
 	}
 
@@ -1100,7 +1107,11 @@ sakura_sidebar_selection_changed_cb (GtkTreeSelection *selection, void *data)
 {
 	struct sakura_sidebar_node *node;
 
-	if (sakura.sidebar_syncing)
+	/* GTK may select a neighboring row automatically when a model row is
+	 * removed. That selection is an implementation detail of the mutation,
+	 * not a user intent; the operation will select its authoritative result
+	 * after the model is consistent again. */
+	if (sakura.sidebar_syncing || sakura_workspace_is_mutating())
 		return;
 	/* A real sidebar interaction is authoritative. It must invalidate any
 	 * lower-level request queued by a notebook or creation callback before we
@@ -1182,9 +1193,11 @@ static void
 sakura_sidebar_prepare_context (struct sakura_sidebar_node *node)
 {
 	struct sakura_sidebar_node *scope;
+	SakuraTask *previous_task;
 
 	if (node == NULL)
 		node = sakura.sidebar_root;
+	previous_task = sakura.active_task;
 	if (node->type == SAKURA_SIDEBAR_TASK)
 		sakura.active_task = node->task;
 	else if (node->type == SAKURA_SIDEBAR_PAGE)
@@ -1205,12 +1218,19 @@ sakura_sidebar_prepare_context (struct sakura_sidebar_node *node)
 	if (sakura.active_group_scope != scope) {
 		sakura_sidebar_set_scope(scope);
 		sakura_select_scope_default();
+	} else if (node->type == SAKURA_SIDEBAR_TASK &&
+	           previous_task != sakura.active_task) {
+		/* Switching task context must also switch the task-filtered tab view,
+		 * even when both tasks live in the same group. */
+		sakura_select_scope_default();
 	}
 	if (node->type == SAKURA_SIDEBAR_TERMINAL && node->tab != NULL) {
 		sakura_select_tab(node->tab, FALSE);
 	} else if (node->type == SAKURA_SIDEBAR_PAGE) {
 		sakura_select_tab(sakura_sidebar_page_active_tab(node->page), FALSE);
 	}
+	if (previous_task != sakura.active_task)
+		sakura_workspace_mark_changed(SAKURA_WORKSPACE_CHANGE_SELECTION);
 }
 
 
@@ -1422,16 +1442,20 @@ sakura_sidebar_task_status_cb(GtkWidget *widget, void *data)
 	SakuraTask *task = data;
 	SakuraTaskStatus status;
 
-	if (task == NULL)
+	if (task == NULL || task->sidebar_node == NULL)
 		return;
 	status = GPOINTER_TO_INT(g_object_get_data(G_OBJECT(widget),
 	                                           "sakura-task-status"));
 	if (status < SAKURA_TASK_READY || status > SAKURA_TASK_DONE)
 		return;
+	sakura_workspace_begin_mutation();
+	sakura_sidebar_prepare_context(task->sidebar_node);
 	task->status = status;
 	sakura_task_update_row(task);
-	sakura.active_task = task;
+	sakura_workspace_mark_changed(SAKURA_WORKSPACE_CHANGE_METADATA |
+	                              SAKURA_WORKSPACE_CHANGE_SELECTION);
 	sakura_session_mark_dirty();
+	sakura_workspace_end_mutation();
 }
 
 
@@ -2118,10 +2142,13 @@ sakura_sidebar_rename_task_cb(GtkWidget *widget, void *data)
 	if (gtk_dialog_run(GTK_DIALOG(dialog)) == GTK_RESPONSE_ACCEPT) {
 		title = gtk_entry_get_text(GTK_ENTRY(entry));
 		if (title[0] != '\0') {
+			sakura_workspace_begin_mutation();
 			g_free(task->title);
 			task->title = g_strdup(title);
 			sakura_task_update_row(task);
+			sakura_workspace_mark_changed(SAKURA_WORKSPACE_CHANGE_METADATA);
 			sakura_session_mark_dirty();
+			sakura_workspace_end_mutation();
 		}
 	}
 	gtk_widget_destroy(dialog);
@@ -2133,6 +2160,7 @@ sakura_sidebar_delete_task_cb(GtkWidget *widget, void *data)
 {
 	SakuraTask *task = data;
 	GtkTreeIter iter;
+	gboolean was_active_task;
 
 	(void)widget;
 	if (task == NULL || task->sidebar_node == NULL ||
@@ -2147,13 +2175,21 @@ sakura_sidebar_delete_task_cb(GtkWidget *widget, void *data)
 		gtk_widget_destroy(dialog);
 		return;
 	}
+	sakura_workspace_begin_mutation();
+	sakura_sidebar_cancel_pending_selection();
+	was_active_task = sakura.active_task == task;
 	sakura_sidebar_remove_node_row(task->sidebar_node);
-	if (sakura.active_task == task)
+	if (was_active_task)
 		sakura.active_task = NULL;
 	sakura_sidebar_free_node(task->sidebar_node);
 	task->sidebar_node = NULL;
 	g_ptr_array_remove(sakura.tasks, task);
+	sakura_workspace_mark_changed(SAKURA_WORKSPACE_CHANGE_STRUCTURE |
+	                              SAKURA_WORKSPACE_CHANGE_SELECTION);
 	sakura_session_mark_dirty();
+	sakura_workspace_end_mutation();
+	if (was_active_task)
+		sakura_select_scope_default();
 }
 
 
@@ -2224,9 +2260,10 @@ sakura_sidebar_task_start_cb(GtkWidget *widget, void *data)
 	SakuraPage *page;
 
 	(void)widget;
-	if (task == NULL)
+	if (task == NULL || task->sidebar_node == NULL)
 		return;
-	sakura.active_task = task;
+	sakura_workspace_begin_mutation();
+	sakura_sidebar_prepare_context(task->sidebar_node);
 	task->status = SAKURA_TASK_WORKING;
 	sakura_task_update_row(task);
 	page = sakura_sidebar_first_task_page(task);
@@ -2234,7 +2271,10 @@ sakura_sidebar_task_start_cb(GtkWidget *widget, void *data)
 		sakura_select_tab(page->active_tab, TRUE);
 	else
 		sakura_new_tab_for_task(task);
+	sakura_workspace_mark_changed(SAKURA_WORKSPACE_CHANGE_METADATA |
+	                              SAKURA_WORKSPACE_CHANGE_SELECTION);
 	sakura_session_mark_dirty();
+	sakura_workspace_end_mutation();
 }
 
 

@@ -2,8 +2,8 @@
 """Stress Sakura's sidebar/session persistence through real GTK launches.
 
 The test intentionally uses a private config directory.  It seeds a nested
-workspace, moves terminals between groups with xdotool, closes Sakura through
-the window manager, and restores the result repeatedly.
+workspace, exercises task actions, moves terminals between groups with xdotool,
+closes Sakura through the window manager, and restores the result repeatedly.
 """
 
 import argparse
@@ -228,6 +228,100 @@ def write_group_close_fixture(config_file, session_file):
     )
 
 
+def write_task_fixture(config_file, session_file):
+    config_file.write_text(
+        "[sakura]\nless_questions=true\ndont_save=false\n"
+        "sidebar_visible=true\nsidebar_width=300\n",
+        encoding="utf-8",
+    )
+    session_file.write_text(
+        "[Session]\n"
+        "version=5\n"
+        "group_count=2\n"
+        "task_count=3\n"
+        "terminal_count=2\n"
+        "page_count=2\n"
+        "layout_count=2\n"
+        "selected_terminal=0\n"
+        "selected_terminal_id=task-terminal-a\n"
+        "selected_page_id=task-page-a\n"
+        "selected_task_id=task-a\n"
+        "active_group_id=group-a\n"
+        "sidebar_visible=true\n"
+        "sidebar_width=300\n\n"
+        "[Group0]\n"
+        "id=group-a\n"
+        "parent=root\n"
+        "title=Alpha\n\n"
+        "[Group1]\n"
+        "id=group-b\n"
+        "parent=root\n"
+        "title=Beta\n\n"
+        "[Task0]\n"
+        "id=task-a\n"
+        "parent=group-a\n"
+        "group=group-a\n"
+        "title=Task Alpha\n"
+        "provider=local\n"
+        "status=0\n\n"
+        "[Task1]\n"
+        "id=task-empty\n"
+        "parent=group-a\n"
+        "group=group-a\n"
+        "title=Empty Task\n"
+        "provider=local\n"
+        "status=0\n\n"
+        "[Task2]\n"
+        "id=task-b\n"
+        "parent=group-b\n"
+        "group=group-b\n"
+        "title=Task Beta\n"
+        "provider=local\n"
+        "status=0\n\n"
+        "[Page0]\n"
+        "id=task-page-a\n"
+        "parent=task-a\n"
+        "title=Task Alpha Page\n"
+        "title_set_by_user=true\n"
+        "root_layout=task-layout-a\n"
+        "active_terminal_id=task-terminal-a\n"
+        "task_id=task-a\n\n"
+        "[Page1]\n"
+        "id=task-page-b\n"
+        "parent=task-b\n"
+        "title=Task Beta Page\n"
+        "title_set_by_user=true\n"
+        "root_layout=task-layout-b\n"
+        "active_terminal_id=task-terminal-b\n"
+        "task_id=task-b\n\n"
+        "[Layout0]\n"
+        "id=task-layout-a\n"
+        "page=task-page-a\n"
+        "type=leaf\n"
+        "terminal_id=task-terminal-a\n\n"
+        "[Layout1]\n"
+        "id=task-layout-b\n"
+        "page=task-page-b\n"
+        "type=leaf\n"
+        "terminal_id=task-terminal-b\n\n"
+        "[Terminal0]\n"
+        "parent=task-a\n"
+        "cwd=/tmp\n"
+        "terminal_id=task-terminal-a\n"
+        "kind=shell\n"
+        "title_set_by_user=true\n"
+        "title=Task Alpha Terminal\n\n"
+        "[Terminal1]\n"
+        "parent=task-b\n"
+        "cwd=/tmp\n"
+        "terminal_id=task-terminal-b\n"
+        "kind=shell\n"
+        "title_set_by_user=true\n"
+        "title=Task Beta Terminal\n",
+        encoding="utf-8",
+    )
+
+
 def read_session(session_file):
     parser = configparser.ConfigParser(interpolation=None)
     parser.read(session_file, encoding="utf-8")
@@ -237,6 +331,7 @@ def read_session(session_file):
         raise AssertionError("unexpected session version")
 
     group_count = parser.getint("Session", "group_count")
+    task_count = parser.getint("Session", "task_count", fallback=0)
     terminal_count = parser.getint("Session", "terminal_count")
     groups = {}
     for index in range(group_count):
@@ -247,6 +342,16 @@ def read_session(session_file):
         if group_id in groups:
             raise AssertionError(f"duplicate group id {group_id}")
         groups[group_id] = parser.get(section, "parent")
+
+    tasks = {}
+    for index in range(task_count):
+        section = f"Task{index}"
+        if not parser.has_section(section):
+            raise AssertionError(f"missing {section}")
+        task_id = parser.get(section, "id")
+        if task_id in groups or task_id in tasks:
+            raise AssertionError(f"duplicate task id {task_id}")
+        tasks[task_id] = parser.get(section, "parent")
 
     terminals = []
     terminal_id_list = []
@@ -266,10 +371,13 @@ def read_session(session_file):
         else:
             terminal_id_list.append(None)
 
-    valid_parents = {"root", *groups}
+    valid_parents = {"root", *groups, *tasks}
     for group_id, parent in groups.items():
         if parent not in valid_parents:
             raise AssertionError(f"group {group_id} points to missing {parent}")
+    for task_id, parent in tasks.items():
+        if parent not in valid_parents:
+            raise AssertionError(f"task {task_id} points to missing {parent}")
     for index, parent in enumerate(terminals):
         if parent not in valid_parents:
             raise AssertionError(f"terminal {index} points to missing {parent}")
@@ -286,6 +394,27 @@ def read_session(session_file):
             current = groups[current]
 
     return groups, terminals, terminal_id_list
+
+
+def read_task_state(session_file):
+    parser = configparser.ConfigParser(interpolation=None)
+    parser.read(session_file, encoding="utf-8")
+    task_count = parser.getint("Session", "task_count", fallback=0)
+    tasks = {}
+    for index in range(task_count):
+        section = f"Task{index}"
+        task_id = parser.get(section, "id")
+        tasks[task_id] = {
+            "parent": parser.get(section, "parent", fallback="root"),
+            "group": parser.get(section, "group", fallback="root"),
+            "title": parser.get(section, "title", fallback=""),
+            "status": parser.getint(section, "status", fallback=0),
+        }
+    return (
+        tasks,
+        parser.get("Session", "selected_task_id", fallback=""),
+        parser.get("Session", "active_group_id", fallback="root"),
+    )
 
 
 def read_metadata(session_file):
@@ -458,6 +587,62 @@ def wait_for_session(session_file, predicate=None, timeout=10):
     if last_error:
         raise AssertionError(f"session did not become valid: {last_error}")
     raise AssertionError(f"session did not reach the expected state; last value: {last_value}")
+
+
+def wait_for_task_state(session_file, predicate, timeout=10):
+    deadline = time.monotonic() + timeout
+    last_error = None
+    last_value = None
+    while time.monotonic() < deadline:
+        try:
+            value = read_task_state(session_file)
+            last_value = value
+            if predicate(value):
+                return value
+        except (AssertionError, configparser.Error, OSError) as error:
+            last_error = error
+        time.sleep(0.1)
+    if last_error:
+        raise AssertionError(f"task state did not become valid: {last_error}")
+    raise AssertionError(
+        f"task state did not reach the expected state; last value: {last_value}"
+    )
+
+
+def sidebar_row_center(window, env, rows, row_index, row_top=73,
+                       group_row_height=25, child_row_height=41):
+    window_x, window_y, _, _ = window_geometry(window, env)
+    y = row_top
+    for row_kind, _ in rows[:row_index]:
+        y += group_row_height if row_kind == "group" else child_row_height
+    row_kind = rows[row_index][0]
+    height = group_row_height if row_kind == "group" else child_row_height
+    return window_x + 100, window_y + y + height // 2
+
+
+def sidebar_click_row(window, env, rows, row_index, button):
+    x, y = sidebar_row_center(window, env, rows, row_index)
+    # A submenu activation can leave a transient GTK menu grab alive for one
+    # event-loop turn. Escape makes the next pointer action deterministic.
+    run(["xdotool", "key", "Escape"], env, check=False)
+    run(["xdotool", "mousemove", str(x), str(y)], env)
+    time.sleep(0.15)
+    run(["xdotool", "click", str(button)], env)
+    time.sleep(0.25)
+
+
+def open_task_context_menu(window, env, rows, row_index):
+    sidebar_click_row(window, env, rows, row_index, 3)
+    run(["xdotool", "key", "Home"], env)
+
+
+def activate_task_context_item(window, env, rows, row_index, down_count):
+    """Open a task row menu and activate an item by its stable menu order."""
+    open_task_context_menu(window, env, rows, row_index)
+    for _ in range(down_count):
+        run(["xdotool", "key", "Down"], env)
+    run(["xdotool", "key", "Return"], env)
+    time.sleep(0.35)
 
 
 def session_has_terminal_ids(session_file):
@@ -670,6 +855,105 @@ def run_group_close_selection_case(binary, config_file, session_file, env, log_f
         process = None
     except Exception:
         if process is not None and process.poll() is None:
+            process.kill()
+            process.wait(timeout=3)
+        raise
+
+
+def run_task_workflow_case(binary, config_file, session_file, env, log_file):
+    """Exercise task context actions across groups and task deletion fallback."""
+    write_task_fixture(config_file, session_file)
+    process, window = launch_sakura(binary, config_file, env, log_file)
+    rows = [
+        ("group", "root"),
+        ("group", "group-a"),
+        ("task", "task-a"),
+        ("page", "task-page-a"),
+        ("task", "task-empty"),
+        ("group", "group-b"),
+        ("task", "task-b"),
+        ("page", "task-page-b"),
+    ]
+    try:
+        wait_for_task_state(
+            session_file,
+            lambda value: value[1] == "task-a" and value[2] == "group-a" and
+            value[0]["task-b"]["status"] == 0,
+        )
+        run(["xdotool", "windowfocus", "--sync", window], env)
+
+        # Set status on task B without first selecting its row. This exercises
+        # the context action's cross-group context preparation.
+        open_task_context_menu(window, env, rows, 6)
+        for _ in range(5):
+            run(["xdotool", "key", "Down"], env)
+        run(["xdotool", "key", "Right"], env)
+        run(["xdotool", "key", "End"], env)
+        run(["xdotool", "key", "Return"], env)
+        wait_for_task_state(
+            session_file,
+            lambda value: value[1] == "task-b" and value[2] == "group-b" and
+            value[0]["task-b"]["status"] == 4,
+        )
+        _, selected_id = read_metadata(session_file)
+        if selected_id != "task-terminal-b":
+            raise AssertionError(
+                f"status action selected {selected_id}, expected task-terminal-b"
+            )
+
+        # Start work on the same task through its direct context action.
+        activate_task_context_item(window, env, rows, 6, 2)
+        wait_for_task_state(
+            session_file,
+            lambda value: value[1] == "task-b" and value[2] == "group-b" and
+            value[0]["task-b"]["status"] == 1,
+        )
+
+        # Rename the active task. The persisted title proves the dialog action
+        # reached the task model; the metadata refresh keeps the scope label in
+        # sync while this task remains active.
+        activate_task_context_item(window, env, rows, 6, 6)
+        run(["xdotool", "key", "ctrl+a"], env)
+        run(["xdotool", "type", "--delay", "1", "Renamed Task Beta"], env)
+        run(["xdotool", "key", "Return"], env)
+        wait_for_task_state(
+            session_file,
+            lambda value: value[1] == "task-b" and value[2] == "group-b" and
+            value[0]["task-b"]["title"] == "Renamed Task Beta",
+        )
+
+        # Select the empty task normally, then delete it from its context menu.
+        # The task selection leaves the task-filtered scope empty, so deletion
+        # must restore the first terminal in group A rather than a stale tab.
+        sidebar_click_row(window, env, rows, 4, 1)
+        wait_for_task_state(
+            session_file,
+            lambda value: value[1] == "task-empty" and value[2] == "group-a",
+        )
+        activate_task_context_item(window, env, rows, 4, 7)
+        wait_for_task_state(
+            session_file,
+            lambda value: "task-empty" not in value[0] and
+            value[1] == "task-a" and value[2] == "group-a",
+        )
+        _, selected_id = read_metadata(session_file)
+        if selected_id != "task-terminal-a":
+            raise AssertionError(
+                f"deleting empty task selected {selected_id}, expected task-terminal-a"
+            )
+
+        # Let the authoritative post-delete sidebar selection and tab refresh
+        # finish before asking X11 to destroy the window.
+        run(["xdotool", "key", "Escape"], env, check=False)
+        time.sleep(1.0)
+        # The other smoke cases cover WM-driven clean shutdown. Terminate this
+        # process directly after the task assertions to avoid a GTK menu/X11
+        # grab race masking the workflow result and poisoning the shared Xvfb.
+        process.terminate()
+        process.wait(timeout=5)
+        process = None
+    except Exception:
+        if process.poll() is None:
             process.kill()
             process.wait(timeout=3)
         raise
@@ -936,6 +1220,8 @@ def main():
             print("create/delete lifecycle: passed")
             run_group_close_selection_case(binary, config_file, session_file, env, log_file)
             print("group-aware close selection: passed")
+            run_task_workflow_case(binary, config_file, session_file, env, log_file)
+            print("task workflow actions: passed")
             run_visible_terminal_case(binary, config_file, session_file, env, log_file)
             print("restored sidebar-to-VTE mapping: passed")
             run_failed_restore_case(binary, config_file, session_file, env, log_file)

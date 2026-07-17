@@ -980,6 +980,46 @@ test_close_active_page_preserves_group_scope(void)
 
 
 static void
+test_selecting_terminal_switches_group_scope(void)
+{
+	SakuraSidebarNode *group_a, *group_b;
+	SakuraPage *page_a, *page_b, *page_c;
+
+	setup_workspace();
+	setup_sidebar_fixture();
+	group_a = test_sidebar_add_group("group-a", "Alpha", sakura.sidebar_root);
+	group_b = test_sidebar_add_group("group-b", "Beta", sakura.sidebar_root);
+	page_a = sakura_page_at_page(0);
+	page_b = sakura_page_at_page(1);
+	page_c = sakura_page_at_page(2);
+	g_assert_true(sakura_sidebar_move_page_to_group(page_a, group_a));
+	g_assert_true(sakura_sidebar_move_page_to_group(page_b, group_b));
+	g_assert_true(sakura_sidebar_move_page_to_group(page_c, group_a));
+
+	sakura.active_group_scope = group_a;
+	sakura.active_task = NULL;
+	sakura.active_page = page_a;
+	sakura.active_tab = page_a->active_tab;
+	gtk_notebook_set_current_page(GTK_NOTEBOOK(sakura.notebook), 0);
+
+	/* Selecting a terminal in another group must select that group. Passing the
+	 * terminal's immediate page node to sakura_sidebar_set_scope() would be
+	 * normalized to the root and expose every terminal in the tab bar. */
+	sakura_select_tab(page_b->active_tab, FALSE);
+	g_assert_true(sakura.active_group_scope == group_b);
+	g_assert_null(sakura.active_task);
+	g_assert_true(sakura_tab_is_in_active_scope(page_b->active_tab));
+	g_assert_false(sakura_tab_is_in_active_scope(page_a->active_tab));
+	g_assert_false(sakura_tab_is_in_active_scope(page_c->active_tab));
+	g_assert_cmpuint(sakura_tab_bar_visible_count(), ==, 1);
+
+	test_sidebar_remove_group(group_a);
+	test_sidebar_remove_group(group_b);
+	teardown_workspace();
+}
+
+
+static void
 test_sidebar_task_owns_page(void)
 {
 	SakuraTask *task;
@@ -1313,6 +1353,8 @@ main(int argc, char **argv)
 	                test_sidebar_selection_priority);
 	g_test_add_func("/workspace/close-active-page-preserves-group",
 	                test_close_active_page_preserves_group_scope);
+	g_test_add_func("/workspace/select-terminal-switches-group-scope",
+	                test_selecting_terminal_switches_group_scope);
 	g_test_add_func("/workspace/sidebar-task-owns-page",
 	                test_sidebar_task_owns_page);
 	g_test_add_func("/workspace/sidebar-creation-parent-context",

@@ -207,6 +207,73 @@ test_session_snapshot_rejects_task_cycle(void)
 
 
 static void
+test_session_snapshot_rejects_inconsistent_task_page_selection(void)
+{
+	SakuraSessionSnapshot *source = sakura_session_snapshot_new();
+	SakuraSessionSnapshot *loaded = sakura_session_snapshot_new();
+	SakuraSessionGroupRecord *group = g_new0(SakuraSessionGroupRecord, 1);
+	SakuraSessionTaskRecord *task = g_new0(SakuraSessionTaskRecord, 1);
+	SakuraSessionPageRecord *page = g_new0(SakuraSessionPageRecord, 1);
+	SakuraSessionLayoutRecord *layout = g_new0(SakuraSessionLayoutRecord, 1);
+	SakuraSessionTabRecord *tab = g_new0(SakuraSessionTabRecord, 1);
+	GKeyFile *key_file = g_key_file_new();
+	GError *error = NULL;
+
+	group->id = g_strdup("group-a");
+	group->parent_id = g_strdup("root");
+	group->title = g_strdup("Alpha");
+	g_ptr_array_add(source->groups, group);
+	task->id = g_strdup("task-a");
+	task->parent_id = g_strdup("group-a");
+	task->group_id = g_strdup("group-a");
+	task->title = g_strdup("Task");
+	task->provider = g_strdup("local");
+	g_ptr_array_add(source->tasks, task);
+	page->id = g_strdup("page-a");
+	page->parent_id = g_strdup("task-a");
+	page->task_id = g_strdup("task-a");
+	page->root_layout_id = g_strdup("layout-a");
+	g_ptr_array_add(source->pages, page);
+	layout->id = g_strdup("layout-a");
+	layout->page_id = g_strdup("page-a");
+	layout->type = g_strdup("leaf");
+	layout->terminal_id = g_strdup("terminal-a");
+	g_ptr_array_add(source->layouts, layout);
+	tab->parent_id = g_strdup("task-a");
+	tab->terminal_id = g_strdup("terminal-a");
+	g_ptr_array_add(source->tabs, tab);
+	source->selected_task_id = g_strdup("task-a");
+	g_free(source->active_group_id);
+	source->active_group_id = g_strdup("group-a");
+
+	sakura_session_snapshot_save(source, key_file);
+	/* A task-owned page must name that task as its serialized parent. */
+	g_key_file_set_string(key_file, "Page0", "parent", "group-a");
+	g_assert_false(sakura_session_snapshot_load(key_file, loaded, &error));
+	g_assert_error(error, G_KEY_FILE_ERROR, G_KEY_FILE_ERROR_INVALID_VALUE);
+	g_clear_error(&error);
+
+	/* A page directly under a task cannot omit its task binding. */
+	g_key_file_set_string(key_file, "Page0", "parent", "task-a");
+	g_key_file_remove_key(key_file, "Page0", "task_id", NULL);
+	g_assert_false(sakura_session_snapshot_load(key_file, loaded, &error));
+	g_assert_error(error, G_KEY_FILE_ERROR, G_KEY_FILE_ERROR_INVALID_VALUE);
+	g_clear_error(&error);
+
+	/* Persisted task selection must refer to a task in the same snapshot. */
+	g_key_file_set_string(key_file, "Page0", "task_id", "task-a");
+	g_key_file_set_string(key_file, "Session", "selected_task_id", "task-missing");
+	g_assert_false(sakura_session_snapshot_load(key_file, loaded, &error));
+	g_assert_error(error, G_KEY_FILE_ERROR, G_KEY_FILE_ERROR_INVALID_VALUE);
+	g_clear_error(&error);
+
+	g_key_file_free(key_file);
+	sakura_session_snapshot_free(source);
+	sakura_session_snapshot_free(loaded);
+}
+
+
+static void
 test_session_layout_round_trip(void)
 {
 	SakuraSessionSnapshot *source = sakura_session_snapshot_new();
@@ -471,6 +538,8 @@ main(int argc, char **argv)
 	g_test_add_func("/session/snapshot/round-trip", test_session_snapshot_round_trip);
 	g_test_add_func("/session/snapshot/reject-cycle", test_session_snapshot_rejects_group_cycle);
 	g_test_add_func("/session/snapshot/reject-task-cycle", test_session_snapshot_rejects_task_cycle);
+	g_test_add_func("/session/snapshot/reject-task-page-selection-invariants",
+	                test_session_snapshot_rejects_inconsistent_task_page_selection);
 	g_test_add_func("/session/snapshot/layout-round-trip", test_session_layout_round_trip);
 	g_test_add_func("/session/snapshot/repairs-duplicate-page-ids",
 	                test_session_repairs_duplicate_page_ids);

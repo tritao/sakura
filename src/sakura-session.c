@@ -776,6 +776,25 @@ sakura_session_layout_valid(const SakuraSessionSnapshot *snapshot,
 	GHashTable *groups = g_hash_table_new(g_str_hash, g_str_equal);
 	GHashTable *tasks = g_hash_table_new(g_str_hash, g_str_equal);
 	guint index;
+	for (index = 0; index < snapshot->groups->len; index++) {
+		SakuraSessionGroupRecord *group = g_ptr_array_index(snapshot->groups, index);
+		g_hash_table_add(groups, group->id);
+	}
+	for (index = 0; index < snapshot->tasks->len; index++) {
+		SakuraSessionTaskRecord *task = g_ptr_array_index(snapshot->tasks, index);
+		g_hash_table_add(tasks, task->id);
+	}
+	if (snapshot->active_group_id != NULL &&
+	    g_strcmp0(snapshot->active_group_id, "root") != 0 &&
+	    !g_hash_table_contains(groups, snapshot->active_group_id))
+		goto invalid;
+	if (snapshot->selected_task_id != NULL && snapshot->selected_task_id[0] != '\0' &&
+	    !g_hash_table_contains(tasks, snapshot->selected_task_id))
+		goto invalid;
+
+	/* Version 4 sessions can contain terminals without the page/layout
+	 * representation introduced at the same time. Still validate the
+	 * selection IDs above, but retain compatibility with that format. */
 	if (snapshot->pages->len == 0 && snapshot->layouts->len == 0) {
 		g_hash_table_destroy(pages);
 		g_hash_table_destroy(layouts);
@@ -794,22 +813,23 @@ sakura_session_layout_valid(const SakuraSessionSnapshot *snapshot,
 			goto invalid;
 		g_hash_table_add(pages, page->id);
 	}
-	for (index = 0; index < snapshot->groups->len; index++) {
-		SakuraSessionGroupRecord *group = g_ptr_array_index(snapshot->groups, index);
-		g_hash_table_add(groups, group->id);
-	}
-	for (index = 0; index < snapshot->tasks->len; index++) {
-		SakuraSessionTaskRecord *task = g_ptr_array_index(snapshot->tasks, index);
-		g_hash_table_add(tasks, task->id);
-	}
 	for (index = 0; index < snapshot->pages->len; index++) {
 		SakuraSessionPageRecord *page = g_ptr_array_index(snapshot->pages, index);
+		gboolean has_task = page->task_id != NULL && page->task_id[0] != '\0';
+		gboolean parent_is_task = page->parent_id != NULL &&
+		                          page->parent_id[0] != '\0' &&
+		                          g_strcmp0(page->parent_id, "root") != 0 &&
+		                          g_hash_table_contains(tasks, page->parent_id);
+
 		if (page->parent_id != NULL && g_strcmp0(page->parent_id, "root") != 0 &&
 		    !g_hash_table_contains(groups, page->parent_id) &&
 		    !g_hash_table_contains(tasks, page->parent_id))
 			goto invalid;
-		if (page->task_id != NULL && page->task_id[0] != '\0' &&
-		    !g_hash_table_contains(tasks, page->task_id))
+		if (has_task && !g_hash_table_contains(tasks, page->task_id))
+			goto invalid;
+		if (has_task && g_strcmp0(page->parent_id, page->task_id) != 0)
+			goto invalid;
+		if (!has_task && parent_is_task)
 			goto invalid;
 	}
 	for (index = 0; index < snapshot->tabs->len; index++) {
