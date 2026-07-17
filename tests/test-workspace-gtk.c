@@ -1188,16 +1188,11 @@ test_task_model_survives_sidebar_projection(void)
 		snapshot->tasks, 0))->id, ==, "task-model-only");
 	sakura_session_snapshot_free(snapshot);
 
-	/* Materializing the row must move the existing page projection beneath it. */
-	node = g_new0(SakuraSidebarNode, 1);
-	node->type = SAKURA_SIDEBAR_TASK;
-	node->id = g_strdup(task->id);
-	node->title = g_strdup(task->title);
-	node->parent = sakura.sidebar_root;
-	node->task = task;
-	task->sidebar_node = node;
-	sakura_sidebar_insert_node(node);
-	sakura_task_attach_page(task, page);
+	/* Materializing the projection must move the existing page beneath the
+	 * newly-created task row without changing model ownership. */
+	sakura_sidebar_rebuild_projection();
+	node = task->sidebar_node;
+	g_assert_nonnull(node);
 	g_assert_true(page->sidebar_node->parent == node);
 	assert_workspace_consistent();
 
@@ -1254,6 +1249,77 @@ test_group_model_survives_sidebar_projection(void)
 
 	g_assert_true(sakura_sidebar_move_page_to_group(page, sakura.sidebar_root));
 	test_sidebar_remove_group(replacement);
+	teardown_workspace();
+}
+
+
+static void
+test_sidebar_rebuilds_nested_model_projection(void)
+{
+	SakuraGroup *group;
+	SakuraTask *parent_task, *child_task;
+	SakuraPage *page;
+	SakuraSessionSnapshot *snapshot;
+	SakuraSessionTaskRecord *child_record;
+
+	setup_workspace();
+	setup_sidebar_fixture();
+	sakura.tasks = g_ptr_array_new_with_free_func((GDestroyNotify)sakura_task_free);
+	group = g_new0(SakuraGroup, 1);
+	group->id = g_strdup("projection-group");
+	group->title = g_strdup("Projection group");
+	group->parent = sakura.root_group;
+	sakura.groups = g_list_append(sakura.groups, group);
+
+	parent_task = g_new0(SakuraTask, 1);
+	parent_task->id = g_strdup("projection-parent");
+	parent_task->title = g_strdup("Parent task");
+	parent_task->provider = g_strdup("local");
+	parent_task->status = SAKURA_TASK_READY;
+	parent_task->group = group;
+	child_task = g_new0(SakuraTask, 1);
+	child_task->id = g_strdup("projection-child");
+	child_task->title = g_strdup("Child task");
+	child_task->provider = g_strdup("local");
+	child_task->status = SAKURA_TASK_WORKING;
+	child_task->parent = parent_task;
+	child_task->group = group;
+	/* Deliberately reverse registry order to exercise parent-first projection. */
+	g_ptr_array_add(sakura.tasks, child_task);
+	g_ptr_array_add(sakura.tasks, parent_task);
+
+	page = sakura_page_at_page(1);
+	page->task = child_task;
+	page->group = group;
+	sakura_sidebar_rebuild_projection();
+
+	g_assert_nonnull(group->sidebar_node);
+	g_assert_nonnull(parent_task->sidebar_node);
+	g_assert_nonnull(child_task->sidebar_node);
+	g_assert_true(parent_task->sidebar_node->parent == group->sidebar_node);
+	g_assert_true(child_task->sidebar_node->parent == parent_task->sidebar_node);
+	g_assert_true(page->sidebar_node->parent == child_task->sidebar_node);
+	g_assert_true(page->sidebar_node->page == page);
+	assert_workspace_consistent();
+
+	/* Rebuilding is idempotent and must preserve the same model hierarchy. */
+	sakura_sidebar_rebuild_projection();
+	g_assert_true(parent_task->sidebar_node->parent == group->sidebar_node);
+	g_assert_true(child_task->sidebar_node->parent == parent_task->sidebar_node);
+	g_assert_true(page->sidebar_node->parent == child_task->sidebar_node);
+	assert_workspace_consistent();
+
+	snapshot = sakura_workspace_snapshot_new();
+	g_assert_cmpuint(snapshot->tasks->len, ==, 2);
+	child_record = g_ptr_array_index(snapshot->tasks, 0);
+	g_assert_cmpstr(child_record->id, ==, "projection-child");
+	g_assert_cmpstr(child_record->parent_id, ==, "projection-parent");
+	sakura_session_snapshot_free(snapshot);
+
+	page->task = NULL;
+	page->group = sakura.root_group;
+	g_ptr_array_unref(sakura.tasks);
+	sakura.tasks = NULL;
 	teardown_workspace();
 }
 
@@ -1553,6 +1619,8 @@ main(int argc, char **argv)
 	                test_task_model_survives_sidebar_projection);
 	g_test_add_func("/workspace/group-model-survives-sidebar-projection",
 	                test_group_model_survives_sidebar_projection);
+	g_test_add_func("/workspace/sidebar-rebuilds-nested-model-projection",
+	                test_sidebar_rebuilds_nested_model_projection);
 	g_test_add_func("/workspace/sidebar-creation-parent-context",
 	                test_sidebar_creation_parent_preserves_context);
 	g_test_add_func("/workspace/sidebar-move-page-parent",

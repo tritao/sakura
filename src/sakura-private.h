@@ -737,6 +737,7 @@ void sakura_sidebar_queue_select_node_with_reason(
 void sakura_sidebar_select_created_tab(SakuraTab *tab);
 void sakura_sidebar_cancel_pending_selection(void);
 void sakura_sidebar_apply_default_expansion(void);
+void sakura_sidebar_rebuild_projection(void);
 void sakura_workspace_begin_mutation(void);
 void sakura_workspace_end_mutation(void);
 gboolean sakura_workspace_is_mutating(void);
