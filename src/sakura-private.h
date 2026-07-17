@@ -25,9 +25,7 @@ typedef SakuraPage SakuraSession;
 int sakura_run(int argc, char **argv);
 typedef struct sakura_layout_node SakuraLayoutNode;
 typedef struct sakura_sidebar_node SakuraSidebarNode;
-/* Groups are still represented by sidebar nodes for now, but ownership is
- * explicit on the session/task models instead of being inferred at every use. */
-typedef SakuraSidebarNode SakuraGroup;
+typedef struct sakura_group SakuraGroup;
 typedef struct sakura_tab SakuraTab;
 typedef SakuraTab SakuraPane;
 typedef struct sakura_task SakuraTask;
@@ -172,7 +170,8 @@ struct sakura_app {
 	GtkTreeStore *sidebar_model;
 	GtkTreeSelection *sidebar_selection;
 	SakuraSidebarNode *sidebar_root;
-	GList *sidebar_groups;
+	SakuraGroup *root_group;
+	GList *groups;                  /* Model groups; sidebar rows are a view. */
 	guint sidebar_next_group_id;
 	guint sidebar_next_task_id;
 	SakuraSidebarNode *sidebar_pending_insert_after;
@@ -196,6 +195,7 @@ struct sakura_app {
 	GtkWidget *tab_bar;
 	GtkWidget *tab_bar_new_button;
 	GtkWidget *tab_bar_empty;
+	SakuraGroup *active_group;      /* Active scope in the workspace model. */
 	SakuraSidebarNode *active_group_scope;
 	SakuraTab *active_tab;          /* Active pane (legacy field name) */
 	gboolean tab_bar_refreshing;
@@ -354,13 +354,21 @@ struct sakura_sidebar_node {
 	gchar *title;
 	gchar *subtitle;
 	gchar *tooltip;
-	gchar *directory;
-	gchar *last_terminal_id;
 	SakuraSidebarNode *parent;
+	SakuraGroup *group;
 	SakuraTask *task;
 	SakuraPage *page;
 	SakuraTab *tab;
 	GtkTreeRowReference *row;
+};
+
+struct sakura_group {
+	gchar *id;
+	gchar *title;
+	gchar *directory;
+	gchar *last_terminal_id;
+	SakuraGroup *parent;
+	SakuraSidebarNode *sidebar_node; /* Current projection row, if materialized. */
 };
 
 struct sakura_task {
@@ -741,6 +749,7 @@ const gchar *sakura_task_status_color(SakuraTaskStatus status);
 SakuraTask *sakura_task_find_by_id(const gchar *id);
 SakuraGroup *sakura_group_for_task(SakuraTask *task);
 SakuraGroup *sakura_group_for_session(SakuraSession *session);
+void sakura_group_free(SakuraGroup *group);
 void sakura_task_update_row(SakuraTask *task);
 void sakura_task_attach_page(SakuraTask *task, SakuraPage *page);
 void sakura_task_detach_page(SakuraPage *page);

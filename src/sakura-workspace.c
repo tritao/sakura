@@ -19,6 +19,10 @@ static void sakura_sidebar_task_status_cb(GtkWidget *widget, void *data);
 static SakuraPage *sakura_sidebar_first_task_page(SakuraTask *task);
 
 static SakuraSidebarNode *sakura_sidebar_group_ancestor(SakuraSidebarNode *node);
+static SakuraGroup *sakura_group_for_sidebar_node(SakuraSidebarNode *node);
+static SakuraSidebarNode *sakura_sidebar_group_node(SakuraGroup *group);
+static SakuraGroup *sakura_group_new(const gchar *id, const gchar *title,
+                                     SakuraGroup *parent);
 static void sakura_sidebar_refresh_group_rows(void);
 static void sakura_sidebar_refresh_tab_rows(void);
 static void sakura_sidebar_show_page_panes(SakuraPage *page);
@@ -131,9 +135,73 @@ sakura_task_free(SakuraTask *task)
 static SakuraSidebarNode *
 sakura_sidebar_group_ancestor(SakuraSidebarNode *node)
 {
-	while (node != NULL && node->type != SAKURA_SIDEBAR_GROUP)
+	return sakura_sidebar_group_node(sakura_group_for_sidebar_node(node));
+}
+
+
+static SakuraGroup *
+sakura_group_for_sidebar_node(SakuraSidebarNode *node)
+{
+	while (node != NULL) {
+		if (node->type == SAKURA_SIDEBAR_GROUP && node->group != NULL)
+			return node->group;
+		if (node->type == SAKURA_SIDEBAR_TASK && node->task != NULL &&
+		    node->task->group != NULL)
+			return node->task->group;
+		if (node->type == SAKURA_SIDEBAR_PAGE && node->page != NULL &&
+		    node->page->group != NULL)
+			return node->page->group;
+		if (node->type == SAKURA_SIDEBAR_TERMINAL && node->tab != NULL &&
+		    node->tab->page != NULL && node->tab->page->group != NULL)
+			return node->tab->page->group;
 		node = node->parent;
-	return node != NULL ? node : sakura.sidebar_root;
+	}
+	return sakura.root_group;
+}
+
+
+static SakuraSidebarNode *
+sakura_sidebar_group_node(SakuraGroup *group)
+{
+	return group != NULL && group->sidebar_node != NULL
+	     ? group->sidebar_node : sakura.sidebar_root;
+}
+
+
+static SakuraGroup *
+sakura_group_new(const gchar *id, const gchar *title, SakuraGroup *parent)
+{
+	SakuraGroup *group = g_new0(SakuraGroup, 1);
+
+	group->id = g_strdup(id);
+	group->title = g_strdup(title != NULL ? title : "");
+	group->parent = parent;
+	return group;
+}
+
+
+void
+sakura_group_free(SakuraGroup *group)
+{
+	if (group == NULL)
+		return;
+	g_free(group->id);
+	g_free(group->title);
+	g_free(group->directory);
+	g_free(group->last_terminal_id);
+	g_free(group);
+}
+
+
+static SakuraGroup *
+sakura_active_group_model(void)
+{
+	if (sakura.active_group_scope != NULL &&
+	    sakura.active_group_scope->group != NULL)
+		return sakura.active_group_scope->group;
+	if (sakura.active_group != NULL)
+		return sakura.active_group;
+	return sakura.root_group;
 }
 
 
@@ -141,10 +209,10 @@ SakuraGroup *
 sakura_group_for_task(SakuraTask *task)
 {
 	if (task == NULL)
-		return sakura.sidebar_root;
+		return sakura.root_group;
 	if (task->group != NULL)
 		return task->group;
-	return sakura_sidebar_group_ancestor(task->sidebar_node);
+	return sakura_group_for_sidebar_node(task->sidebar_node);
 }
 
 
@@ -152,12 +220,12 @@ SakuraGroup *
 sakura_group_for_session(SakuraSession *session)
 {
 	if (session == NULL)
-		return sakura.sidebar_root;
+		return sakura.root_group;
 	if (session->group != NULL)
 		return session->group;
 	if (session->task != NULL)
 		return sakura_group_for_task(session->task);
-	return sakura_sidebar_group_ancestor(session->sidebar_node);
+	return sakura_group_for_sidebar_node(session->sidebar_node);
 }
 
 
@@ -223,7 +291,7 @@ sakura_task_attach_page(SakuraTask *task, SakuraPage *page)
 	sakura_sidebar_show_page_panes(page);
 	sakura_sidebar_update_page(page);
 	sakura.active_task = task;
-	sakura_sidebar_set_scope(sakura_group_for_task(task));
+	sakura_sidebar_set_scope(sakura_sidebar_group_node(sakura_group_for_task(task)));
 	sakura_workspace_mark_changed(SAKURA_WORKSPACE_CHANGE_STRUCTURE |
 	                              SAKURA_WORKSPACE_CHANGE_SCOPE |
 	                              SAKURA_WORKSPACE_CHANGE_SELECTION);
@@ -235,7 +303,8 @@ sakura_task_attach_page(SakuraTask *task, SakuraPage *page)
 void
 sakura_task_detach_page(SakuraPage *page)
 {
-	SakuraSidebarNode *node, *old_parent, *group;
+	SakuraSidebarNode *node, *old_parent, *group_node;
+	SakuraGroup *group;
 	SakuraTask *old_task;
 
 	if (page == NULL || page->sidebar_node == NULL || page->task == NULL)
@@ -245,11 +314,12 @@ sakura_task_detach_page(SakuraPage *page)
 	old_parent = node->parent;
 	old_task = page->task;
 	group = old_task != NULL ? sakura_group_for_task(old_task)
-	                         : sakura_sidebar_group_ancestor(old_parent);
+	                         : sakura_group_for_sidebar_node(old_parent);
+	group_node = sakura_sidebar_group_node(group);
 	sakura_sidebar_cancel_pending_selection();
 	sakura_sidebar_hide_page_panes(page);
 	sakura_sidebar_remove_node_row(node);
-	node->parent = group;
+	node->parent = group_node;
 	page->task = NULL;
 	page->group = group;
 	if (sakura.active_task == old_task)
@@ -267,15 +337,17 @@ sakura_task_detach_page(SakuraPage *page)
 gchar *
 sakura_sidebar_directory_for_node(SakuraSidebarNode *node)
 {
+	SakuraGroup *group;
+
 	if (node == NULL)
-		node = sakura.active_group_scope != NULL
-	      ? sakura.active_group_scope : sakura.sidebar_root;
-	while (node != NULL) {
-		if (node->type == SAKURA_SIDEBAR_GROUP &&
-		    node->directory != NULL && node->directory[0] != '\0' &&
-		    g_file_test(node->directory, G_FILE_TEST_IS_DIR))
-			return g_strdup(node->directory);
-		node = node->parent;
+		node = sakura_active_group_model() != NULL
+	      ? sakura_sidebar_group_node(sakura_active_group_model()) : sakura.sidebar_root;
+	group = sakura_group_for_sidebar_node(node);
+	while (group != NULL) {
+		if (group->directory != NULL && group->directory[0] != '\0' &&
+		    g_file_test(group->directory, G_FILE_TEST_IS_DIR))
+			return g_strdup(group->directory);
+		group = group->parent;
 	}
 	return NULL;
 }
@@ -284,11 +356,12 @@ sakura_sidebar_directory_for_node(SakuraSidebarNode *node)
 static const gchar *
 sakura_sidebar_group_directory(SakuraSidebarNode *node)
 {
-	while (node != NULL) {
-		if (node->type == SAKURA_SIDEBAR_GROUP &&
-		    node->directory != NULL && node->directory[0] != '\0')
-			return node->directory;
-		node = node->parent;
+	SakuraGroup *group = sakura_group_for_sidebar_node(node);
+
+	while (group != NULL) {
+		if (group->directory != NULL && group->directory[0] != '\0')
+			return group->directory;
+		group = group->parent;
 	}
 	return NULL;
 }
@@ -330,15 +403,21 @@ static void
 sakura_sidebar_update_group_row(SakuraSidebarNode *node)
 {
 	GtkTreeIter iter;
+	SakuraGroup *group;
 	const gchar *directory;
 	gchar *display, *tooltip;
 
-	if (node == NULL || node->type != SAKURA_SIDEBAR_GROUP)
+	if (node == NULL || node->type != SAKURA_SIDEBAR_GROUP || node->group == NULL)
 		return;
+	group = node->group;
+	g_free(node->id);
+	node->id = g_strdup(group->id);
+	g_free(node->title);
+	node->title = g_strdup(group->title);
 	directory = sakura_sidebar_group_directory(node);
 	display = sakura_sidebar_directory_display(directory);
-	if (node->directory != NULL && node->directory[0] != '\0')
-		tooltip = g_strdup_printf(_("Working directory: %s"), node->directory);
+	if (group->directory != NULL && group->directory[0] != '\0')
+		tooltip = g_strdup_printf(_("Working directory: %s"), group->directory);
 	else if (directory != NULL)
 		tooltip = g_strdup_printf(_("Inherited working directory: %s"), directory);
 	else
@@ -358,8 +437,11 @@ sakura_sidebar_refresh_group_rows(void)
 {
 	GList *group;
 
-	for (group = sakura.sidebar_groups; group != NULL; group = group->next)
-		sakura_sidebar_update_group_row(group->data);
+	for (group = sakura.groups; group != NULL; group = group->next) {
+		SakuraGroup *model_group = group->data;
+		if (model_group->sidebar_node != NULL)
+			sakura_sidebar_update_group_row(model_group->sidebar_node);
+	}
 }
 
 
@@ -468,6 +550,27 @@ sakura_workspace_validate(GError **error)
 		return sakura_workspace_validation_error(
 			error, "notebook/pages/tabs count mismatch: %d/%u/%u",
 			count, sakura.pages->len, sakura.tabs->len);
+	if (sakura.sidebar_root != NULL) {
+		GList *group_link;
+
+		if (sakura.root_group == NULL || sakura.sidebar_root->group != sakura.root_group ||
+		    sakura.root_group->sidebar_node != sakura.sidebar_root ||
+		    sakura.root_group->parent != NULL)
+			return sakura_workspace_validation_error(error,
+		                                        "root group model/view link is invalid");
+		for (group_link = sakura.groups; group_link != NULL; group_link = group_link->next) {
+			SakuraGroup *group = group_link->data;
+			SakuraSidebarNode *node = group != NULL ? group->sidebar_node : NULL;
+
+			if (group == NULL || node == NULL || node->type != SAKURA_SIDEBAR_GROUP ||
+			    node->group != group ||
+			    (group != sakura.root_group && group->parent == NULL) ||
+			    (group != sakura.root_group &&
+			     (node->parent == NULL || node->parent->group != group->parent)))
+				return sakura_workspace_validation_error(error,
+				                                    "group model/view link is invalid");
+		}
+	}
 	if (sakura.tasks != NULL) {
 		for (index = 0; index < (gint)sakura.tasks->len; index++) {
 			SakuraTask *task = g_ptr_array_index(sakura.tasks, index);
@@ -480,7 +583,7 @@ sakura_workspace_validate(GError **error)
 			    ((task->parent == NULL) !=
 			     (node->parent->type != SAKURA_SIDEBAR_TASK)) ||
 			    (task->parent != NULL && node->parent->task != task->parent) ||
-			    task->group != sakura_sidebar_group_ancestor(node))
+			    task->group != sakura_group_for_sidebar_node(node))
 				return sakura_workspace_validation_error(
 					error, "sidebar task identity is invalid at %d", index);
 		}
@@ -646,7 +749,7 @@ sakura_workspace_validate(GError **error)
 		       page->sidebar_node->parent->task != page->task)) ||
 		     page->group != (page->task != NULL
 		                     ? sakura_group_for_task(page->task)
-		                     : sakura_sidebar_group_ancestor(page->sidebar_node)) ||
+		                     : sakura_group_for_sidebar_node(page->sidebar_node)) ||
 		     g_strcmp0(page->sidebar_node->id, page->id) != 0)) {
 			g_hash_table_destroy(seen_pages);
 			g_hash_table_destroy(seen_tabs);
@@ -758,11 +861,11 @@ sakura_pane_is_in_active_scope (struct sakura_tab *sk_tab)
 	    (sk_tab->page == NULL ||
 	     !sakura_task_is_within(sk_tab->page->task, sakura.active_task)))
 		return FALSE;
-	if (sakura.active_group_scope == NULL ||
-	    sakura.active_group_scope == sakura.sidebar_root)
+	if (sakura_active_group_model() == NULL ||
+	    sakura_active_group_model() == sakura.root_group)
 		return TRUE;
 	return sk_tab->page != NULL &&
-	       sakura_group_for_session(sk_tab->page) == sakura.active_group_scope;
+	       sakura_group_for_session(sk_tab->page) == sakura_active_group_model();
 }
 
 
@@ -789,18 +892,18 @@ sakura_sidebar_default_parent (void)
 	 * not yet been moved into it, such as when the group is empty. */
 	if (sakura.active_task != NULL && sakura.active_task->sidebar_node != NULL)
 		return sakura.active_task->sidebar_node;
-	if (sakura.active_group_scope != NULL &&
-	    sakura.active_group_scope != sakura.sidebar_root &&
+	if (sakura_active_group_model() != NULL &&
+	    sakura_active_group_model() != sakura.root_group &&
 	    (current_tab == NULL || !sakura_tab_is_in_active_scope(current_tab)))
-		return sakura.active_group_scope;
+		return sakura_sidebar_group_node(sakura_active_group_model());
 
 	/* With All terminals selected, retain the current tab's ownership group
 	 * instead of treating the root scope as a real destination group. */
 	if (current_tab != NULL && current_tab->page != NULL)
-		return sakura_group_for_session(current_tab->page);
+		return sakura_sidebar_group_node(sakura_group_for_session(current_tab->page));
 
-	if (sakura.active_group_scope != NULL)
-		return sakura_sidebar_group_ancestor(sakura.active_group_scope);
+	if (sakura_active_group_model() != NULL)
+		return sakura_sidebar_group_node(sakura_active_group_model());
 	return sakura_sidebar_selected_group();
 }
 
@@ -823,7 +926,7 @@ sakura_select_pane (struct sakura_tab *sk_tab, gboolean focus)
 		if (sk_tab->page != NULL)
 			sakura.active_task = sk_tab->page->task;
 		scope = sk_tab->page != NULL
-		      ? sakura_group_for_session(sk_tab->page)
+		      ? sakura_sidebar_group_node(sakura_group_for_session(sk_tab->page))
 		      : sakura.sidebar_root;
 		sakura_sidebar_set_scope(scope);
 	}
@@ -950,9 +1053,10 @@ sakura_select_scope_default (void)
 	    sakura_page_for_tab(sakura.active_tab) >= 0 &&
 	    sakura_tab_is_in_active_scope(sakura.active_tab)) {
 		sk_tab = sakura.active_tab;
-	} else if (sakura.active_group_scope->last_terminal_id != NULL) {
+	} else if (sakura_active_group_model() != NULL &&
+	           sakura_active_group_model()->last_terminal_id != NULL) {
 		sk_tab = sakura_find_pane_by_terminal_id(
-			sakura.active_group_scope->last_terminal_id);
+			sakura_active_group_model()->last_terminal_id);
 		if (sk_tab != NULL && !sakura_tab_is_in_active_scope(sk_tab))
 			sk_tab = NULL;
 	}
@@ -982,7 +1086,7 @@ sakura_remember_current_scope_tab (struct sakura_tab *current_tab)
 	gint page;
 	struct sakura_tab *sk_tab;
 
-	if (sakura.active_group_scope == NULL || sakura.notebook == NULL)
+	if (sakura_active_group_model() == NULL || sakura.notebook == NULL)
 		return;
 	sk_tab = current_tab;
 	if (sk_tab == NULL) {
@@ -994,9 +1098,10 @@ sakura_remember_current_scope_tab (struct sakura_tab *current_tab)
 	if (sk_tab == NULL || !sakura_tab_is_in_active_scope(sk_tab) ||
 	    sk_tab->terminal_id == NULL)
 		return;
-	if (g_strcmp0(sakura.active_group_scope->last_terminal_id, sk_tab->terminal_id) != 0) {
-		g_free(sakura.active_group_scope->last_terminal_id);
-		sakura.active_group_scope->last_terminal_id = g_strdup(sk_tab->terminal_id);
+	if (g_strcmp0(sakura_active_group_model()->last_terminal_id,
+	              sk_tab->terminal_id) != 0) {
+		g_free(sakura_active_group_model()->last_terminal_id);
+		sakura_active_group_model()->last_terminal_id = g_strdup(sk_tab->terminal_id);
 	}
 }
 
@@ -1024,18 +1129,23 @@ sakura_register_codex_icon (void)
 void
 sakura_sidebar_set_scope (struct sakura_sidebar_node *scope)
 {
+	SakuraGroup *group;
+
 	if (scope == NULL || scope->type != SAKURA_SIDEBAR_GROUP)
 		scope = sakura.sidebar_root;
 	if (scope == NULL)
 		return;
+	group = scope->group != NULL ? scope->group : sakura.root_group;
 
-	if (sakura.active_group_scope == scope) {
+	if (sakura.active_group == group) {
+		sakura.active_group_scope = sakura_sidebar_group_node(group);
 		sakura_workspace_mark_changed(SAKURA_WORKSPACE_CHANGE_SCOPE);
 		return;
 	}
 
 	sakura_remember_current_scope_tab(NULL);
-	sakura.active_group_scope = scope;
+	sakura.active_group = group;
+	sakura.active_group_scope = sakura_sidebar_group_node(group);
 	sakura_workspace_mark_changed(SAKURA_WORKSPACE_CHANGE_SCOPE);
 	sakura_session_mark_dirty();
 }
@@ -1060,7 +1170,7 @@ sakura_sidebar_add_terminal (struct sakura_tab *sk_tab, struct sakura_sidebar_no
 		sakura_sidebar_add_page(page, page_parent);
 	else if (page->group == NULL)
 		page->group = page->task != NULL
-		            ? sakura_group_for_task(page->task) : group;
+		            ? sakura_group_for_task(page->task) : group->group;
 
 	node = g_new0(struct sakura_sidebar_node, 1);
 	node->type = SAKURA_SIDEBAR_TERMINAL;
@@ -1108,7 +1218,7 @@ sakura_sidebar_add_page(SakuraPage *page, SakuraSidebarNode *parent)
 	           ? page_parent->task : NULL;
 	page->group = page->task != NULL
 	            ? sakura_group_for_task(page->task)
-	            : sakura_sidebar_group_ancestor(page_parent);
+	            : sakura_group_for_sidebar_node(page_parent);
 	node->page = page;
 	page->sidebar_node = node;
 	if (sakura.sidebar_pending_insert_after != NULL &&
@@ -1181,7 +1291,7 @@ sakura_sidebar_selection_changed_cb (GtkTreeSelection *selection, void *data)
 		SakuraPage *page;
 		sakura_workspace_begin_mutation();
 		sakura.active_task = node->task;
-		sakura_sidebar_set_scope(sakura_group_for_task(node->task));
+		sakura_sidebar_set_scope(sakura_sidebar_group_node(sakura_group_for_task(node->task)));
 		page = sakura_sidebar_first_task_page(node->task);
 		if (page != NULL && page->active_tab != NULL)
 			sakura_select_session(page, TRUE);
@@ -1258,17 +1368,18 @@ sakura_sidebar_prepare_context (struct sakura_sidebar_node *node)
 	if (node->type == SAKURA_SIDEBAR_TERMINAL || node->type == SAKURA_SIDEBAR_PAGE ||
 	    node->type == SAKURA_SIDEBAR_TASK)
 		scope = node->type == SAKURA_SIDEBAR_TASK
-		      ? sakura_group_for_task(node->task)
+			? sakura_sidebar_group_node(sakura_group_for_task(node->task))
 		      : node->type == SAKURA_SIDEBAR_PAGE
-		      ? sakura_group_for_session(node->page)
-		      : node->tab != NULL ? sakura_group_for_session(node->tab->page)
+		      ? sakura_sidebar_group_node(sakura_group_for_session(node->page))
+		      : node->tab != NULL ? sakura_sidebar_group_node(
+		                              sakura_group_for_session(node->tab->page))
 		                         : sakura.sidebar_root;
 	else
 		scope = node;
 	if (scope == NULL)
 		return;
 
-	if (sakura.active_group_scope != scope) {
+	if (sakura_active_group_model() != (scope != NULL ? scope->group : NULL)) {
 		sakura_sidebar_set_scope(scope);
 		sakura_select_scope_default();
 	} else if (node->type == SAKURA_SIDEBAR_TASK &&
@@ -1415,7 +1526,7 @@ sakura_sidebar_move_page_to_group(SakuraPage *page, SakuraSidebarNode *group)
 	sakura_sidebar_remove_node_row(node);
 	node->parent = group;
 	page->task = NULL;
-	page->group = group;
+	page->group = group->group;
 	if (sakura.active_task == old_task)
 		sakura.active_task = NULL;
 	sakura_sidebar_insert_node(node);
@@ -1423,8 +1534,10 @@ sakura_sidebar_move_page_to_group(SakuraPage *page, SakuraSidebarNode *group)
 	sakura.sidebar_syncing = FALSE;
 	if (old_parent != NULL && old_parent->type == SAKURA_SIDEBAR_GROUP &&
 	    page->active_tab != NULL &&
-	    g_strcmp0(old_parent->last_terminal_id, page->active_tab->terminal_id) == 0)
-		g_clear_pointer(&old_parent->last_terminal_id, g_free);
+	    old_parent->group != NULL &&
+	    g_strcmp0(old_parent->group->last_terminal_id,
+	              page->active_tab->terminal_id) == 0)
+		g_clear_pointer(&old_parent->group->last_terminal_id, g_free);
 	sakura_sidebar_update_page(page);
 	sakura_workspace_mark_changed(SAKURA_WORKSPACE_CHANGE_STRUCTURE |
 	                              SAKURA_WORKSPACE_CHANGE_SCOPE);
@@ -1461,15 +1574,16 @@ sakura_sidebar_move_terminal_menu_new (struct sakura_tab *sk_tab)
 	GList *group;
 
 	menu = gtk_menu_new();
-	for (group = sakura.sidebar_groups; group != NULL; group = group->next) {
-		struct sakura_sidebar_node *node = group->data;
+	for (group = sakura.groups; group != NULL; group = group->next) {
+		SakuraGroup *model_group = group->data;
+		struct sakura_sidebar_node *node = model_group->sidebar_node;
 		struct sakura_sidebar_move_target *target;
 
 		if (node == NULL || sk_tab == NULL || sk_tab->page == NULL ||
-		    node == sakura_group_for_session(sk_tab->page))
+		    model_group == sakura_group_for_session(sk_tab->page))
 			continue;
 		item = gtk_menu_item_new_with_label(
-			node == sakura.sidebar_root ? _("All terminals") : node->title);
+			model_group == sakura.root_group ? _("All terminals") : model_group->title);
 		target = g_new0(struct sakura_sidebar_move_target, 1);
 		target->tab = sk_tab;
 		target->group = node;
@@ -1812,14 +1926,16 @@ sakura_sidebar_context_menu_new (struct sakura_sidebar_node *node)
 
 		gtk_menu_shell_append(GTK_MENU_SHELL(menu), gtk_separator_menu_item_new());
 		item = gtk_menu_item_new_with_label(
-			context_node->directory != NULL && context_node->directory[0] != '\0'
+			context_node->group != NULL && context_node->group->directory != NULL &&
+			context_node->group->directory[0] != '\0'
 			? _("Change working directory...") : _("Set working directory..."));
 		g_signal_connect(item, "activate",
 		                 G_CALLBACK(sakura_sidebar_set_directory_cb), context_node);
 		gtk_menu_shell_append(GTK_MENU_SHELL(menu), item);
 		item = gtk_menu_item_new_with_label(_("Clear working directory"));
-		gtk_widget_set_sensitive(item, context_node->directory != NULL &&
-		                         context_node->directory[0] != '\0');
+		gtk_widget_set_sensitive(item, context_node->group != NULL &&
+		                         context_node->group->directory != NULL &&
+		                         context_node->group->directory[0] != '\0');
 		g_signal_connect(item, "activate",
 		                 G_CALLBACK(sakura_sidebar_clear_directory_cb), context_node);
 		gtk_menu_shell_append(GTK_MENU_SHELL(menu), item);
@@ -2047,8 +2163,9 @@ sakura_sidebar_new_group_cb (GtkWidget *widget, void *data)
 		context_node = context_node->parent;
 	parent = context_node != NULL
 	       ? context_node
-	       : (sakura.active_group_scope != NULL
-	          ? sakura.active_group_scope : sakura_sidebar_selected_group());
+	       : (sakura_active_group_model() != NULL
+	          ? sakura_sidebar_group_node(sakura_active_group_model())
+	          : sakura_sidebar_selected_group());
 	dialog = gtk_dialog_new_with_buttons(_("New group"),
 	                                     GTK_WINDOW(sakura.main_window),
 	                                     GTK_DIALOG_MODAL | GTK_DIALOG_USE_HEADER_BAR,
@@ -2066,12 +2183,21 @@ sakura_sidebar_new_group_cb (GtkWidget *widget, void *data)
 	if (gtk_dialog_run(GTK_DIALOG(dialog)) == GTK_RESPONSE_ACCEPT) {
 		title = gtk_entry_get_text(GTK_ENTRY(entry));
 		if (title[0] != '\0') {
+			SakuraGroup *model_group;
+			SakuraGroup *parent_group = parent != NULL && parent->group != NULL
+			                         ? parent->group : sakura.root_group;
+			gchar *id = g_strdup_printf("group-%u", sakura.sidebar_next_group_id++);
+
+			model_group = sakura_group_new(id, title, parent_group);
+			g_free(id);
+			sakura.groups = g_list_append(sakura.groups, model_group);
 			node = g_new0(struct sakura_sidebar_node, 1);
 			node->type = SAKURA_SIDEBAR_GROUP;
-			node->id = g_strdup_printf("group-%u", sakura.sidebar_next_group_id++);
+			node->id = g_strdup(model_group->id);
 			node->title = g_strdup(title);
 			node->parent = parent != NULL ? parent : sakura.sidebar_root;
-			sakura.sidebar_groups = g_list_append(sakura.sidebar_groups, node);
+			node->group = model_group;
+			model_group->sidebar_node = node;
 			sakura_sidebar_insert_node(node);
 			if (sakura_sidebar_get_iter(node, &iter)) {
 				GtkTreePath *path = gtk_tree_model_get_path(GTK_TREE_MODEL(sakura.sidebar_model), &iter);
@@ -2095,11 +2221,13 @@ sakura_sidebar_creation_parent_for_context(SakuraSidebarNode *context)
 		return context;
 	if (context != NULL && context->type == SAKURA_SIDEBAR_PAGE)
 		return context->parent != NULL && context->parent->type == SAKURA_SIDEBAR_TASK
-		     ? context->parent : sakura_group_for_session(context->page);
+			? context->parent : sakura_sidebar_group_node(
+			                       sakura_group_for_session(context->page));
 	if (context != NULL && context->type == SAKURA_SIDEBAR_TERMINAL)
 		return context->parent != NULL && context->parent->type == SAKURA_SIDEBAR_PAGE
 		     ? sakura_sidebar_creation_parent_for_context(context->parent) :
-		       sakura_group_for_session(context->tab != NULL ? context->tab->page : NULL);
+		       sakura_sidebar_group_node(sakura_group_for_session(
+			                       context->tab != NULL ? context->tab->page : NULL));
 	return context != NULL ? context : sakura_sidebar_selected_group();
 }
 
@@ -2145,7 +2273,7 @@ sakura_sidebar_new_task_cb(GtkWidget *widget, void *data)
 			task->provider = g_strdup("local");
 			task->status = SAKURA_TASK_READY;
 			task->parent = parent->type == SAKURA_SIDEBAR_TASK ? parent->task : NULL;
-			task->group = sakura_sidebar_group_ancestor(parent);
+			task->group = sakura_group_for_sidebar_node(parent);
 			node = g_new0(SakuraSidebarNode, 1);
 			node->type = SAKURA_SIDEBAR_TASK;
 			node->id = g_strdup(task->id);
@@ -2353,8 +2481,9 @@ sakura_sidebar_set_directory_cb(GtkWidget *widget, void *data)
 		_("_Select"), GTK_RESPONSE_ACCEPT,
 		NULL);
 	gtk_file_chooser_set_create_folders(GTK_FILE_CHOOSER(dialog), TRUE);
-	current_directory = node->directory != NULL && node->directory[0] != '\0'
-	                  ? node->directory : sakura_sidebar_group_directory(node);
+	current_directory = node->group->directory != NULL &&
+	                    node->group->directory[0] != '\0'
+	                  ? node->group->directory : sakura_sidebar_group_directory(node);
 	if (current_directory != NULL &&
 	    g_file_test(current_directory, G_FILE_TEST_IS_DIR))
 		gtk_file_chooser_set_filename(GTK_FILE_CHOOSER(dialog), current_directory);
@@ -2363,8 +2492,8 @@ sakura_sidebar_set_directory_cb(GtkWidget *widget, void *data)
 		directory = gtk_file_chooser_get_filename(GTK_FILE_CHOOSER(dialog));
 		if (directory != NULL && g_file_test(directory, G_FILE_TEST_IS_DIR)) {
 			canonical = g_canonicalize_filename(directory, NULL);
-			g_free(node->directory);
-			node->directory = canonical;
+			g_free(node->group->directory);
+			node->group->directory = canonical;
 			canonical = NULL;
 			sakura_sidebar_refresh_group_rows();
 			sakura_sidebar_save_groups();
@@ -2383,9 +2512,9 @@ sakura_sidebar_clear_directory_cb(GtkWidget *widget, void *data)
 
 	(void)widget;
 	if (node == NULL || node->type != SAKURA_SIDEBAR_GROUP ||
-	    node->directory == NULL)
+	    node->group == NULL || node->group->directory == NULL)
 		return;
-	g_clear_pointer(&node->directory, g_free);
+	g_clear_pointer(&node->group->directory, g_free);
 	sakura_sidebar_refresh_group_rows();
 	sakura_sidebar_save_groups();
 }
@@ -2419,8 +2548,9 @@ sakura_sidebar_rename_group_cb (GtkWidget *widget, void *data)
 	if (gtk_dialog_run(GTK_DIALOG(dialog)) == GTK_RESPONSE_ACCEPT) {
 		title = gtk_entry_get_text(GTK_ENTRY(entry));
 		if (title[0] != '\0') {
-			g_free(node->title);
-			node->title = g_strdup(title);
+			g_free(node->group->title);
+			node->group->title = g_strdup(title);
+			sakura_sidebar_update_group_row(node);
 			if (sakura_sidebar_get_iter(node, &iter))
 				sakura_sidebar_set_node_row(node, &iter);
 			sakura_workspace_mark_changed(SAKURA_WORKSPACE_CHANGE_METADATA);
@@ -2435,6 +2565,7 @@ static void
 sakura_sidebar_delete_group_cb (GtkWidget *widget, void *data)
 {
 	struct sakura_sidebar_node *node = data;
+	SakuraGroup *model_group;
 	GtkTreeIter iter;
 
 	if (node == NULL || node == sakura.sidebar_root ||
@@ -2453,13 +2584,15 @@ sakura_sidebar_delete_group_cb (GtkWidget *widget, void *data)
 		return;
 	}
 
-	if (sakura.active_group_scope == node) {
+	model_group = node->group;
+	if (sakura_active_group_model() == model_group) {
 		sakura_sidebar_set_scope(sakura.sidebar_root);
 		sakura_select_scope_default();
 	}
 	gtk_tree_store_remove(sakura.sidebar_model, &iter);
-	sakura.sidebar_groups = g_list_remove(sakura.sidebar_groups, node);
+	sakura.groups = g_list_remove(sakura.groups, model_group);
 	sakura_sidebar_free_node(node);
+	sakura_group_free(model_group);
 	sakura_sidebar_save_groups();
 }
 
@@ -2471,10 +2604,10 @@ sakura_sidebar_find_group_by_id (const gchar *id)
 
 	if (id == NULL)
 		return NULL;
-	for (group = sakura.sidebar_groups; group != NULL; group = group->next) {
-		struct sakura_sidebar_node *node = group->data;
-		if (g_strcmp0(node->id, id) == 0)
-			return node;
+	for (group = sakura.groups; group != NULL; group = group->next) {
+		SakuraGroup *model_group = group->data;
+		if (g_strcmp0(model_group->id, id) == 0)
+			return model_group->sidebar_node;
 	}
 	return NULL;
 }
@@ -2512,11 +2645,14 @@ sakura_sidebar_collect_groups (GtkTreeModel *model, GtkTreeIter *parent,
 		gtk_tree_model_get(model, &iter, SAKURA_SIDEBAR_COLUMN_NODE, &node, -1);
 		if (node != NULL && node->type == SAKURA_SIDEBAR_GROUP) {
 			if (node != sakura.sidebar_root) {
-				g_ptr_array_add(ids, g_strdup(node->id));
-				g_ptr_array_add(parents, g_strdup(node->parent != NULL ? node->parent->id : "root"));
-				g_ptr_array_add(titles, g_strdup(node->title));
+				g_ptr_array_add(ids, g_strdup(node->group != NULL ? node->group->id : node->id));
+				g_ptr_array_add(parents, g_strdup(node->group != NULL && node->group->parent != NULL
+				                                  ? node->group->parent->id : "root"));
+				g_ptr_array_add(titles, g_strdup(node->group != NULL
+				                                  ? node->group->title : node->title));
 				g_ptr_array_add(directories,
-				                g_strdup(node->directory != NULL ? node->directory : ""));
+				                g_strdup(node->group != NULL && node->group->directory != NULL
+				                         ? node->group->directory : ""));
 			}
 			sakura_sidebar_collect_groups(model, &iter, ids, parents, titles, directories);
 		} else if (node != NULL && node->type == SAKURA_SIDEBAR_TASK)
@@ -2570,19 +2706,28 @@ sakura_sidebar_sync_parents_for_iter (GtkTreeModel *model, GtkTreeIter *parent_i
 			node->parent = node == sakura.sidebar_root
 				? NULL
 				: (parent_node != NULL ? parent_node : sakura.sidebar_root);
-			if (node->type == SAKURA_SIDEBAR_TASK) {
+			if (node->type == SAKURA_SIDEBAR_GROUP) {
+				if (node->group != NULL) {
+					node->group->sidebar_node = node;
+					node->group->parent = node == sakura.sidebar_root
+				                     ? NULL
+				                     : (parent_node != NULL && parent_node->group != NULL
+				                        ? parent_node->group : sakura.root_group);
+				}
+				sakura_sidebar_update_group_row(node);
+			} else if (node->type == SAKURA_SIDEBAR_TASK) {
 				node->task->sidebar_node = node;
 				node->task->parent = node->parent != NULL &&
 				                     node->parent->type == SAKURA_SIDEBAR_TASK
 				                   ? node->parent->task : NULL;
-				node->task->group = sakura_sidebar_group_ancestor(node);
+				node->task->group = sakura_group_for_sidebar_node(node);
 			} else if (node->type == SAKURA_SIDEBAR_PAGE) {
 				node->page->task = node->parent != NULL &&
 				                   node->parent->type == SAKURA_SIDEBAR_TASK
 				                 ? node->parent->task : NULL;
 				node->page->group = node->page->task != NULL
 				                 ? sakura_group_for_task(node->page->task)
-				                 : sakura_sidebar_group_ancestor(node);
+				                 : sakura_group_for_sidebar_node(node);
 			}
 			if (node->type == SAKURA_SIDEBAR_GROUP ||
 			    node->type == SAKURA_SIDEBAR_TASK ||
@@ -2637,10 +2782,10 @@ sakura_sidebar_save_groups (void)
 		                           (const gchar * const *)directories->pdata,
 		                           directories->len);
 	}
-	if (sakura.sidebar_root != NULL && sakura.sidebar_root->directory != NULL &&
-	    sakura.sidebar_root->directory[0] != '\0')
+	if (sakura.root_group != NULL && sakura.root_group->directory != NULL &&
+	    sakura.root_group->directory[0] != '\0')
 		g_key_file_set_string(sakura.cfg, SAKURA_CONFIG_GROUP,
-		                      "sidebar_root_directory", sakura.sidebar_root->directory);
+		                      "sidebar_root_directory", sakura.root_group->directory);
 	else
 		g_key_file_remove_key(sakura.cfg, SAKURA_CONFIG_GROUP,
 		                      "sidebar_root_directory", NULL);
@@ -3107,11 +3252,11 @@ sakura_workspace_snapshot_new(void)
 
 	snapshot->selected_terminal = selected_terminal;
 	g_free(snapshot->active_group_id);
-	snapshot->active_group_id = g_strdup(sakura.active_group_scope != NULL &&
-	                                    sakura.active_group_scope->id != NULL
-	                                    ? sakura.active_group_scope->id : "root");
-	snapshot->root_directory = g_strdup(sakura.sidebar_root != NULL
-	                                  ? sakura.sidebar_root->directory : NULL);
+	snapshot->active_group_id = g_strdup(sakura_active_group_model() != NULL &&
+	                                    sakura_active_group_model()->id != NULL
+	                                    ? sakura_active_group_model()->id : "root");
+	snapshot->root_directory = g_strdup(sakura.root_group != NULL
+	                                  ? sakura.root_group->directory : NULL);
 	snapshot->sidebar_visible = sakura.sidebar_visible;
 	snapshot->sidebar_width = sakura.sidebar_paned != NULL
 	                         ? gtk_paned_get_position(GTK_PANED(sakura.sidebar_paned))
@@ -3135,7 +3280,7 @@ sakura_workspace_snapshot_new(void)
 			SakuraSessionTaskRecord *task = g_new0(SakuraSessionTaskRecord, 1);
 			SakuraGroup *group = node->task != NULL
 			                    ? sakura_group_for_task(node->task)
-			                    : sakura_sidebar_group_ancestor(node);
+			                    : sakura_group_for_sidebar_node(node);
 
 			task->id = g_strdup(node->task != NULL ? node->task->id : node->id);
 			task->parent_id = g_strdup(node->parent != NULL ? node->parent->id : "root");
@@ -3375,23 +3520,26 @@ sakura_sidebar_init (gboolean restore_session)
 	sakura.sidebar = sidebar_box;
 
 	sakura.sidebar_root = g_new0(struct sakura_sidebar_node, 1);
+	sakura.root_group = sakura_group_new("root", _("All terminals"), NULL);
+	sakura.groups = g_list_append(NULL, sakura.root_group);
 	sakura.sidebar_root->type = SAKURA_SIDEBAR_GROUP;
-	sakura.sidebar_root->id = g_strdup("root");
-	sakura.sidebar_root->title = g_strdup(_("All terminals"));
+	sakura.sidebar_root->id = g_strdup(sakura.root_group->id);
+	sakura.sidebar_root->title = g_strdup(sakura.root_group->title);
+	sakura.sidebar_root->group = sakura.root_group;
+	sakura.root_group->sidebar_node = sakura.sidebar_root;
 	sakura.sidebar_next_group_id = 1;
 	sakura.sidebar_next_task_id = 1;
 	sakura.tasks = g_ptr_array_new_with_free_func((GDestroyNotify)sakura_task_free);
-	sakura.sidebar_groups = g_list_append(sakura.sidebar_groups, sakura.sidebar_root);
 	sakura_sidebar_insert_node(sakura.sidebar_root);
 
 	session_has_groups = restore_session &&
 		sakura.session_snapshot != NULL;
 	if (session_has_groups) {
 		if (sakura.session_snapshot->root_directory != NULL)
-			sakura.sidebar_root->directory =
+			sakura.root_group->directory =
 				g_strdup(sakura.session_snapshot->root_directory);
 	} else {
-		sakura.sidebar_root->directory = g_key_file_get_string(
+		sakura.root_group->directory = g_key_file_get_string(
 			sakura.cfg, SAKURA_CONFIG_GROUP, "sidebar_root_directory", NULL);
 	}
 	sakura_sidebar_update_group_row(sakura.sidebar_root);
@@ -3422,25 +3570,30 @@ sakura_sidebar_init (gboolean restore_session)
 	}
 	for (i = 0; i < n_groups; i++) {
 		struct sakura_sidebar_node *node, *parent;
+		SakuraGroup *model_group, *parent_group;
 		gchar *end = NULL;
 		guint id_number;
 
 		parent = sakura_sidebar_find_group_by_id(group_parents[i]);
 		if (parent == NULL)
 			parent = sakura.sidebar_root;
+		parent_group = parent->group != NULL ? parent->group : sakura.root_group;
+		model_group = sakura_group_new(group_ids[i], group_titles[i], parent_group);
+		if (i < n_directories || session_has_groups)
+			model_group->directory = g_strdup(group_directories[i]);
+		sakura.groups = g_list_append(sakura.groups, model_group);
 		node = g_new0(struct sakura_sidebar_node, 1);
 		node->type = SAKURA_SIDEBAR_GROUP;
-		node->id = g_strdup(group_ids[i]);
-		node->title = g_strdup(group_titles[i]);
-		if (i < n_directories || session_has_groups)
-			node->directory = g_strdup(group_directories[i]);
+		node->id = g_strdup(model_group->id);
+		node->title = g_strdup(model_group->title);
+		node->group = model_group;
+		model_group->sidebar_node = node;
 		node->parent = parent;
-		sakura.sidebar_groups = g_list_append(sakura.sidebar_groups, node);
 		sakura_sidebar_insert_node(node);
 
-		if (g_str_has_prefix(node->id, "group-")) {
-			id_number = (guint)g_ascii_strtoull(node->id + strlen("group-"), &end, 10);
-			if (end != node->id + strlen("group-") && id_number >= sakura.sidebar_next_group_id)
+		if (g_str_has_prefix(model_group->id, "group-")) {
+			id_number = (guint)g_ascii_strtoull(model_group->id + strlen("group-"), &end, 10);
+			if (end != model_group->id + strlen("group-") && id_number >= sakura.sidebar_next_group_id)
 				sakura.sidebar_next_group_id = id_number + 1;
 		}
 	}
@@ -3488,7 +3641,7 @@ sakura_sidebar_init (gboolean restore_session)
 				task->parent = parent->type == SAKURA_SIDEBAR_TASK ? parent->task : NULL;
 				task->group = parent->type == SAKURA_SIDEBAR_TASK
 				            ? sakura_group_for_task(parent->task)
-				            : parent;
+				            : parent->group;
 				node = g_new0(SakuraSidebarNode, 1);
 				node->type = SAKURA_SIDEBAR_TASK;
 				node->id = g_strdup(task->id);
@@ -3553,6 +3706,7 @@ sakura_sidebar_init (gboolean restore_session)
 	sakura.tab_bar = tab_bar;
 	sakura.tab_bar_new_button = tab_new;
 	sakura.tab_bar_empty = empty_state;
+	sakura.active_group = sakura.root_group;
 	sakura.active_group_scope = sakura.sidebar_root;
 	gtk_box_pack_start(GTK_BOX(sakura.content_box), tab_shell, FALSE, FALSE, 0);
 	gtk_box_pack_start(GTK_BOX(sakura.content_box), sakura.notebook, TRUE, TRUE, 0);
@@ -3563,8 +3717,10 @@ sakura_sidebar_init (gboolean restore_session)
 	if (restore_session && sakura.session_snapshot != NULL) {
 		const gchar *active_group_id = sakura.session_snapshot->active_group_id;
 		struct sakura_sidebar_node *saved_scope = sakura_sidebar_find_group_by_id(active_group_id);
-		if (saved_scope != NULL)
+		if (saved_scope != NULL) {
+			sakura.active_group = saved_scope->group;
 			sakura.active_group_scope = saved_scope;
+		}
 		if (sakura.session_snapshot->selected_task_id != NULL)
 			sakura.active_task = sakura_task_find_by_id(
 				sakura.session_snapshot->selected_task_id);
@@ -3989,14 +4145,15 @@ sakura_sidebar_free_node(SakuraSidebarNode *node)
 	if (node == NULL)
 		return;
 
+	if (node->type == SAKURA_SIDEBAR_GROUP && node->group != NULL &&
+	    node->group->sidebar_node == node)
+		node->group->sidebar_node = NULL;
 	if (node->row != NULL)
 		gtk_tree_row_reference_free(node->row);
 	g_free(node->id);
 	g_free(node->title);
 	g_free(node->subtitle);
 	g_free(node->tooltip);
-	g_free(node->directory);
-	g_free(node->last_terminal_id);
 	g_free(node);
 }
 
@@ -4207,11 +4364,12 @@ sakura_sidebar_selected_group(void)
 	if (node == NULL)
 		return sakura.sidebar_root;
 	if (node->type == SAKURA_SIDEBAR_TASK)
-		return sakura_group_for_task(node->task);
+		return sakura_sidebar_group_node(sakura_group_for_task(node->task));
 	if (node->type == SAKURA_SIDEBAR_PAGE)
-		return sakura_group_for_session(node->page);
+		return sakura_sidebar_group_node(sakura_group_for_session(node->page));
 	if (node->type == SAKURA_SIDEBAR_TERMINAL)
-		return sakura_group_for_session(node->tab != NULL ? node->tab->page : NULL);
+		return sakura_sidebar_group_node(sakura_group_for_session(
+			                       node->tab != NULL ? node->tab->page : NULL));
 	return sakura_sidebar_group_ancestor(node);
 }
 
@@ -4305,7 +4463,7 @@ void
 sakura_sidebar_remove_tab(SakuraTab *tab)
 {
 	SakuraPage *page;
-	SakuraSidebarNode *group;
+	SakuraGroup *group;
 	SakuraSidebarNode *node;
 
 	if (tab == NULL || tab->sidebar_node == NULL)

@@ -3253,11 +3253,17 @@ sakura_destroy()
 		}
 		g_clear_pointer(&sakura.tasks, g_ptr_array_unref);
 	}
-	for (group = sakura.sidebar_groups; group != NULL; group = group->next)
-		sakura_sidebar_free_node(group->data);
-	g_list_free(sakura.sidebar_groups);
-	sakura.sidebar_groups = NULL;
+	for (group = sakura.groups; group != NULL; group = group->next) {
+		SakuraGroup *model_group = group->data;
+		if (model_group != NULL && model_group->sidebar_node != NULL)
+			sakura_sidebar_free_node(model_group->sidebar_node);
+	}
+	g_list_free_full(sakura.groups, (GDestroyNotify)sakura_group_free);
+	sakura.groups = NULL;
+	sakura.root_group = NULL;
 	sakura.sidebar_root = NULL;
+	sakura.active_group = NULL;
+	sakura.active_group_scope = NULL;
 	sakura_codex_name_helper_shutdown();
 
 	g_key_file_free(sakura.cfg);
