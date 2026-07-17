@@ -2707,39 +2707,6 @@ sakura_sidebar_find_container_by_id(const gchar *id)
 }
 
 
-void
-sakura_sidebar_collect_groups (GtkTreeModel *model, GtkTreeIter *parent,
-                               GPtrArray *ids, GPtrArray *parents, GPtrArray *titles,
-                               GPtrArray *directories)
-{
-	GtkTreeIter iter;
-	gboolean valid;
-
-	valid = parent == NULL
-		? gtk_tree_model_get_iter_first(model, &iter)
-		: gtk_tree_model_iter_children(model, &iter, parent);
-	while (valid) {
-		struct sakura_sidebar_node *node = NULL;
-		gtk_tree_model_get(model, &iter, SAKURA_SIDEBAR_COLUMN_NODE, &node, -1);
-		if (node != NULL && node->type == SAKURA_SIDEBAR_GROUP) {
-			if (node != sakura.sidebar_root) {
-				g_ptr_array_add(ids, g_strdup(node->group != NULL ? node->group->id : node->id));
-				g_ptr_array_add(parents, g_strdup(node->group != NULL && node->group->parent != NULL
-				                                  ? node->group->parent->id : "root"));
-				g_ptr_array_add(titles, g_strdup(node->group != NULL
-				                                  ? node->group->title : node->title));
-				g_ptr_array_add(directories,
-				                g_strdup(node->group != NULL && node->group->directory != NULL
-				                         ? node->group->directory : ""));
-			}
-			sakura_sidebar_collect_groups(model, &iter, ids, parents, titles, directories);
-		} else if (node != NULL && node->type == SAKURA_SIDEBAR_TASK)
-			sakura_sidebar_collect_groups(model, &iter, ids, parents, titles, directories);
-		valid = gtk_tree_model_iter_next(model, &iter);
-	}
-}
-
-
 static void
 sakura_sidebar_sync_parents_for_iter (GtkTreeModel *model, GtkTreeIter *parent_iter,
                                       struct sakura_sidebar_node *parent_node)
@@ -2801,6 +2768,7 @@ static void
 sakura_sidebar_save_groups (void)
 {
 	GPtrArray *ids, *parents, *titles, *directories;
+	GList *group_link;
 
 	sakura_session_accept_changes();
 	sakura_sidebar_sync_parents();
@@ -2811,8 +2779,18 @@ sakura_sidebar_save_groups (void)
 	parents = g_ptr_array_new_with_free_func(g_free);
 	titles = g_ptr_array_new_with_free_func(g_free);
 	directories = g_ptr_array_new_with_free_func(g_free);
-	sakura_sidebar_collect_groups(GTK_TREE_MODEL(sakura.sidebar_model), NULL,
-	                              ids, parents, titles, directories);
+	for (group_link = sakura.groups; group_link != NULL; group_link = group_link->next) {
+		SakuraGroup *group = group_link->data;
+
+		if (group == NULL || group == sakura.root_group)
+			continue;
+		g_ptr_array_add(ids, g_strdup(group->id));
+		g_ptr_array_add(parents, g_strdup(group->parent != NULL
+		                                  ? group->parent->id : "root"));
+		g_ptr_array_add(titles, g_strdup(group->title != NULL ? group->title : ""));
+		g_ptr_array_add(directories, g_strdup(group->directory != NULL
+		                                     ? group->directory : ""));
+	}
 
 	if (ids->len == 0) {
 		g_key_file_remove_key(sakura.cfg, SAKURA_CONFIG_GROUP, "sidebar_group_ids", NULL);
@@ -2848,35 +2826,115 @@ sakura_sidebar_save_groups (void)
 }
 
 
-void
-sakura_sidebar_collect_terminals (GtkTreeModel *model, GtkTreeIter *parent,
-                                  GPtrArray *terminals)
+static void
+sakura_workspace_append_page_panes(SakuraPage *page, GPtrArray *result,
+                                    GHashTable *seen_pages)
 {
-	GtkTreeIter iter;
-	gboolean valid;
+	guint pane_index;
 
-	valid = parent == NULL
-		? gtk_tree_model_get_iter_first(model, &iter)
-		: gtk_tree_model_iter_children(model, &iter, parent);
-	while (valid) {
-		struct sakura_sidebar_node *node = NULL;
-		gtk_tree_model_get(model, &iter, SAKURA_SIDEBAR_COLUMN_NODE, &node, -1);
-		if (node != NULL && node->type == SAKURA_SIDEBAR_TERMINAL)
-			g_ptr_array_add(terminals, node);
-		else if (node != NULL && node->type == SAKURA_SIDEBAR_PAGE &&
-		         node->page != NULL && node->page->panes != NULL) {
-			guint pane_index;
-			for (pane_index = 0; pane_index < node->page->panes->len; pane_index++) {
-				SakuraTab *tab = g_ptr_array_index(node->page->panes, pane_index);
-				if (tab != NULL && tab->sidebar_node != NULL)
-					g_ptr_array_add(terminals, tab->sidebar_node);
-			}
-		} else if (node != NULL &&
-		           (node->type == SAKURA_SIDEBAR_GROUP ||
-		            node->type == SAKURA_SIDEBAR_TASK))
-			sakura_sidebar_collect_terminals(model, &iter, terminals);
-		valid = gtk_tree_model_iter_next(model, &iter);
+	if (page == NULL || !g_hash_table_add(seen_pages, page))
+		return;
+	for (pane_index = 0; page->panes != NULL &&
+	     pane_index < page->panes->len; pane_index++) {
+		SakuraTab *tab = g_ptr_array_index(page->panes, pane_index);
+		if (tab != NULL)
+			g_ptr_array_add(result, tab);
 	}
+}
+
+static void
+sakura_workspace_append_task_panes(SakuraTask *task, GPtrArray *result,
+                                    GHashTable *seen_tasks,
+                                    GHashTable *seen_pages)
+{
+	guint task_index, page_index;
+
+	if (task == NULL || !g_hash_table_add(seen_tasks, task))
+		return;
+	for (task_index = 0; sakura.tasks != NULL &&
+	     task_index < sakura.tasks->len; task_index++) {
+		SakuraTask *child = g_ptr_array_index(sakura.tasks, task_index);
+		if (child != NULL && child->parent == task)
+			sakura_workspace_append_task_panes(child, result, seen_tasks,
+		                                    seen_pages);
+	}
+	for (page_index = 0; sakura.pages != NULL &&
+	     page_index < sakura.pages->len; page_index++) {
+		SakuraPage *page = g_ptr_array_index(sakura.pages, page_index);
+		if (page != NULL && page->task == task)
+			sakura_workspace_append_page_panes(page, result, seen_pages);
+	}
+}
+
+static void
+sakura_workspace_append_group_panes(SakuraGroup *group, GPtrArray *result,
+                                    GHashTable *seen_groups,
+                                    GHashTable *seen_tasks,
+                                    GHashTable *seen_pages)
+{
+	GList *child_group_link;
+	guint task_index, page_index;
+
+	if (group == NULL || !g_hash_table_add(seen_groups, group))
+		return;
+	/* Sidebar preorder places child groups before tasks and pages. */
+	for (child_group_link = sakura.groups;
+	     child_group_link != NULL; child_group_link = child_group_link->next) {
+		SakuraGroup *child = child_group_link->data;
+		if (child != NULL && child != sakura.root_group &&
+		    (child->parent == group ||
+		     (child->parent == NULL && group == sakura.root_group)))
+			sakura_workspace_append_group_panes(child, result, seen_groups,
+		                                    seen_tasks, seen_pages);
+	}
+	for (task_index = 0; sakura.tasks != NULL &&
+	     task_index < sakura.tasks->len; task_index++) {
+		SakuraTask *task = g_ptr_array_index(sakura.tasks, task_index);
+		if (task != NULL && task->parent == NULL &&
+		    (task->group == group ||
+		     (task->group == NULL && group == sakura.root_group)))
+			sakura_workspace_append_task_panes(task, result, seen_tasks,
+		                                    seen_pages);
+	}
+	for (page_index = 0; sakura.pages != NULL &&
+	     page_index < sakura.pages->len; page_index++) {
+		SakuraPage *page = g_ptr_array_index(sakura.pages, page_index);
+		if (page != NULL && page->task == NULL &&
+		    (page->group == group ||
+		     (page->group == NULL && group == sakura.root_group)))
+			sakura_workspace_append_page_panes(page, result, seen_pages);
+	}
+}
+
+static GPtrArray *
+sakura_workspace_model_panes(void)
+{
+	GPtrArray *panes;
+	GHashTable *seen_groups, *seen_tasks, *seen_pages;
+	GList *group_link;
+	guint index;
+
+	panes = g_ptr_array_new();
+	seen_groups = g_hash_table_new(g_direct_hash, g_direct_equal);
+	seen_tasks = g_hash_table_new(g_direct_hash, g_direct_equal);
+	seen_pages = g_hash_table_new(g_direct_hash, g_direct_equal);
+	sakura_workspace_append_group_panes(sakura.root_group, panes, seen_groups,
+	                                    seen_tasks, seen_pages);
+	/* Keep malformed or partially migrated model entries from disappearing
+	 * from persistence while still using the normal hierarchy order first. */
+	for (group_link = sakura.groups; group_link != NULL; group_link = group_link->next)
+		sakura_workspace_append_group_panes(group_link->data, panes, seen_groups,
+		                                    seen_tasks, seen_pages);
+	for (index = 0; sakura.tasks != NULL && index < sakura.tasks->len; index++)
+		sakura_workspace_append_task_panes(g_ptr_array_index(sakura.tasks, index),
+		                                  panes, seen_tasks, seen_pages);
+	for (index = 0; sakura.pages != NULL && index < sakura.pages->len; index++)
+		sakura_workspace_append_page_panes(g_ptr_array_index(sakura.pages, index),
+		                                  panes, seen_pages);
+	g_hash_table_destroy(seen_groups);
+	g_hash_table_destroy(seen_tasks);
+	g_hash_table_destroy(seen_pages);
+	return panes;
 }
 
 
@@ -3259,21 +3317,13 @@ SakuraSessionSnapshot *
 sakura_workspace_snapshot_new(void)
 {
 	SakuraSessionSnapshot *snapshot;
-	GPtrArray *group_ids, *group_parents, *group_titles, *group_directories, *terminals;
+	GPtrArray *model_panes;
+	GList *group_link;
 	gint selected_page, selected_terminal = -1;
 	guint index;
 
-	sakura_sidebar_sync_parents();
 	snapshot = sakura_session_snapshot_new();
-	group_ids = g_ptr_array_new_with_free_func(g_free);
-	group_parents = g_ptr_array_new_with_free_func(g_free);
-	group_titles = g_ptr_array_new_with_free_func(g_free);
-	group_directories = g_ptr_array_new_with_free_func(g_free);
-	terminals = g_ptr_array_new();
-	sakura_sidebar_collect_groups(GTK_TREE_MODEL(sakura.sidebar_model), NULL,
-	                              group_ids, group_parents, group_titles,
-	                              group_directories);
-	sakura_sidebar_collect_terminals(GTK_TREE_MODEL(sakura.sidebar_model), NULL, terminals);
+	model_panes = sakura_workspace_model_panes();
 
 	selected_page = sakura.active_tab != NULL
 	              ? sakura_page_for_tab(sakura.active_tab)
@@ -3282,9 +3332,8 @@ sakura_workspace_snapshot_new(void)
 		SakuraTab *selected_tab = sakura.active_tab != NULL
 		                       ? sakura.active_tab
 		                       : sakura_tab_at_page(selected_page);
-		for (index = 0; index < terminals->len; index++) {
-			SakuraSidebarNode *node = g_ptr_array_index(terminals, index);
-			if (node->tab == selected_tab) {
+		for (index = 0; index < model_panes->len; index++) {
+			if (g_ptr_array_index(model_panes, index) == selected_tab) {
 				selected_terminal = (gint)index;
 				break;
 			}
@@ -3314,12 +3363,20 @@ sakura_workspace_snapshot_new(void)
 	                         ? gtk_paned_get_position(GTK_PANED(sakura.sidebar_paned))
 	                         : sakura.sidebar_width;
 
-	for (index = 0; index < group_ids->len; index++) {
+	for (group_link = sakura.groups; group_link != NULL; group_link = group_link->next) {
+		SakuraGroup *model_group = group_link->data;
 		SakuraSessionGroupRecord *group = g_new0(SakuraSessionGroupRecord, 1);
-		group->id = g_strdup(g_ptr_array_index(group_ids, index));
-		group->parent_id = g_strdup(g_ptr_array_index(group_parents, index));
-		group->title = g_strdup(g_ptr_array_index(group_titles, index));
-		group->directory = g_strdup(g_ptr_array_index(group_directories, index));
+
+		if (model_group == NULL || model_group == sakura.root_group) {
+			g_free(group);
+			continue;
+		}
+		group->id = g_strdup(model_group->id);
+		group->parent_id = g_strdup(model_group->parent != NULL
+		                            ? model_group->parent->id : "root");
+		group->title = g_strdup(model_group->title != NULL ? model_group->title : "");
+		group->directory = g_strdup(model_group->directory != NULL
+		                           ? model_group->directory : "");
 		g_ptr_array_add(snapshot->groups, group);
 	}
 
@@ -3348,9 +3405,8 @@ sakura_workspace_snapshot_new(void)
 		}
 	}
 
-	for (index = 0; index < terminals->len; index++) {
-		SakuraSidebarNode *node = g_ptr_array_index(terminals, index);
-		SakuraTab *tab = node->tab;
+	for (index = 0; index < model_panes->len; index++) {
+		SakuraTab *tab = g_ptr_array_index(model_panes, index);
 		SakuraSessionTabRecord *record = g_new0(SakuraSessionTabRecord, 1);
 		const gchar *title = gtk_label_get_text(GTK_LABEL(tab->label));
 
@@ -3392,11 +3448,7 @@ sakura_workspace_snapshot_new(void)
 		}
 	}
 
-	g_ptr_array_free(group_ids, TRUE);
-	g_ptr_array_free(group_parents, TRUE);
-	g_ptr_array_free(group_titles, TRUE);
-	g_ptr_array_free(group_directories, TRUE);
-	g_ptr_array_free(terminals, TRUE);
+	g_ptr_array_unref(model_panes);
 	return snapshot;
 }
 

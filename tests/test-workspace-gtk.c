@@ -1260,7 +1260,12 @@ test_sidebar_rebuilds_nested_model_projection(void)
 	SakuraTask *parent_task, *child_task;
 	SakuraPage *page;
 	SakuraSessionSnapshot *snapshot;
+	SakuraSessionGroupRecord *group_record;
+	SakuraSessionTabRecord *tab_record;
 	SakuraSessionTaskRecord *child_record;
+	gchar **saved_group_ids;
+	gsize saved_group_count = 0;
+	GtkTreeIter group_iter;
 
 	setup_workspace();
 	setup_sidebar_fixture();
@@ -1309,12 +1314,35 @@ test_sidebar_rebuilds_nested_model_projection(void)
 	g_assert_true(page->sidebar_node->parent == child_task->sidebar_node);
 	assert_workspace_consistent();
 
+	/* Snapshot generation must not depend on the projection being present. */
+	g_assert_true(sakura_sidebar_get_iter(group->sidebar_node, &group_iter));
+	gtk_tree_store_remove(sakura.sidebar_model, &group_iter);
+	sakura_sidebar_free_node(group->sidebar_node);
+	g_assert_null(group->sidebar_node);
+	sakura.cfg = g_key_file_new();
+	sakura_sidebar_model_reordered_cb(NULL, NULL, NULL, NULL, NULL);
+	saved_group_ids = g_key_file_get_string_list(
+		sakura.cfg, "sakura", "sidebar_group_ids", &saved_group_count, NULL);
+	g_assert_cmpuint(saved_group_count, ==, 1);
+	g_assert_cmpstr(saved_group_ids[0], ==, "projection-group");
+	g_strfreev(saved_group_ids);
+	g_key_file_free(sakura.cfg);
+	sakura.cfg = NULL;
 	snapshot = sakura_workspace_snapshot_new();
+	g_assert_cmpuint(snapshot->groups->len, ==, 1);
+	group_record = g_ptr_array_index(snapshot->groups, 0);
+	g_assert_cmpstr(group_record->id, ==, "projection-group");
+	g_assert_cmpstr(group_record->parent_id, ==, "root");
+	g_assert_cmpuint(snapshot->tabs->len, ==, 3);
+	tab_record = test_snapshot_tab_record(snapshot, "terminal-b");
+	g_assert_nonnull(tab_record);
+	g_assert_cmpstr(tab_record->parent_id, ==, "projection-child");
 	g_assert_cmpuint(snapshot->tasks->len, ==, 2);
 	child_record = g_ptr_array_index(snapshot->tasks, 0);
 	g_assert_cmpstr(child_record->id, ==, "projection-child");
 	g_assert_cmpstr(child_record->parent_id, ==, "projection-parent");
 	sakura_session_snapshot_free(snapshot);
+	sakura_sidebar_rebuild_projection();
 
 	page->task = NULL;
 	page->group = sakura.root_group;
