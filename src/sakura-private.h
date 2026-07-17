@@ -643,7 +643,7 @@ SakuraSidebarNode *sakura_sidebar_creation_parent_for_context(
                                       SakuraSidebarNode *context);
 gboolean sakura_sidebar_move_page_to_group(SakuraPage *page,
                                             SakuraSidebarNode *group);
-void sakura_sidebar_sync_parents(void);
+void sakura_sidebar_sync_projection_links(void);
 SakuraSessionSnapshot *sakura_workspace_snapshot_new(void);
 gboolean sakura_workspace_restore_snapshot(SakuraSessionSnapshot *snapshot);
 void sakura_workspace_finish_restore(void);

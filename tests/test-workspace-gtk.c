@@ -1259,7 +1259,7 @@ test_group_model_survives_sidebar_projection(void)
 	}
 	page->sidebar_node->parent = replacement;
 	sakura_sidebar_insert_node(page->sidebar_node);
-	sakura_sidebar_sync_parents();
+	sakura_sidebar_sync_projection_links();
 	assert_workspace_consistent();
 
 	g_assert_true(sakura_sidebar_move_page_to_group(page, sakura.sidebar_root));
@@ -1401,7 +1401,9 @@ test_sidebar_order_survives_snapshot_roundtrip(void)
 	g_assert_true(sakura_sidebar_get_iter(group_a, &first_iter));
 	g_assert_true(sakura_sidebar_get_iter(group_b, &second_iter));
 	gtk_tree_store_move_before(sakura.sidebar_model, &second_iter, &first_iter);
-	sakura_sidebar_model_reordered_cb(NULL, NULL, NULL, NULL, NULL);
+	g_assert_true(sakura_sidebar_get_iter(sakura.sidebar_root, &first_iter));
+	sakura_sidebar_model_reordered_cb(GTK_TREE_MODEL(sakura.sidebar_model),
+	                                  NULL, &first_iter, NULL, NULL);
 	g_assert_cmpuint(group_b->group->order, ==, 0);
 	g_assert_cmpuint(group_a->group->order, ==, 1);
 
@@ -1428,7 +1430,9 @@ test_sidebar_order_survives_snapshot_roundtrip(void)
 	g_assert_true(sakura_sidebar_get_iter(task_a->sidebar_node, &first_iter));
 	g_assert_true(sakura_sidebar_get_iter(task_b->sidebar_node, &second_iter));
 	gtk_tree_store_move_before(sakura.sidebar_model, &second_iter, &first_iter);
-	sakura_sidebar_model_reordered_cb(NULL, NULL, NULL, NULL, NULL);
+	g_assert_true(sakura_sidebar_get_iter(group_a, &first_iter));
+	sakura_sidebar_model_reordered_cb(GTK_TREE_MODEL(sakura.sidebar_model),
+	                                  NULL, &first_iter, NULL, NULL);
 	g_assert_cmpuint(task_b->order, ==, 0);
 	g_assert_cmpuint(task_a->order, ==, 1);
 
@@ -1542,7 +1546,7 @@ test_sidebar_move_page_preserves_whole_page_parent(void)
 	}
 
 	/* The persisted/model parent must agree with the GTK tree after a move. */
-	sakura_sidebar_sync_parents();
+	sakura_sidebar_sync_projection_links();
 	g_assert_true(page->sidebar_node->parent == group);
 	assert_workspace_consistent();
 
