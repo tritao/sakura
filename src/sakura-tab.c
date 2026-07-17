@@ -758,6 +758,14 @@ sakura_tab_add_with_options (const gchar *restore_cwd,
 		 * function in the window is not visible *sigh*. Gtk documentation
 		 * says this is for "historical" reasons. Me arse */
 		gtk_notebook_set_current_page(GTK_NOTEBOOK(sakura.notebook), index);
+		/* The switch-page callback is suppressed while the surrounding
+		 * workspace mutation is open. Reflect the page GTK actually selected
+		 * before the transaction is validated. */
+		if (gtk_notebook_get_current_page(GTK_NOTEBOOK(sakura.notebook)) == index) {
+			sakura.workspace->active_tab = sk_tab;
+			sakura.workspace->active_page = tab_page;
+			tab_page->active_tab = sk_tab;
+		}
 
 		gboolean child_started = sakura_tab_start_process(
 			sk_tab, cwd, command_env, restore_kind, restore_tool,

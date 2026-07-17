@@ -2115,7 +2115,12 @@ sakura_init()
 	if (!g_file_test(configdir, G_FILE_TEST_EXISTS))
 		g_mkdir( configdir, 0755);
 	if (option_config_file) { /* Don't force the config path for user conf file */
-		sakura.configfile = option_config_file;
+		/* The process working directory is intentionally reset to $HOME after
+		 * startup. Keep every path derived from --config-file stable across that
+		 * transition, including the session lock and history directories. */
+		sakura.configfile = g_canonicalize_filename(option_config_file, NULL);
+		g_free(option_config_file);
+		option_config_file = NULL;
 	} else {
 		sakura.configfile = g_build_filename(configdir, DEFAULT_CONFIGFILE, NULL);
 	}
@@ -3224,7 +3229,7 @@ sakura_destroy_cleanup(void)
 
 	g_clear_pointer(&sakura.font, pango_font_description_free);
 
-	free(sakura.configfile);
+	g_free(sakura.configfile);
 	sakura.configfile = NULL;
 	g_free(sakura.sessionfile);
 	sakura.sessionfile = NULL;

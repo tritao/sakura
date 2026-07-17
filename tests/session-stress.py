@@ -484,7 +484,7 @@ def read_task_orders(session_file):
 
 
 def assert_no_stale_gobject_pointer_criticals(log_file):
-    """Catch stale Sakura widget pointers without flagging Xvfb teardown noise."""
+    """Catch known Sakura lifecycle warnings without flagging Xvfb teardown noise."""
     if not log_file.is_file():
         return
     text = log_file.read_text(encoding="utf-8", errors="replace")
@@ -492,6 +492,8 @@ def assert_no_stale_gobject_pointer_criticals(log_file):
         "invalid unclassed pointer in cast to 'GObject'",
         "instance with invalid (NULL) class pointer",
         "g_signal_handler_is_connected: assertion",
+        "Could not create terminal history file",
+        "Workspace invariant failed after mutation",
     )
     critical_lines = [line for line in text.splitlines()
                       if any(signature in line for signature in signatures)]
@@ -935,6 +937,7 @@ def run_task_drag_reorder_case(binary, config_file, session_file, env, log_file)
         )
         close_window(process, window, env)
         process = None
+        assert_no_stale_gobject_pointer_criticals(log_file)
     except Exception:
         if process is not None and process.poll() is None:
             process.kill()
@@ -1002,14 +1005,17 @@ def close_window(process, window, env):
 
 def launch_sakura(binary, config_file, env, log_file):
     log_handle = log_file.open("a", encoding="utf-8")
-    command = [str(binary), "--config-file", str(config_file)]
+    # Keep this relative on purpose. Sakura resets its cwd to $HOME after
+    # initialization, so this catches persistence paths that are accidentally
+    # resolved again from the post-startup cwd.
+    command = [str(binary), "--config-file", config_file.name]
     launcher = env.get("SAKURA_STRESS_LAUNCHER")
     if launcher:
         command = shlex.split(launcher) + command
         if env.get("SAKURA_STRESS_VERBOSE"):
             print("launch:", command, file=sys.stderr)
     process = subprocess.Popen(
-        command,
+        command, cwd=config_file.parent,
         env=env, stdout=log_handle, stderr=subprocess.STDOUT,
     )
     log_handle.close()
@@ -1080,12 +1086,20 @@ def run_pane_switch_case(binary, config_file, session_file, env, log_file):
 
 
 def run_create_delete_case(binary, config_file, session_file, env, log_file):
-    """Exercise real split-pane, pane-close, and page-close mutations."""
+    """Exercise real new-page, split-pane, pane-close, and page-close mutations."""
     write_pane_switch_fixture(config_file, session_file)
     process, window = launch_sakura(binary, config_file, env, log_file)
     try:
         wait_for_session(session_file, lambda value: len(value[2]) == 3)
         run(["xdotool", "windowfocus", "--sync", window], env)
+
+        # Use a standalone page before the split/close sequence. This exercises
+        # the mutation path where GTK changes notebook pages synchronously
+        # while the switch-page callback is intentionally suppressed.
+        run(["xdotool", "key", "ctrl+shift+t"], env)
+        wait_for_session(session_file, lambda value: len(value[2]) == 4)
+        run(["xdotool", "key", "ctrl+shift+w"], env)
+        wait_for_session(session_file, lambda value: len(value[2]) == 3)
 
         run(["xdotool", "key", "ctrl+shift+e"], env)
         wait_for_session(session_file, lambda value: len(value[2]) == 4)
@@ -1111,6 +1125,7 @@ def run_create_delete_case(binary, config_file, session_file, env, log_file):
         )
         close_window(process, window, env)
         process = None
+        assert_no_stale_gobject_pointer_criticals(log_file)
     except Exception:
         if process is not None and process.poll() is None:
             process.kill()
