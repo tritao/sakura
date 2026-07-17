@@ -368,6 +368,7 @@ struct sakura_group {
 	gchar *directory;
 	gchar *last_terminal_id;
 	SakuraGroup *parent;
+	guint order; /* Sibling order in the workspace model. */
 	SakuraSidebarNode *sidebar_node; /* Current projection row, if materialized. */
 };
 
@@ -381,6 +382,7 @@ struct sakura_task {
 	SakuraSidebarNode *sidebar_node;
 	SakuraTask *parent;
 	SakuraGroup *group; /* Explicit owning group; not separately owned. */
+	guint order; /* Sibling order in the workspace model. */
 };
 
 struct sakura_page {
@@ -774,6 +776,7 @@ typedef struct {
 	gchar *parent_id;
 	gchar *title;
 	gchar *directory;
+	guint order;
 } SakuraSessionGroupRecord;
 
 typedef struct {
@@ -785,6 +788,7 @@ typedef struct {
 	gchar *external_id;
 	gchar *url;
 	SakuraTaskStatus status;
+	guint order;
 } SakuraSessionTaskRecord;
 
 typedef struct {

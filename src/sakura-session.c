@@ -11,7 +11,7 @@
 
 #include "sakura-private.h"
 
-#define SAKURA_SESSION_VERSION 5
+#define SAKURA_SESSION_VERSION 6
 #define _(String) gettext(String)
 
 
@@ -994,6 +994,12 @@ sakura_session_snapshot_load_into(GKeyFile *key_file,
 		group->parent_id = g_key_file_get_string(key_file, section, "parent", NULL);
 		group->title = g_key_file_get_string(key_file, section, "title", NULL);
 		group->directory = g_key_file_get_string(key_file, section, "directory", NULL);
+		group->order = index;
+		if (g_key_file_has_key(key_file, section, "order", NULL)) {
+			gint order = g_key_file_get_integer(key_file, section, "order", NULL);
+			if (order >= 0)
+				group->order = order;
+		}
 		if (group->parent_id == NULL)
 			group->parent_id = g_strdup("root");
 		if (group->title == NULL)
@@ -1013,6 +1019,12 @@ sakura_session_snapshot_load_into(GKeyFile *key_file,
 		task->provider = g_key_file_get_string(key_file, section, "provider", NULL);
 		task->external_id = g_key_file_get_string(key_file, section, "external_id", NULL);
 		task->url = g_key_file_get_string(key_file, section, "url", NULL);
+		task->order = index;
+		if (g_key_file_has_key(key_file, section, "order", NULL)) {
+			gint order = g_key_file_get_integer(key_file, section, "order", NULL);
+			if (order >= 0)
+				task->order = order;
+		}
 		status = g_key_file_get_integer(key_file, section, "status", NULL);
 		task->status = status >= SAKURA_TASK_READY && status <= SAKURA_TASK_DONE
 		             ? status : SAKURA_TASK_READY;
@@ -1189,6 +1201,7 @@ sakura_session_snapshot_save(const SakuraSessionSnapshot *snapshot,
 		g_key_file_set_string(key_file, section, "id", group->id != NULL ? group->id : "");
 		g_key_file_set_string(key_file, section, "parent",
 		                      group->parent_id != NULL ? group->parent_id : "root");
+		g_key_file_set_integer(key_file, section, "order", group->order);
 		g_key_file_set_string(key_file, section, "title", group->title != NULL ? group->title : "");
 		if (group->directory != NULL && group->directory[0] != '\0')
 			g_key_file_set_string(key_file, section, "directory", group->directory);
@@ -1204,6 +1217,7 @@ sakura_session_snapshot_save(const SakuraSessionSnapshot *snapshot,
 		                      task->parent_id != NULL ? task->parent_id : "root");
 		g_key_file_set_string(key_file, section, "group",
 		                      task->group_id != NULL ? task->group_id : "root");
+		g_key_file_set_integer(key_file, section, "order", task->order);
 		g_key_file_set_string(key_file, section, "title", task->title != NULL ? task->title : "");
 		g_key_file_set_string(key_file, section, "provider",
 		                      task->provider != NULL ? task->provider : "local");

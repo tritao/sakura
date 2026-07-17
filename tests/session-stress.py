@@ -327,7 +327,7 @@ def read_session(session_file):
     parser.read(session_file, encoding="utf-8")
     if not parser.has_section("Session"):
         raise AssertionError("session has no [Session] section")
-    if parser.getint("Session", "version") not in (3, 4, 5):
+    if parser.getint("Session", "version") not in (3, 4, 5, 6):
         raise AssertionError("unexpected session version")
 
     group_count = parser.getint("Session", "group_count")

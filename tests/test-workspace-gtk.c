@@ -232,6 +232,21 @@ test_snapshot_tab_record(const SakuraSessionSnapshot *snapshot,
 }
 
 
+static SakuraSessionGroupRecord *
+test_snapshot_group_record(const SakuraSessionSnapshot *snapshot,
+                           const gchar *group_id)
+{
+	guint index;
+
+	for (index = 0; snapshot != NULL && index < snapshot->groups->len; index++) {
+		SakuraSessionGroupRecord *record = g_ptr_array_index(snapshot->groups, index);
+		if (g_strcmp0(record->id, group_id) == 0)
+			return record;
+	}
+	return NULL;
+}
+
+
 static SakuraSessionLayoutRecord *
 test_snapshot_leftmost_layout(const SakuraSessionSnapshot *snapshot,
                               SakuraSessionLayoutRecord *record)
@@ -1338,7 +1353,14 @@ test_sidebar_rebuilds_nested_model_projection(void)
 	g_assert_nonnull(tab_record);
 	g_assert_cmpstr(tab_record->parent_id, ==, "projection-child");
 	g_assert_cmpuint(snapshot->tasks->len, ==, 2);
-	child_record = g_ptr_array_index(snapshot->tasks, 0);
+	for (guint index = 0; index < snapshot->tasks->len; index++) {
+		SakuraSessionTaskRecord *record = g_ptr_array_index(snapshot->tasks, index);
+		if (g_strcmp0(record->id, "projection-child") == 0) {
+			child_record = record;
+			break;
+		}
+	}
+	g_assert_nonnull(child_record);
 	g_assert_cmpstr(child_record->id, ==, "projection-child");
 	g_assert_cmpstr(child_record->parent_id, ==, "projection-parent");
 	sakura_session_snapshot_free(snapshot);
@@ -1348,6 +1370,115 @@ test_sidebar_rebuilds_nested_model_projection(void)
 	page->group = sakura.root_group;
 	g_ptr_array_unref(sakura.tasks);
 	sakura.tasks = NULL;
+	teardown_workspace();
+}
+
+
+static void
+test_sidebar_order_survives_snapshot_roundtrip(void)
+{
+	SakuraSidebarNode *group_a, *group_b;
+	SakuraGroup *model_group_a, *model_group_b;
+	SakuraTask *task_a, *task_b;
+	SakuraSessionSnapshot *source, *loaded;
+	SakuraSessionGroupRecord *group_record;
+	SakuraSessionTaskRecord *task_record;
+	GtkTreeIter first_iter, second_iter;
+	GKeyFile *key_file;
+	GError *error = NULL;
+
+	setup_workspace();
+	setup_sidebar_fixture();
+	sakura.cfg = g_key_file_new();
+	group_a = test_sidebar_add_group("ordered-group-a", "Group A",
+	                                sakura.sidebar_root);
+	group_b = test_sidebar_add_group("ordered-group-b", "Group B",
+	                                sakura.sidebar_root);
+	model_group_a = group_a->group;
+	model_group_b = group_b->group;
+	group_a->group->order = 0;
+	group_b->group->order = 1;
+	g_assert_true(sakura_sidebar_get_iter(group_a, &first_iter));
+	g_assert_true(sakura_sidebar_get_iter(group_b, &second_iter));
+	gtk_tree_store_move_before(sakura.sidebar_model, &second_iter, &first_iter);
+	sakura_sidebar_model_reordered_cb(NULL, NULL, NULL, NULL, NULL);
+	g_assert_cmpuint(group_b->group->order, ==, 0);
+	g_assert_cmpuint(group_a->group->order, ==, 1);
+
+	sakura.tasks = g_ptr_array_new_with_free_func((GDestroyNotify)sakura_task_free);
+	task_a = g_new0(SakuraTask, 1);
+	task_a->id = g_strdup("ordered-task-a");
+	task_a->title = g_strdup("Task A");
+	task_a->provider = g_strdup("local");
+	task_a->status = SAKURA_TASK_READY;
+	task_a->group = group_a->group;
+	task_a->order = 0;
+	task_b = g_new0(SakuraTask, 1);
+	task_b->id = g_strdup("ordered-task-b");
+	task_b->title = g_strdup("Task B");
+	task_b->provider = g_strdup("local");
+	task_b->status = SAKURA_TASK_READY;
+	task_b->group = group_a->group;
+	task_b->order = 1;
+	g_ptr_array_add(sakura.tasks, task_a);
+	g_ptr_array_add(sakura.tasks, task_b);
+	sakura_sidebar_rebuild_projection();
+	group_a = model_group_a->sidebar_node;
+	group_b = model_group_b->sidebar_node;
+	g_assert_true(sakura_sidebar_get_iter(task_a->sidebar_node, &first_iter));
+	g_assert_true(sakura_sidebar_get_iter(task_b->sidebar_node, &second_iter));
+	gtk_tree_store_move_before(sakura.sidebar_model, &second_iter, &first_iter);
+	sakura_sidebar_model_reordered_cb(NULL, NULL, NULL, NULL, NULL);
+	g_assert_cmpuint(task_b->order, ==, 0);
+	g_assert_cmpuint(task_a->order, ==, 1);
+
+	source = sakura_workspace_snapshot_new();
+	g_assert_cmpuint(source->groups->len, ==, 2);
+	group_record = g_ptr_array_index(source->groups, 0);
+	g_assert_cmpstr(group_record->id, ==, "ordered-group-b");
+	g_assert_cmpuint(group_record->order, ==, 0);
+	group_record = test_snapshot_group_record(source, "ordered-group-a");
+	g_assert_nonnull(group_record);
+	g_assert_cmpuint(group_record->order, ==, 1);
+	g_assert_cmpuint(source->tasks->len, ==, 2);
+	task_record = g_ptr_array_index(source->tasks, 0);
+	g_assert_cmpstr(task_record->id, ==, "ordered-task-b");
+	g_assert_cmpuint(task_record->order, ==, 0);
+	task_record = g_ptr_array_index(source->tasks, 1);
+	g_assert_cmpstr(task_record->id, ==, "ordered-task-a");
+	g_assert_cmpuint(task_record->order, ==, 1);
+
+	key_file = g_key_file_new();
+	sakura_session_snapshot_save(source, key_file);
+	loaded = sakura_session_snapshot_new();
+	g_assert_true(sakura_session_snapshot_load(key_file, loaded, &error));
+	g_assert_no_error(error);
+	g_assert_cmpuint(loaded->groups->len, ==, source->groups->len);
+	g_assert_cmpuint(loaded->tasks->len, ==, source->tasks->len);
+	g_assert_cmpuint(((SakuraSessionGroupRecord *)g_ptr_array_index(
+		loaded->groups, 0))->order, ==, 0);
+	g_assert_cmpuint(((SakuraSessionTaskRecord *)g_ptr_array_index(
+		loaded->tasks, 0))->order, ==, 0);
+	sakura_session_snapshot_free(loaded);
+	sakura_session_snapshot_free(source);
+	g_key_file_free(key_file);
+
+	for (guint index = 0; index < sakura.tasks->len; index++) {
+		SakuraTask *task = g_ptr_array_index(sakura.tasks, index);
+		if (task->sidebar_node != NULL) {
+			GtkTreeIter iter;
+			if (sakura_sidebar_get_iter(task->sidebar_node, &iter))
+				gtk_tree_store_remove(sakura.sidebar_model, &iter);
+			sakura_sidebar_free_node(task->sidebar_node);
+			task->sidebar_node = NULL;
+		}
+	}
+	g_ptr_array_unref(sakura.tasks);
+	sakura.tasks = NULL;
+	test_sidebar_remove_group(group_a);
+	test_sidebar_remove_group(group_b);
+	g_key_file_free(sakura.cfg);
+	sakura.cfg = NULL;
 	teardown_workspace();
 }
 
@@ -1649,6 +1780,8 @@ main(int argc, char **argv)
 	                test_group_model_survives_sidebar_projection);
 	g_test_add_func("/workspace/sidebar-rebuilds-nested-model-projection",
 	                test_sidebar_rebuilds_nested_model_projection);
+	g_test_add_func("/workspace/sidebar-order-snapshot-roundtrip",
+	                test_sidebar_order_survives_snapshot_roundtrip);
 	g_test_add_func("/workspace/sidebar-creation-parent-context",
 	                test_sidebar_creation_parent_preserves_context);
 	g_test_add_func("/workspace/sidebar-move-page-parent",
