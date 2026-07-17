@@ -3606,6 +3606,8 @@ sakura_new_tab_for_group (SakuraSidebarNode *group)
 void
 sakura_new_tab_for_task (SakuraTask *task)
 {
+	SakuraSidebarNode *parent;
+	SakuraPage *previous_page;
 	SakuraTabLaunchConfig launch_config = {
 			.execute_command = option_execute,
 			.xterm_args = option_xterm_args,
@@ -3619,14 +3621,25 @@ sakura_new_tab_for_task (SakuraTask *task)
 			.split_direction = SAKURA_SPLIT_RIGHT
 		};
 
-	if (task == NULL || task->sidebar_node == NULL)
+	if (task == NULL)
 		return;
+	parent = task->sidebar_node;
+	if (parent == NULL && task->group != NULL)
+		parent = task->group->sidebar_node;
+	if (parent == NULL)
+		parent = sakura.sidebar_root;
+	if (parent == NULL)
+		return;
+	previous_page = sakura.active_page;
 
 	sakura_workspace_begin_mutation();
 	sakura_session_accept_changes();
-	sakura_tab_add_with_options(NULL, task->sidebar_node, NULL, FALSE,
+	sakura_tab_add_with_options(NULL, parent, NULL, FALSE,
 	                            SAKURA_TAB_SHELL, SAKURA_TOOL_NONE,
 	                            NULL, NULL, NULL, NULL, NULL, -1, &launch_config);
+	if (task->sidebar_node == NULL && sakura.active_page != NULL &&
+	    sakura.active_page != previous_page)
+		sakura_task_attach_page(task, sakura.active_page);
 	sakura_workspace_end_mutation();
 }
 

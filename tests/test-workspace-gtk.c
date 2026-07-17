@@ -1156,6 +1156,69 @@ test_sidebar_task_owns_page(void)
 
 
 static void
+test_task_model_survives_sidebar_projection(void)
+{
+	SakuraTask *task;
+	SakuraSidebarNode *node;
+	SakuraPage *page;
+	SakuraSessionSnapshot *snapshot;
+	GtkTreeIter iter;
+
+	setup_workspace();
+	setup_sidebar_fixture();
+	sakura.tasks = g_ptr_array_new_with_free_func((GDestroyNotify)sakura_task_free);
+	task = g_new0(SakuraTask, 1);
+	task->id = g_strdup("task-model-only");
+	task->title = g_strdup("Model-only task");
+	task->status = SAKURA_TASK_READY;
+	task->group = sakura.root_group;
+	g_ptr_array_add(sakura.tasks, task);
+	page = sakura_page_at_page(1);
+
+	/* A task can own a page before its sidebar projection exists. */
+	sakura_task_attach_page(task, page);
+	g_assert_null(task->sidebar_node);
+	g_assert_true(page->task == task);
+	g_assert_true(page->sidebar_node->parent == sakura.sidebar_root);
+	sakura_task_update_row(task);
+	assert_workspace_consistent();
+	snapshot = sakura_workspace_snapshot_new();
+	g_assert_cmpuint(snapshot->tasks->len, ==, 1);
+	g_assert_cmpstr(((SakuraSessionTaskRecord *)g_ptr_array_index(
+		snapshot->tasks, 0))->id, ==, "task-model-only");
+	sakura_session_snapshot_free(snapshot);
+
+	/* Materializing the row must move the existing page projection beneath it. */
+	node = g_new0(SakuraSidebarNode, 1);
+	node->type = SAKURA_SIDEBAR_TASK;
+	node->id = g_strdup(task->id);
+	node->title = g_strdup(task->title);
+	node->parent = sakura.sidebar_root;
+	node->task = task;
+	task->sidebar_node = node;
+	sakura_sidebar_insert_node(node);
+	sakura_task_attach_page(task, page);
+	g_assert_true(page->sidebar_node->parent == node);
+	assert_workspace_consistent();
+
+	/* Removing the projection must not remove the model task. */
+	g_assert_true(sakura_sidebar_get_iter(node, &iter));
+	gtk_tree_store_remove(sakura.sidebar_model, &iter);
+	sakura_sidebar_free_node(node);
+	g_assert_null(task->sidebar_node);
+	g_assert_true(sakura_task_find_by_id("task-model-only") == task);
+	sakura_task_detach_page(page);
+	g_assert_null(page->task);
+	g_assert_true(page->sidebar_node->parent == sakura.sidebar_root);
+	assert_workspace_consistent();
+
+	g_ptr_array_unref(sakura.tasks);
+	sakura.tasks = NULL;
+	teardown_workspace();
+}
+
+
+static void
 test_group_model_survives_sidebar_projection(void)
 {
 	SakuraSidebarNode *group_row, *replacement;
@@ -1486,6 +1549,8 @@ main(int argc, char **argv)
 	                test_sidebar_collapses_split_session_panes);
 	g_test_add_func("/workspace/sidebar-task-owns-page",
 	                test_sidebar_task_owns_page);
+	g_test_add_func("/workspace/task-model-survives-sidebar-projection",
+	                test_task_model_survives_sidebar_projection);
 	g_test_add_func("/workspace/group-model-survives-sidebar-projection",
 	                test_group_model_survives_sidebar_projection);
 	g_test_add_func("/workspace/sidebar-creation-parent-context",
