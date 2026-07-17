@@ -987,6 +987,50 @@ sakura_sidebar_page_active_tab(SakuraPage *page)
 	return sakura_session_active_pane(page);
 }
 
+
+static gchar *
+sakura_sidebar_page_directory_summary(SakuraPage *page, SakuraTab *active)
+{
+	const gchar *common_directory = NULL;
+	SakuraTab *representative = NULL;
+	gboolean missing_directory = FALSE;
+	guint index;
+	gchar *display;
+	const gchar *group_directory;
+
+	if (page == NULL || page->panes == NULL || page->panes->len <= 1)
+		return g_strdup(active != NULL && active->sidebar_node != NULL &&
+	                       active->sidebar_node->subtitle != NULL
+	                     ? active->sidebar_node->subtitle : "");
+
+	for (index = 0; index < page->panes->len; index++) {
+		SakuraTab *tab = g_ptr_array_index(page->panes, index);
+
+		if (tab == NULL || tab->cwd == NULL || tab->cwd[0] == '\0') {
+			missing_directory = TRUE;
+			continue;
+		}
+		if (common_directory == NULL) {
+			common_directory = tab->cwd;
+			representative = tab;
+		} else if (!sakura_sidebar_paths_equal(common_directory, tab->cwd)) {
+			return g_strdup(_("Multiple directories"));
+		}
+	}
+	if (common_directory == NULL || missing_directory)
+		return missing_directory ? g_strdup(_("Multiple directories")) : g_strdup("");
+
+	display = sakura_sidebar_directory_display(common_directory);
+	group_directory = representative != NULL && representative->sidebar_node != NULL
+	                ? sakura_sidebar_group_directory(representative->sidebar_node) : NULL;
+	if (group_directory != NULL &&
+	    sakura_sidebar_paths_equal(common_directory, group_directory)) {
+		g_free(display);
+		return g_strdup("");
+	}
+	return display != NULL ? display : g_strdup("");
+}
+
 static const gchar *
 sakura_sidebar_tab_icon_name(SakuraTab *tab)
 {
@@ -4655,12 +4699,14 @@ sakura_sidebar_update_page(SakuraPage *page)
 		title = g_strdup_printf(_("%s (%u panes)"), base_title, pane_count);
 	else
 		title = g_strdup(base_title);
-	subtitle = g_strdup(active != NULL && active->sidebar_node != NULL &&
-	                   active->sidebar_node->subtitle != NULL
-	                 ? active->sidebar_node->subtitle : "");
-	tooltip = g_strdup(active != NULL && active->sidebar_node != NULL &&
-	                  active->sidebar_node->tooltip != NULL
-	                ? active->sidebar_node->tooltip : title);
+	subtitle = sakura_sidebar_page_directory_summary(page, active);
+	if (pane_count > 1)
+		tooltip = subtitle[0] != '\0'
+		        ? g_strdup_printf("%s\n%s", title, subtitle) : g_strdup(title);
+	else
+		tooltip = g_strdup(active != NULL && active->sidebar_node != NULL &&
+		                  active->sidebar_node->tooltip != NULL
+		                ? active->sidebar_node->tooltip : title);
 
 	g_free(node->title);
 	g_free(node->subtitle);

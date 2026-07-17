@@ -7,7 +7,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: sakura\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-07-17 15:45+0100\n"
+"POT-Creation-Date: 2026-07-17 19:48+0100\n"
 "PO-Revision-Date: 2019-09-30 05:48+0000\n"
 "Last-Translator: Minho Park <parkmino@gmail.com>\n"
 "Language-Team: Korean <ko@li.org>\n"
@@ -348,6 +348,9 @@ msgstr "작업 디렉토리 설정"
 #, fuzzy, c-format
 msgid "Inherited working directory: %s"
 msgstr "작업 디렉토리 설정"
+
+msgid "Multiple directories"
+msgstr ""
 
 msgid "Untitled task"
 msgstr ""

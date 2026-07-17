@@ -4,7 +4,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: ja\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-07-17 15:45+0100\n"
+"POT-Creation-Date: 2026-07-17 19:48+0100\n"
 "PO-Revision-Date: 2019-08-12 16:55+0000\n"
 "Last-Translator: David Gómez <david@pleyades.net>\n"
 "Language-Team: Japanese <ja@li.org>\n"
@@ -345,6 +345,9 @@ msgstr "作業ディレクトリを設定"
 #, fuzzy, c-format
 msgid "Inherited working directory: %s"
 msgstr "作業ディレクトリを設定"
+
+msgid "Multiple directories"
+msgstr ""
 
 msgid "Untitled task"
 msgstr ""

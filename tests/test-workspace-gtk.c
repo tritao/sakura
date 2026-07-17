@@ -694,6 +694,21 @@ test_sidebar_column(SakuraTab *tab, guint column)
 }
 
 
+static gchar *
+test_sidebar_page_column(SakuraPage *page, guint column)
+{
+	GtkTreeIter iter;
+	gchar *value = NULL;
+
+	g_assert_nonnull(page);
+	g_assert_nonnull(page->sidebar_node);
+	g_assert_true(sakura_sidebar_get_iter(page->sidebar_node, &iter));
+	gtk_tree_model_get(GTK_TREE_MODEL(sakura.sidebar_model), &iter,
+	                   column, &value, -1);
+	return value;
+}
+
+
 static guint
 test_sidebar_uint_column(SakuraTab *tab, guint column)
 {
@@ -760,7 +775,8 @@ test_menu_item_for_label(GtkWidget *menu, const gchar *label)
 static void
 test_sidebar_hides_redundant_directory(void)
 {
-	SakuraTab *same, *different;
+	SakuraPage *split_page;
+	SakuraTab *same, *different, *split_pane;
 	gchar *subtitle, *tooltip;
 
 	setup_workspace();
@@ -789,6 +805,29 @@ test_sidebar_hides_redundant_directory(void)
 	sakura_sidebar_model_reordered_cb(NULL, NULL, NULL, NULL, NULL);
 	subtitle = test_sidebar_column(different, SAKURA_SIDEBAR_COLUMN_SUBTITLE);
 	g_assert_cmpstr(subtitle, ==, "/var");
+	g_free(subtitle);
+
+	split_page = sakura_page_at_page(0);
+	split_pane = g_new0(SakuraTab, 1);
+	split_pane->terminal_id = g_strdup("terminal-directory-split");
+	split_pane->hbox = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
+	split_pane->label = gtk_label_new("Terminal");
+	split_pane->cwd = g_strdup("/var");
+	g_assert_true(sakura_layout_split_node_widgets(
+		split_page->active_tab->layout_leaf, SAKURA_SPLIT_DOWN, split_pane));
+	test_sidebar_add_tab(split_pane);
+	sakura_sidebar_update_page(split_page);
+	subtitle = test_sidebar_page_column(split_page,
+	                                    SAKURA_SIDEBAR_COLUMN_SUBTITLE);
+	g_assert_cmpstr(subtitle, ==, "Multiple directories");
+	g_free(subtitle);
+
+	g_free(split_pane->cwd);
+	split_pane->cwd = g_strdup("/tmp");
+	sakura_sidebar_update_page(split_page);
+	subtitle = test_sidebar_page_column(split_page,
+	                                    SAKURA_SIDEBAR_COLUMN_SUBTITLE);
+	g_assert_cmpstr(subtitle, ==, "");
 	g_free(subtitle);
 
 	g_free(sakura.root_group->directory);

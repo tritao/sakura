@@ -6,7 +6,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: sakura 1.2.0\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-07-17 15:45+0100\n"
+"POT-Creation-Date: 2026-07-17 19:48+0100\n"
 "PO-Revision-Date: 2018-04-29 13:18+0000\n"
 "Last-Translator: David Gómez <david@pleyades.net>\n"
 "Language-Team: <fabrice.thiroux@free.fr>\n"
@@ -347,6 +347,9 @@ msgstr "Définir le répertoire de travail"
 #, fuzzy, c-format
 msgid "Inherited working directory: %s"
 msgstr "Définir le répertoire de travail"
+
+msgid "Multiple directories"
+msgstr ""
 
 msgid "Untitled task"
 msgstr ""
