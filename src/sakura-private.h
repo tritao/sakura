@@ -17,11 +17,18 @@
 
 typedef struct sakura_app SakuraApp;
 typedef struct sakura_page SakuraPage;
+/* Semantic vocabulary: a page is the user-facing session container, while a
+ * tab is one terminal surface/pane inside that session. Keep the historical
+ * names as aliases until the implementation can be migrated module by
+ * module without changing persisted identifiers. */
+typedef SakuraPage SakuraSession;
 int sakura_run(int argc, char **argv);
 typedef struct sakura_layout_node SakuraLayoutNode;
 typedef struct sakura_sidebar_node SakuraSidebarNode;
 typedef struct sakura_tab SakuraTab;
+typedef SakuraTab SakuraPane;
 typedef struct sakura_task SakuraTask;
+/* This is the saved workspace snapshot; it is not one page-level session. */
 typedef struct sakura_session_snapshot SakuraSessionSnapshot;
 
 struct sakura_codex_name_query;
@@ -173,12 +180,12 @@ struct sakura_app {
 	gboolean sidebar_visible;
 	gint sidebar_width;
 	GtkWidget *notebook;
-	GPtrArray *tabs;               /* Stable tab ownership, in notebook order */
-	GPtrArray *pages;              /* Notebook pages; panes remain in tabs */
-	GPtrArray *panes;              /* All terminal surfaces, including splits */
+	GPtrArray *tabs;               /* Legacy representative, one per session */
+	GPtrArray *pages;              /* Session containers, in notebook order */
+	GPtrArray *panes;              /* Terminal surfaces owned by sessions */
 	GPtrArray *tasks;              /* Local task records */
 	SakuraTask *active_task;
-	SakuraPage *active_page;
+	SakuraPage *active_page;        /* Active session (legacy field name) */
 	GtkWidget *content_box;
 	GtkWidget *tab_bar_shell;
 	GtkWidget *tab_bar_scope_label;
@@ -187,7 +194,7 @@ struct sakura_app {
 	GtkWidget *tab_bar_new_button;
 	GtkWidget *tab_bar_empty;
 	SakuraSidebarNode *active_group_scope;
-	SakuraTab *active_tab;
+	SakuraTab *active_tab;          /* Active pane (legacy field name) */
 	gboolean tab_bar_refreshing;
 	GtkWidget *menu;
 	GtkWidget *fade_window;  /* Window used for fading effect */
@@ -453,6 +460,8 @@ extern SakuraApp sakura;
 
 SakuraPage *sakura_page_new(const gchar *id);
 void sakura_page_free(SakuraPage *page);
+SakuraSession *sakura_session_for_pane(SakuraPane *pane);
+SakuraPane *sakura_session_active_pane(SakuraSession *session);
 GtkWidget *sakura_page_widget_for_tab(SakuraTab *tab);
 SakuraLayoutNode *sakura_layout_leaf_new(SakuraPage *page, SakuraTab *tab);
 SakuraLayoutNode *sakura_layout_split_new(SakuraPage *page,
@@ -524,6 +533,7 @@ void sakura_tab_title_changed_cb(GtkWidget *widget, void *data);
 gboolean sakura_pane_focus_in_cb(GtkWidget *widget, GdkEventFocus *event,
                                  gpointer data);
 gboolean sakura_tab_is_in_active_scope(SakuraTab *tab);
+gboolean sakura_pane_is_in_active_scope(SakuraPane *pane);
 SakuraSidebarNode *sakura_sidebar_default_parent(void);
 void sakura_sidebar_set_scope(SakuraSidebarNode *scope);
 void sakura_sidebar_add_terminal(SakuraTab *tab, SakuraSidebarNode *parent);
@@ -581,6 +591,8 @@ void sakura_tab_bar_update_tab(SakuraTab *tab);
 void sakura_tab_bar_add_tab(SakuraTab *tab);
 void sakura_tab_bar_remove_tab(SakuraTab *tab);
 void sakura_select_tab(SakuraTab *tab, gboolean focus);
+void sakura_select_pane(SakuraPane *pane, gboolean focus);
+void sakura_select_session(SakuraSession *session, gboolean focus);
 void sakura_new_tab_cb(GtkWidget *widget, void *data);
 void sakura_new_tab_for_group(SakuraSidebarNode *group);
 void sakura_new_tab_for_task(SakuraTask *task);
@@ -711,6 +723,7 @@ void sakura_sidebar_queue_select_node_with_reason(
 	SakuraSidebarNode *node, SakuraSidebarSelectionReason reason);
 void sakura_sidebar_select_created_tab(SakuraTab *tab);
 void sakura_sidebar_cancel_pending_selection(void);
+void sakura_sidebar_apply_default_expansion(void);
 void sakura_workspace_begin_mutation(void);
 void sakura_workspace_end_mutation(void);
 gboolean sakura_workspace_is_mutating(void);

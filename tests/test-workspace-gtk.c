@@ -1020,6 +1020,46 @@ test_selecting_terminal_switches_group_scope(void)
 
 
 static void
+test_sidebar_collapses_split_session_panes(void)
+{
+	SakuraPage *page;
+	SakuraTab *pane;
+	GtkTreeIter iter;
+	GtkTreePath *path;
+
+	setup_workspace();
+	page = sakura_page_at_page(1);
+	pane = g_new0(SakuraTab, 1);
+	pane->terminal_id = g_strdup("terminal-collapsed-pane");
+	pane->hbox = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
+	pane->label = gtk_label_new("Terminal");
+	g_assert_true(sakura_layout_split_node_widgets(
+		page->active_tab->layout_leaf, SAKURA_SPLIT_DOWN, pane));
+	g_assert_true(sakura_session_for_pane(pane) == page);
+	g_assert_true(sakura_session_active_pane(page) == page->active_tab);
+	setup_sidebar_fixture();
+	sakura_sidebar_apply_default_expansion();
+
+	g_assert_true(sakura_sidebar_get_iter(page->sidebar_node, &iter));
+	g_assert_cmpint(gtk_tree_model_iter_n_children(
+		GTK_TREE_MODEL(sakura.sidebar_model), &iter), ==, 2);
+	path = gtk_tree_model_get_path(GTK_TREE_MODEL(sakura.sidebar_model), &iter);
+	g_assert_false(gtk_tree_view_row_expanded(GTK_TREE_VIEW(sakura.sidebar_tree),
+	                                           path));
+	g_assert_true(gtk_tree_view_expand_row(GTK_TREE_VIEW(sakura.sidebar_tree),
+	                                       path, FALSE));
+	g_assert_true(gtk_tree_view_row_expanded(GTK_TREE_VIEW(sakura.sidebar_tree),
+	                                         path));
+	gtk_tree_path_free(path);
+
+	/* The pane rows stay in the model and become available when the user
+	 * expands the session, rather than being deleted from the hierarchy. */
+	g_assert_nonnull(pane->sidebar_node);
+	teardown_workspace();
+}
+
+
+static void
 test_sidebar_task_owns_page(void)
 {
 	SakuraTask *task;
@@ -1154,7 +1194,7 @@ test_sidebar_page_context_menu_names_page_close(void)
 	setup_sidebar_fixture();
 
 	menu = sakura_sidebar_context_menu_new(page->sidebar_node);
-	g_assert_true(test_menu_has_label(menu, "Close page"));
+	g_assert_true(test_menu_has_label(menu, "Close session"));
 	g_assert_false(test_menu_has_label(menu, "Close terminal"));
 	gtk_widget_destroy(menu);
 
@@ -1355,6 +1395,8 @@ main(int argc, char **argv)
 	                test_close_active_page_preserves_group_scope);
 	g_test_add_func("/workspace/select-terminal-switches-group-scope",
 	                test_selecting_terminal_switches_group_scope);
+	g_test_add_func("/workspace/sidebar-collapses-split-session-panes",
+	                test_sidebar_collapses_split_session_panes);
 	g_test_add_func("/workspace/sidebar-task-owns-page",
 	                test_sidebar_task_owns_page);
 	g_test_add_func("/workspace/sidebar-creation-parent-context",

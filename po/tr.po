@@ -7,7 +7,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: sakura\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-07-17 11:18+0100\n"
+"POT-Creation-Date: 2026-07-17 15:45+0100\n"
 "PO-Revision-Date: 2022-11-11 17:45+0300\n"
 "Last-Translator: Eyyüb Akçaer <gurbetcii_@hotmail.com>\n"
 "Language-Team: Turkish <tr_TR>\n"
@@ -369,8 +369,9 @@ msgstr ""
 msgid "New subtask"
 msgstr "Yeni sekme"
 
-msgid "Attach current page here"
-msgstr ""
+#, fuzzy
+msgid "Attach current session here"
+msgstr "Yeni sekme"
 
 msgid "Set status"
 msgstr ""
@@ -395,17 +396,17 @@ msgstr ""
 msgid "Tools"
 msgstr ""
 
-msgid "Move page to group"
+msgid "Move session to group"
 msgstr ""
 
-msgid "Attach page to task"
+msgid "Attach session to task"
 msgstr ""
 
 msgid "Rename Codex session..."
 msgstr ""
 
 #, fuzzy
-msgid "Close page"
+msgid "Close session"
 msgstr "Sekmeyi kapat"
 
 #, fuzzy
@@ -781,6 +782,10 @@ msgstr "- vte- tabanlı uçbirim öykünücüsü"
 #, c-format
 msgid "sakura version is %s\n"
 msgstr "sakura sürümü: %s\n"
+
+#, fuzzy
+#~ msgid "Close page"
+#~ msgstr "Sekmeyi kapat"
 
 #, fuzzy
 #~ msgid "New terminal in group"

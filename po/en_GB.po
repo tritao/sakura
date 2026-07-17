@@ -7,7 +7,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: sakura\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-07-17 11:18+0100\n"
+"POT-Creation-Date: 2026-07-17 15:45+0100\n"
 "PO-Revision-Date: 2019-08-12 16:54+0000\n"
 "Last-Translator: David Gómez <david@pleyades.net>\n"
 "Language-Team: English (United Kingdom) <en_GB@li.org>\n"
@@ -370,7 +370,7 @@ msgid "New subtask"
 msgstr "New tab"
 
 #, fuzzy
-msgid "Attach current page here"
+msgid "Attach current session here"
 msgstr "New tab after current tab"
 
 msgid "Set status"
@@ -396,18 +396,18 @@ msgstr ""
 msgid "Tools"
 msgstr ""
 
-msgid "Move page to group"
+msgid "Move session to group"
 msgstr ""
 
 #, fuzzy
-msgid "Attach page to task"
+msgid "Attach session to task"
 msgstr "New tab after current tab"
 
 msgid "Rename Codex session..."
 msgstr ""
 
 #, fuzzy
-msgid "Close page"
+msgid "Close session"
 msgstr "Close tab"
 
 #, fuzzy
@@ -783,6 +783,10 @@ msgstr "- vte-based terminal emulator"
 #, c-format
 msgid "sakura version is %s\n"
 msgstr "sakura version is %s\n"
+
+#, fuzzy
+#~ msgid "Close page"
+#~ msgstr "Close tab"
 
 #, fuzzy
 #~ msgid "New terminal in group"

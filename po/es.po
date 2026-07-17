@@ -5,7 +5,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: sakura\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-07-17 11:18+0100\n"
+"POT-Creation-Date: 2026-07-17 15:45+0100\n"
 "PO-Revision-Date: 2019-08-12 16:53+0000\n"
 "Last-Translator: David Gómez <david@pleyades.net>\n"
 "Language-Team: <davidge@pleyades.net>\n"
@@ -368,7 +368,7 @@ msgid "New subtask"
 msgstr "Pestaña nueva"
 
 #, fuzzy
-msgid "Attach current page here"
+msgid "Attach current session here"
 msgstr "Nueva pestaña tras la pestaña actual"
 
 msgid "Set status"
@@ -394,18 +394,18 @@ msgstr ""
 msgid "Tools"
 msgstr ""
 
-msgid "Move page to group"
+msgid "Move session to group"
 msgstr ""
 
 #, fuzzy
-msgid "Attach page to task"
+msgid "Attach session to task"
 msgstr "Nueva pestaña tras la pestaña actual"
 
 msgid "Rename Codex session..."
 msgstr ""
 
 #, fuzzy
-msgid "Close page"
+msgid "Close session"
 msgstr "Cerrar pestaña"
 
 #, fuzzy
@@ -781,6 +781,10 @@ msgstr "- emulador de terminal basado en libvte"
 #, c-format
 msgid "sakura version is %s\n"
 msgstr "La versión de sakura es %s\n"
+
+#, fuzzy
+#~ msgid "Close page"
+#~ msgstr "Cerrar pestaña"
 
 #, fuzzy
 #~ msgid "New terminal in group"

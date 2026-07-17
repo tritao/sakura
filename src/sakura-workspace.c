@@ -671,13 +671,7 @@ sakura_workspace_validate(GError **error)
 static SakuraTab *
 sakura_sidebar_page_active_tab(SakuraPage *page)
 {
-	if (page == NULL)
-		return NULL;
-	if (page->active_tab != NULL)
-		return page->active_tab;
-	if (page->panes != NULL && page->panes->len > 0)
-		return g_ptr_array_index(page->panes, 0);
-	return NULL;
+	return sakura_session_active_pane(page);
 }
 
 static const gchar *
@@ -725,7 +719,7 @@ sakura_workspace_set_integer(const gchar *key, gint value)
 }
 
 gboolean
-sakura_tab_is_in_active_scope (struct sakura_tab *sk_tab)
+sakura_pane_is_in_active_scope (struct sakura_tab *sk_tab)
 {
 	struct sakura_sidebar_node *node;
 
@@ -744,6 +738,13 @@ sakura_tab_is_in_active_scope (struct sakura_tab *sk_tab)
 			return TRUE;
 	}
 	return FALSE;
+}
+
+
+gboolean
+sakura_tab_is_in_active_scope (struct sakura_tab *sk_tab)
+{
+	return sakura_pane_is_in_active_scope(sk_tab);
 }
 
 
@@ -781,7 +782,7 @@ sakura_sidebar_default_parent (void)
 
 
 void
-sakura_select_tab (struct sakura_tab *sk_tab, gboolean focus)
+sakura_select_pane (struct sakura_tab *sk_tab, gboolean focus)
 {
 	gint page, current_page;
 	struct sakura_sidebar_node *scope;
@@ -790,7 +791,7 @@ sakura_select_tab (struct sakura_tab *sk_tab, gboolean focus)
 	if (sk_tab == NULL || sk_tab->hbox == NULL || sakura.notebook == NULL)
 		return;
 
-	if (!sakura_tab_is_in_active_scope(sk_tab)) {
+	if (!sakura_pane_is_in_active_scope(sk_tab)) {
 		/* A page owned by a task has the task node as its immediate parent.
 		 * The tab strip is scoped by groups, so always walk to the owning
 		 * group before changing scope. Selecting a tab also makes its task
@@ -835,9 +836,26 @@ sakura_select_tab (struct sakura_tab *sk_tab, gboolean focus)
 
 
 void
+sakura_select_tab (struct sakura_tab *sk_tab, gboolean focus)
+{
+	sakura_select_pane(sk_tab, focus);
+}
+
+
+void
+sakura_select_session (SakuraSession *session, gboolean focus)
+{
+	SakuraPane *pane = sakura_session_active_pane(session);
+
+	if (pane != NULL)
+		sakura_select_pane(pane, focus);
+}
+
+
+void
 sakura_workspace_begin_mutation(void)
 {
-	sakura.workspace_mutation_depth++;
+		sakura.workspace_mutation_depth++;
 }
 
 
@@ -1136,7 +1154,7 @@ sakura_sidebar_selection_changed_cb (GtkTreeSelection *selection, void *data)
 		sakura_sidebar_set_scope(sakura_sidebar_group_ancestor(node));
 		page = sakura_sidebar_first_task_page(node->task);
 		if (page != NULL && page->active_tab != NULL)
-			sakura_select_tab(page->active_tab, TRUE);
+			sakura_select_session(page, TRUE);
 		sakura_sidebar_queue_select_node(node);
 		sakura_workspace_mark_changed(SAKURA_WORKSPACE_CHANGE_SCOPE |
 		                              SAKURA_WORKSPACE_CHANGE_SELECTION);
@@ -1148,7 +1166,7 @@ sakura_sidebar_selection_changed_cb (GtkTreeSelection *selection, void *data)
 		if (node->page == NULL)
 			return;
 		sakura.active_task = node->page->task;
-		sakura_select_tab(sakura_sidebar_page_active_tab(node->page), TRUE);
+		sakura_select_session(node->page, TRUE);
 		sakura_session_mark_dirty();
 		return;
 	}
@@ -1156,7 +1174,7 @@ sakura_sidebar_selection_changed_cb (GtkTreeSelection *selection, void *data)
 		return;
 
 	sakura.active_task = node->tab->page != NULL ? node->tab->page->task : NULL;
-	sakura_select_tab(node->tab, TRUE);
+	sakura_select_pane(node->tab, TRUE);
 	sakura_session_mark_dirty();
 }
 
@@ -1227,7 +1245,7 @@ sakura_sidebar_prepare_context (struct sakura_sidebar_node *node)
 	if (node->type == SAKURA_SIDEBAR_TERMINAL && node->tab != NULL) {
 		sakura_select_tab(node->tab, FALSE);
 	} else if (node->type == SAKURA_SIDEBAR_PAGE) {
-		sakura_select_tab(sakura_sidebar_page_active_tab(node->page), FALSE);
+		sakura_select_session(node->page, FALSE);
 	}
 	if (previous_task != sakura.active_task)
 		sakura_workspace_mark_changed(SAKURA_WORKSPACE_CHANGE_SELECTION);
@@ -1621,7 +1639,7 @@ sakura_sidebar_context_menu_new (struct sakura_sidebar_node *node)
 		                 context_node);
 		gtk_menu_shell_append(GTK_MENU_SHELL(menu), item);
 
-		item = gtk_menu_item_new_with_label(_("Attach current page here"));
+		item = gtk_menu_item_new_with_label(_("Attach current session here"));
 		g_signal_connect(item, "activate",
 		                 G_CALLBACK(sakura_sidebar_attach_page_to_task_cb),
 		                 context_node->task);
@@ -1674,14 +1692,14 @@ sakura_sidebar_context_menu_new (struct sakura_sidebar_node *node)
 
 		submenu = sakura_sidebar_move_terminal_menu_new(context_node->tab);
 		if (submenu != NULL) {
-			item = gtk_menu_item_new_with_label(_("Move page to group"));
+			item = gtk_menu_item_new_with_label(_("Move session to group"));
 			gtk_menu_item_set_submenu(GTK_MENU_ITEM(item), submenu);
 			gtk_menu_shell_append(GTK_MENU_SHELL(menu), item);
 		}
 		submenu = sakura_sidebar_tasks_menu_new(
 			context_node->tab != NULL ? context_node->tab->page : NULL);
 		if (sakura.tasks != NULL && sakura.tasks->len > 0) {
-			item = gtk_menu_item_new_with_label(_("Attach page to task"));
+			item = gtk_menu_item_new_with_label(_("Attach session to task"));
 			gtk_menu_item_set_submenu(GTK_MENU_ITEM(item), submenu);
 			gtk_menu_shell_append(GTK_MENU_SHELL(menu), item);
 		} else {
@@ -1705,7 +1723,7 @@ sakura_sidebar_context_menu_new (struct sakura_sidebar_node *node)
 			page_context != NULL && page_context->page != NULL &&
 			page_context->page->panes != NULL &&
 			page_context->page->panes->len > 1
-			? _("Close page")
+			? _("Close session")
 			: page_context == NULL && context_node->tab != NULL &&
 			  context_node->tab->page != NULL &&
 			  context_node->tab->page->panes != NULL &&
@@ -3449,7 +3467,7 @@ sakura_sidebar_init (gboolean restore_session)
 		}
 	}
 
-	gtk_tree_view_expand_all(GTK_TREE_VIEW(sakura.sidebar_tree));
+	sakura_sidebar_apply_default_expansion();
 
 	/* Keep the notebook as the live terminal host, but expose a scoped tab strip
 	 * above it. This lets group filtering change navigation without reparenting
@@ -4043,6 +4061,48 @@ sakura_sidebar_show_page_panes(SakuraPage *page)
 		    tab->sidebar_node->row == NULL)
 			sakura_sidebar_insert_node(tab->sidebar_node);
 	}
+}
+
+
+static void
+sakura_sidebar_collapse_page_rows(GtkTreeModel *model, GtkTreeIter *parent)
+{
+	GtkTreeIter iter;
+	gboolean valid;
+
+	valid = parent == NULL
+	      ? gtk_tree_model_get_iter_first(model, &iter)
+	      : gtk_tree_model_iter_children(model, &iter, parent);
+	while (valid) {
+		SakuraSidebarNode *node = NULL;
+		GtkTreePath *path;
+
+		gtk_tree_model_get(model, &iter, SAKURA_SIDEBAR_COLUMN_NODE,
+		                   &node, -1);
+		if (node != NULL && node->type == SAKURA_SIDEBAR_PAGE &&
+		    node->page != NULL && node->page->panes != NULL &&
+		    node->page->panes->len > 1) {
+			path = gtk_tree_model_get_path(model, &iter);
+			gtk_tree_view_collapse_row(GTK_TREE_VIEW(sakura.sidebar_tree), path);
+			gtk_tree_path_free(path);
+		} else if (gtk_tree_model_iter_has_child(model, &iter)) {
+			sakura_sidebar_collapse_page_rows(model, &iter);
+		}
+		valid = gtk_tree_model_iter_next(model, &iter);
+	}
+}
+
+
+void
+sakura_sidebar_apply_default_expansion(void)
+{
+	GtkTreeModel *model;
+
+	if (sakura.sidebar_tree == NULL || sakura.sidebar_model == NULL)
+		return;
+	model = GTK_TREE_MODEL(sakura.sidebar_model);
+	gtk_tree_view_expand_all(GTK_TREE_VIEW(sakura.sidebar_tree));
+	sakura_sidebar_collapse_page_rows(model, NULL);
 }
 
 

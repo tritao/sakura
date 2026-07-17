@@ -1964,7 +1964,7 @@ sakura_tab_bar_refresh(void)
 
 	for (page = 0; page < pages; page++) {
 		SakuraTab *tab = sakura_tab_at_page(page);
-		gboolean visible = sakura_tab_is_in_active_scope(tab);
+		gboolean visible = sakura_pane_is_in_active_scope(tab);
 
 		if (tab == NULL)
 			continue;
@@ -2005,7 +2005,7 @@ sakura_tab_bar_visible_count(void)
 
 	for (page = 0; page < sakura.tabs->len; page++) {
 		SakuraTab *tab = sakura_tab_at_page((gint)page);
-		if (sakura_tab_is_in_active_scope(tab))
+		if (sakura_pane_is_in_active_scope(tab))
 			count++;
 	}
 	return count;
@@ -2022,7 +2022,7 @@ sakura_tab_bar_nth_visible_page(guint visible_index)
 
 	for (page = 0; page < sakura.tabs->len; page++) {
 		SakuraTab *tab = sakura_tab_at_page((gint)page);
-		if (!sakura_tab_is_in_active_scope(tab))
+		if (!sakura_pane_is_in_active_scope(tab))
 			continue;
 		if (visible++ == visible_index)
 			return (gint)page;
@@ -2043,10 +2043,10 @@ sakura_tab_bar_select_relative(gint direction)
 	current_page = gtk_notebook_get_current_page(GTK_NOTEBOOK(sakura.notebook));
 	for (page = 0; page < current_page; page++) {
 		SakuraTab *tab = sakura_tab_at_page(page);
-		if (sakura_tab_is_in_active_scope(tab))
+		if (sakura_pane_is_in_active_scope(tab))
 			visible_index++;
 	}
-	if (current_page < 0 || !sakura_tab_is_in_active_scope(
+	if (current_page < 0 || !sakura_pane_is_in_active_scope(
 			current_page >= 0 ? sakura_tab_at_page(current_page) : NULL))
 		visible_index = direction < 0 ? count - 1 : 0;
 	else if (direction < 0)

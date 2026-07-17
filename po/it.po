@@ -5,7 +5,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: sakura\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-07-17 11:18+0100\n"
+"POT-Creation-Date: 2026-07-17 15:45+0100\n"
 "PO-Revision-Date: 2018-04-29 13:18+0000\n"
 "Last-Translator: David Gómez <david@pleyades.net>\n"
 "Language-Team: sakura-it <nicola@entidi.it>\n"
@@ -370,8 +370,9 @@ msgstr ""
 msgid "New subtask"
 msgstr "Nuova scheda"
 
-msgid "Attach current page here"
-msgstr ""
+#, fuzzy
+msgid "Attach current session here"
+msgstr "Nuova scheda"
 
 msgid "Set status"
 msgstr ""
@@ -396,17 +397,17 @@ msgstr ""
 msgid "Tools"
 msgstr ""
 
-msgid "Move page to group"
+msgid "Move session to group"
 msgstr ""
 
-msgid "Attach page to task"
+msgid "Attach session to task"
 msgstr ""
 
 msgid "Rename Codex session..."
 msgstr ""
 
 #, fuzzy
-msgid "Close page"
+msgid "Close session"
 msgstr "Chiudi la scheda"
 
 #, fuzzy
@@ -782,6 +783,10 @@ msgstr "- emulatore di terminale basato su VTE"
 #, c-format
 msgid "sakura version is %s\n"
 msgstr "La versione di sakura è %s\n"
+
+#, fuzzy
+#~ msgid "Close page"
+#~ msgstr "Chiudi la scheda"
 
 #, fuzzy
 #~ msgid "New terminal in group"

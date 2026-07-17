@@ -7,7 +7,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: sakura 2.3.8\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-07-17 11:18+0100\n"
+"POT-Creation-Date: 2026-07-17 15:45+0100\n"
 "PO-Revision-Date: 2018-05-03 16:14+0000\n"
 "Last-Translator: David Gómez <david@pleyades.net>\n"
 "Language-Team: Czech <gnome-cs-list@gnome.org>\n"
@@ -369,8 +369,9 @@ msgstr ""
 msgid "New subtask"
 msgstr "Nová karta"
 
-msgid "Attach current page here"
-msgstr ""
+#, fuzzy
+msgid "Attach current session here"
+msgstr "Nová karta"
 
 msgid "Set status"
 msgstr ""
@@ -395,17 +396,17 @@ msgstr ""
 msgid "Tools"
 msgstr ""
 
-msgid "Move page to group"
+msgid "Move session to group"
 msgstr ""
 
-msgid "Attach page to task"
+msgid "Attach session to task"
 msgstr ""
 
 msgid "Rename Codex session..."
 msgstr ""
 
 #, fuzzy
-msgid "Close page"
+msgid "Close session"
 msgstr "Zavřít kartu"
 
 #, fuzzy
@@ -780,6 +781,10 @@ msgstr "- emulátor terminálu založený na VTE"
 #, c-format
 msgid "sakura version is %s\n"
 msgstr "sakura verze %s\n"
+
+#, fuzzy
+#~ msgid "Close page"
+#~ msgstr "Zavřít kartu"
 
 #, fuzzy
 #~ msgid "New terminal in group"

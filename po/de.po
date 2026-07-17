@@ -8,7 +8,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: Sakura 2.3.4\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-07-17 11:18+0100\n"
+"POT-Creation-Date: 2026-07-17 15:45+0100\n"
 "PO-Revision-Date: 2020-05-06 05:00+0000\n"
 "Last-Translator: Milo Ivir <Unknown>\n"
 "Language-Team: Deutsch <de@li.org>\n"
@@ -370,8 +370,9 @@ msgstr ""
 msgid "New subtask"
 msgstr "Neuer Reiter"
 
-msgid "Attach current page here"
-msgstr ""
+#, fuzzy
+msgid "Attach current session here"
+msgstr "Neuer Reiter"
 
 msgid "Set status"
 msgstr ""
@@ -396,17 +397,17 @@ msgstr ""
 msgid "Tools"
 msgstr ""
 
-msgid "Move page to group"
+msgid "Move session to group"
 msgstr ""
 
-msgid "Attach page to task"
+msgid "Attach session to task"
 msgstr ""
 
 msgid "Rename Codex session..."
 msgstr ""
 
 #, fuzzy
-msgid "Close page"
+msgid "Close session"
 msgstr "Reiter schließen"
 
 #, fuzzy
@@ -782,6 +783,10 @@ msgstr "- vte-basierter Terminal-Emulator"
 #, c-format
 msgid "sakura version is %s\n"
 msgstr "Sakura-Version ist %s\n"
+
+#, fuzzy
+#~ msgid "Close page"
+#~ msgstr "Reiter schließen"
 
 #, fuzzy
 #~ msgid "New terminal in group"

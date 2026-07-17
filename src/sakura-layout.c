@@ -181,6 +181,26 @@ sakura_page_free(SakuraPage *page)
 }
 
 
+SakuraSession *
+sakura_session_for_pane(SakuraPane *pane)
+{
+	return pane != NULL ? pane->page : NULL;
+}
+
+
+SakuraPane *
+sakura_session_active_pane(SakuraSession *session)
+{
+	if (session == NULL)
+		return NULL;
+	if (session->active_tab != NULL)
+		return session->active_tab;
+	if (session->panes != NULL && session->panes->len > 0)
+		return g_ptr_array_index(session->panes, 0);
+	return NULL;
+}
+
+
 GtkWidget *
 sakura_page_widget_for_tab(SakuraTab *tab)
 {
