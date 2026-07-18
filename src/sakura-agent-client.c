@@ -273,6 +273,57 @@ sakura_agent_request_encoded_mutation(SakuraApp *app, const gchar *request_id,
 }
 
 
+static gboolean
+sakura_agent_request_accepted(SakuraApp *app, const gchar *request_id,
+	                             GByteArray *request, gchar **accepted_id,
+	                             GError **error)
+{
+	GSocketConnection *connection;
+	GInputStream *input;
+	GOutputStream *output;
+	GByteArray *response_payload = NULL;
+	SakuraControlResponse response = { 0 };
+	gboolean success = FALSE;
+
+	if (accepted_id != NULL)
+		*accepted_id = NULL;
+	if (app == NULL || app->agent_socket_path == NULL || request_id == NULL ||
+	    request == NULL)
+		return FALSE;
+	connection = sakura_agent_connect(app->agent_socket_path, error);
+	if (connection == NULL)
+		return FALSE;
+	input = g_io_stream_get_input_stream(G_IO_STREAM(connection));
+	output = g_io_stream_get_output_stream(G_IO_STREAM(connection));
+	if (!sakura_control_frame_write(output, request->data, request->len, NULL,
+	                               error) ||
+	    !sakura_control_frame_read(input, &response_payload, NULL, error) ||
+	    !sakura_control_decode_response(response_payload->data,
+	                                    response_payload->len, &response,
+	                                    error))
+		goto out;
+	if (g_strcmp0(response.request_id, request_id) != 0) {
+		g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_INVALID_DATA,
+		                    "agent response id did not match request");
+		goto out;
+	}
+	if (!response.accepted) {
+		g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_INVALID_DATA,
+		                    "agent did not accept terminal request");
+		goto out;
+	}
+	if (accepted_id != NULL)
+		*accepted_id = g_strdup(response.accepted_id);
+	success = TRUE;
+out:
+	g_clear_pointer(&response_payload, g_byte_array_unref);
+	sakura_control_response_clear(&response);
+	g_io_stream_close(G_IO_STREAM(connection), NULL, NULL);
+	g_object_unref(connection);
+	return success;
+}
+
+
 gboolean
 sakura_agent_create_group(SakuraApp *app, const gchar *parent_id,
 	                       const gchar *title, const gchar *directory,
@@ -454,6 +505,112 @@ sakura_agent_delete_task(SakuraApp *app, const gchar *task_id,
 		app, request_id, request,
 		sakura_control_encode_delete_task_request(request_id, task_id, request),
 		"delete task", error);
+	g_byte_array_unref(request);
+	g_free(request_id);
+	return result;
+}
+
+
+gboolean
+sakura_agent_create_terminal(SakuraApp *app, const gchar *group_id,
+	                           const gchar *task_id, const gchar *cwd,
+	                           guint cols, guint rows, gchar **terminal_id,
+	                           GError **error)
+{
+	GByteArray *request;
+	gchar *request_id;
+	gboolean result;
+
+	if (terminal_id != NULL)
+		*terminal_id = NULL;
+	if (app == NULL || app->agent_socket_path == NULL)
+		return FALSE;
+	request_id = g_uuid_string_random();
+	request = g_byte_array_new();
+	if (!sakura_control_encode_create_terminal_request(
+			request_id, group_id, task_id, cwd, cols, rows, request)) {
+		g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT,
+		                    "could not encode create terminal request");
+		result = FALSE;
+	} else {
+		result = sakura_agent_request_accepted(app, request_id, request,
+		                                      terminal_id, error);
+	}
+	g_byte_array_unref(request);
+	g_free(request_id);
+	return result;
+}
+
+
+gboolean
+sakura_agent_terminal_input(SakuraApp *app, const gchar *terminal_id,
+	                          const guint8 *data, gsize data_length,
+	                          GError **error)
+{
+	GByteArray *request;
+	gchar *request_id;
+	gboolean result;
+
+	if (app == NULL || app->agent_socket_path == NULL)
+		return FALSE;
+	request_id = g_uuid_string_random();
+	request = g_byte_array_new();
+	if (!sakura_control_encode_terminal_input_request(request_id, terminal_id,
+	                                                  data, data_length,
+	                                                  request)) {
+		g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT,
+		                    "could not encode terminal input request");
+		result = FALSE;
+	} else {
+		result = sakura_agent_request_accepted(app, request_id, request, NULL,
+		                                      error);
+	}
+	g_byte_array_unref(request);
+	g_free(request_id);
+	return result;
+}
+
+
+gboolean
+sakura_agent_terminal_resize(SakuraApp *app, const gchar *terminal_id,
+	                           guint cols, guint rows, GError **error)
+{
+	GByteArray *request;
+	gchar *request_id;
+	gboolean result;
+
+	if (app == NULL || app->agent_socket_path == NULL)
+		return FALSE;
+	request_id = g_uuid_string_random();
+	request = g_byte_array_new();
+	result = sakura_agent_request_encoded_mutation(
+		app, request_id, request,
+		sakura_control_encode_terminal_resize_request(request_id, terminal_id,
+	                                                cols, rows, request),
+		"terminal resize", error);
+	g_byte_array_unref(request);
+	g_free(request_id);
+	return result;
+}
+
+
+gboolean
+sakura_agent_close_terminal(SakuraApp *app, const gchar *terminal_id,
+	                          GError **error)
+{
+	GByteArray *request;
+	gchar *request_id;
+	gboolean result;
+
+	if (app == NULL || app->agent_socket_path == NULL)
+		return FALSE;
+	request_id = g_uuid_string_random();
+	request = g_byte_array_new();
+	result = sakura_agent_request_encoded_mutation(
+		app, request_id, request,
+		sakura_control_encode_close_terminal_request(request_id, terminal_id,
+	                                               request),
+		"close terminal", error);
 	g_byte_array_unref(request);
 	g_free(request_id);
 	return result;

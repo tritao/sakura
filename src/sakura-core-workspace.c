@@ -28,6 +28,16 @@ sakura_core_workspace_contains_task(const SakuraCoreWorkspace *workspace,
 }
 
 
+static gboolean
+sakura_core_workspace_contains_terminal(const SakuraCoreWorkspace *workspace,
+	                                        const SakuraCoreTerminal *terminal)
+{
+	if (workspace == NULL || workspace->terminals == NULL || terminal == NULL)
+		return FALSE;
+	return g_ptr_array_find(workspace->terminals, terminal, NULL);
+}
+
+
 SakuraCoreWorkspace *
 sakura_core_workspace_new(void)
 {
@@ -37,6 +47,8 @@ sakura_core_workspace_new(void)
 		(GDestroyNotify)sakura_core_group_free);
 	workspace->tasks = g_ptr_array_new_with_free_func(
 		(GDestroyNotify)sakura_core_task_free);
+	workspace->terminals = g_ptr_array_new_with_free_func(
+		(GDestroyNotify)sakura_core_terminal_free);
 	return workspace;
 }
 
@@ -46,6 +58,7 @@ sakura_core_workspace_free(SakuraCoreWorkspace *workspace)
 {
 	if (workspace == NULL)
 		return;
+	g_clear_pointer(&workspace->terminals, g_ptr_array_unref);
 	g_clear_pointer(&workspace->tasks, g_ptr_array_unref);
 	g_clear_pointer(&workspace->groups, g_ptr_array_unref);
 	g_free(workspace);
@@ -107,6 +120,36 @@ sakura_core_task_free(SakuraCoreTask *task)
 	g_free(task->external_id);
 	g_free(task->url);
 	g_free(task);
+}
+
+
+SakuraCoreTerminal *
+sakura_core_terminal_new(const gchar *id, const gchar *cwd,
+	                       SakuraCoreGroup *group, SakuraCoreTask *task,
+	                       guint cols, guint rows)
+{
+	SakuraCoreTerminal *terminal = g_new0(SakuraCoreTerminal, 1);
+
+	terminal->id = g_strdup(id);
+	terminal->cwd = g_strdup(cwd);
+	terminal->group = group;
+	terminal->task = task;
+	terminal->cols = cols;
+	terminal->rows = rows;
+	terminal->status = SAKURA_TERMINAL_STARTING;
+	return terminal;
+}
+
+
+void
+sakura_core_terminal_free(SakuraCoreTerminal *terminal)
+{
+	if (terminal == NULL)
+		return;
+	g_free(terminal->id);
+	g_free(terminal->cwd);
+	g_free(terminal->title);
+	g_free(terminal);
 }
 
 
@@ -175,6 +218,13 @@ sakura_core_workspace_can_remove_group(SakuraCoreWorkspace *workspace,
 		if (task != NULL && task->group == group)
 			return FALSE;
 	}
+	for (guint index = 0; index < workspace->terminals->len; index++) {
+		SakuraCoreTerminal *terminal = g_ptr_array_index(
+			workspace->terminals, index);
+
+		if (terminal != NULL && terminal->group == group)
+			return FALSE;
+	}
 	return TRUE;
 }
 
@@ -229,6 +279,13 @@ sakura_core_workspace_can_remove_task(SakuraCoreWorkspace *workspace,
 		if (candidate != NULL && candidate != task && candidate->parent == task)
 			return FALSE;
 	}
+	for (guint index = 0; index < workspace->terminals->len; index++) {
+		SakuraCoreTerminal *terminal = g_ptr_array_index(
+			workspace->terminals, index);
+
+		if (terminal != NULL && terminal->task == task)
+			return FALSE;
+	}
 	return TRUE;
 }
 
@@ -243,6 +300,41 @@ sakura_core_workspace_remove_task(SakuraCoreWorkspace *workspace,
 	if (workspace->active_task == task)
 		workspace->active_task = NULL;
 	return TRUE;
+}
+
+
+gboolean
+sakura_core_workspace_add_terminal(SakuraCoreWorkspace *workspace,
+	                                  SakuraCoreTerminal *terminal)
+{
+	if (workspace == NULL || terminal == NULL || terminal->id == NULL ||
+	    workspace->terminals == NULL ||
+	    sakura_core_workspace_contains_terminal(workspace, terminal) ||
+	    sakura_core_workspace_find_terminal(workspace, terminal->id) != NULL)
+		return FALSE;
+	if (terminal->group == NULL)
+		terminal->group = workspace->root_group;
+	if (terminal->group != NULL &&
+	    !sakura_core_workspace_contains_group(workspace, terminal->group))
+		return FALSE;
+	if (terminal->task != NULL &&
+	    !sakura_core_workspace_contains_task(workspace, terminal->task))
+		return FALSE;
+	if (terminal->task != NULL && terminal->task->group != terminal->group)
+		return FALSE;
+	g_ptr_array_add(workspace->terminals, terminal);
+	return TRUE;
+}
+
+
+gboolean
+sakura_core_workspace_remove_terminal(SakuraCoreWorkspace *workspace,
+	                                     SakuraCoreTerminal *terminal)
+{
+	if (workspace == NULL || terminal == NULL ||
+	    !sakura_core_workspace_contains_terminal(workspace, terminal))
+		return FALSE;
+	return g_ptr_array_remove(workspace->terminals, terminal);
 }
 
 
@@ -275,6 +367,23 @@ sakura_core_workspace_find_task(SakuraCoreWorkspace *workspace,
 
 		if (task != NULL && g_strcmp0(task->id, id) == 0)
 			return task;
+	}
+	return NULL;
+}
+
+
+SakuraCoreTerminal *
+sakura_core_workspace_find_terminal(SakuraCoreWorkspace *workspace,
+	                                  const gchar *id)
+{
+	if (workspace == NULL || id == NULL || workspace->terminals == NULL)
+		return NULL;
+	for (guint index = 0; index < workspace->terminals->len; index++) {
+		SakuraCoreTerminal *terminal = g_ptr_array_index(
+			workspace->terminals, index);
+
+		if (terminal != NULL && g_strcmp0(terminal->id, id) == 0)
+			return terminal;
 	}
 	return NULL;
 }

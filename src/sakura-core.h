@@ -55,10 +55,19 @@ typedef enum {
 	SAKURA_TASK_DONE
 } SakuraTaskStatus;
 
+typedef enum {
+	SAKURA_TERMINAL_STARTING,
+	SAKURA_TERMINAL_RUNNING,
+	SAKURA_TERMINAL_EXITED,
+	SAKURA_TERMINAL_CLOSED,
+	SAKURA_TERMINAL_ERROR
+} SakuraCoreTerminalStatus;
+
 typedef struct sakura_session_snapshot SakuraSessionSnapshot;
 typedef struct sakura_core_workspace SakuraCoreWorkspace;
 typedef struct sakura_core_group SakuraCoreGroup;
 typedef struct sakura_core_task SakuraCoreTask;
+typedef struct sakura_core_terminal SakuraCoreTerminal;
 
 typedef struct {
 	gchar *id;
@@ -140,7 +149,7 @@ struct sakura_session_snapshot {
 };
 
 /* GTK-free workspace state. These objects deliberately contain no widgets,
- * pages, terminals, or sidebar nodes. A desktop or web adapter can project
+ * pages, PTY handles, or sidebar nodes. A desktop or web adapter can project
  * this model into its own view without becoming the owner of the domain. */
 struct sakura_core_group {
 	gchar *id;
@@ -164,10 +173,22 @@ struct sakura_core_task {
 	gboolean archived;
 };
 
+struct sakura_core_terminal {
+	gchar *id;
+	gchar *cwd;
+	gchar *title;
+	SakuraCoreGroup *group;
+	SakuraCoreTask *task;
+	guint cols;
+	guint rows;
+	SakuraCoreTerminalStatus status;
+};
+
 struct sakura_core_workspace {
 	SakuraCoreGroup *root_group;
 	GPtrArray *groups; /* SakuraCoreGroup *, owned. */
 	GPtrArray *tasks;  /* SakuraCoreTask *, owned. */
+	GPtrArray *terminals; /* SakuraCoreTerminal *, owned. */
 	SakuraCoreGroup *active_group; /* Borrowed. */
 	SakuraCoreTask *active_task; /* Borrowed. */
 };
@@ -191,6 +212,12 @@ SakuraCoreTask *sakura_core_task_new(const gchar *id,
                                      SakuraCoreGroup *group,
                                      SakuraCoreTask *parent);
 void sakura_core_task_free(SakuraCoreTask *task);
+SakuraCoreTerminal *sakura_core_terminal_new(const gchar *id,
+                                             const gchar *cwd,
+                                             SakuraCoreGroup *group,
+                                             SakuraCoreTask *task,
+                                             guint cols, guint rows);
+void sakura_core_terminal_free(SakuraCoreTerminal *terminal);
 
 gboolean sakura_core_workspace_set_root(SakuraCoreWorkspace *workspace,
                                          SakuraCoreGroup *root_group);
@@ -206,6 +233,12 @@ gboolean sakura_core_workspace_can_remove_task(
 	SakuraCoreWorkspace *workspace, SakuraCoreTask *task);
 gboolean sakura_core_workspace_remove_task(SakuraCoreWorkspace *workspace,
                                            SakuraCoreTask *task);
+gboolean sakura_core_workspace_add_terminal(SakuraCoreWorkspace *workspace,
+                                            SakuraCoreTerminal *terminal);
+gboolean sakura_core_workspace_remove_terminal(
+	SakuraCoreWorkspace *workspace, SakuraCoreTerminal *terminal);
+SakuraCoreTerminal *sakura_core_workspace_find_terminal(
+	SakuraCoreWorkspace *workspace, const gchar *id);
 SakuraCoreGroup *sakura_core_workspace_find_group(
 	SakuraCoreWorkspace *workspace, const gchar *id);
 SakuraCoreTask *sakura_core_workspace_find_task(

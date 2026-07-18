@@ -822,6 +822,18 @@ gboolean sakura_agent_set_task_archived(SakuraApp *app,
                                         gboolean archived, GError **error);
 gboolean sakura_agent_delete_task(SakuraApp *app, const gchar *task_id,
                                   GError **error);
+gboolean sakura_agent_create_terminal(SakuraApp *app, const gchar *group_id,
+                                       const gchar *task_id, const gchar *cwd,
+                                       guint cols, guint rows,
+                                       gchar **terminal_id, GError **error);
+gboolean sakura_agent_terminal_input(SakuraApp *app, const gchar *terminal_id,
+                                     const guint8 *data, gsize data_length,
+                                     GError **error);
+gboolean sakura_agent_terminal_resize(SakuraApp *app,
+                                      const gchar *terminal_id,
+                                      guint cols, guint rows, GError **error);
+gboolean sakura_agent_close_terminal(SakuraApp *app, const gchar *terminal_id,
+                                     GError **error);
 void sakura_agent_stop(SakuraApp *app);
 
 const gchar *sakura_tool_label(SakuraToolKind tool);

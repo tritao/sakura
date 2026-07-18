@@ -30,6 +30,17 @@ message Task {
   bool archived = 10;
 }
 
+message Terminal {
+  string id = 1;
+  string group_id = 2;
+  string task_id = 3;
+  string cwd = 4;
+  string title = 5;
+  uint32 cols = 6;
+  uint32 rows = 7;
+  uint32 status = 8;
+}
+
 message WorkspaceSnapshot {
   repeated Group groups = 1;
   repeated Task tasks = 2;
@@ -37,6 +48,7 @@ message WorkspaceSnapshot {
   string active_task_id = 4;
   string root_directory = 5;
   uint64 sequence = 6;
+  repeated Terminal terminals = 7;
 }
 
 message EntityRef {

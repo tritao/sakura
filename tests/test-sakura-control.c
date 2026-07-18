@@ -1,9 +1,11 @@
 #include <signal.h>
+#include <string.h>
 
 #include <gio/gio.h>
 #include <glib/gstdio.h>
 
 #include "sakura-control-transport.h"
+#include "sakura/control.pb-c.h"
 
 
 static SakuraCoreWorkspace *
@@ -180,6 +182,64 @@ test_mutation_request_roundtrip(void)
 	g_assert_cmpstr(request.provider, ==, "local");
 	g_assert_cmpstr(request.external_id, ==, "42");
 	sakura_control_request_clear(&request);
+	g_byte_array_set_size(encoded, 0);
+
+	g_assert_true(sakura_control_encode_create_terminal_request(
+		"create-terminal", "group-1", "task-1", "/tmp", 100, 40,
+		encoded));
+	g_assert_true(sakura_control_decode_request(encoded->data, encoded->len,
+	                                           &request, &error));
+	g_assert_no_error(error);
+	g_assert_cmpint(request.kind, ==,
+	               SAKURA_CONTROL_REQUEST_CREATE_TERMINAL);
+	g_assert_cmpstr(request.group_id, ==, "group-1");
+	g_assert_cmpstr(request.task_id, ==, "task-1");
+	g_assert_cmpstr(request.cwd, ==, "/tmp");
+	g_assert_cmpuint(request.cols, ==, 100);
+	g_assert_cmpuint(request.rows, ==, 40);
+	sakura_control_request_clear(&request);
+	g_byte_array_set_size(encoded, 0);
+
+	{
+		const guint8 input[] = "echo terminal";
+
+		g_assert_true(sakura_control_encode_terminal_input_request(
+			"terminal-input", "terminal-1", input, sizeof(input) - 1,
+			encoded));
+		g_assert_true(sakura_control_decode_request(encoded->data, encoded->len,
+		                                           &request, &error));
+		g_assert_no_error(error);
+		g_assert_cmpint(request.kind, ==,
+		               SAKURA_CONTROL_REQUEST_TERMINAL_INPUT);
+		g_assert_cmpstr(request.terminal_id, ==, "terminal-1");
+		g_assert_cmpuint(request.input_length, ==, sizeof(input) - 1);
+		g_assert_true(memcmp(request.input_data, input, sizeof(input) - 1) == 0);
+	}
+	sakura_control_request_clear(&request);
+	g_byte_array_set_size(encoded, 0);
+
+	g_assert_true(sakura_control_encode_terminal_resize_request(
+		"terminal-resize", "terminal-1", 120, 50, encoded));
+	g_assert_true(sakura_control_decode_request(encoded->data, encoded->len,
+	                                           &request, &error));
+	g_assert_no_error(error);
+	g_assert_cmpint(request.kind, ==,
+	               SAKURA_CONTROL_REQUEST_TERMINAL_RESIZE);
+	g_assert_cmpstr(request.terminal_id, ==, "terminal-1");
+	g_assert_cmpuint(request.cols, ==, 120);
+	g_assert_cmpuint(request.rows, ==, 50);
+	sakura_control_request_clear(&request);
+	g_byte_array_set_size(encoded, 0);
+
+	g_assert_true(sakura_control_encode_close_terminal_request(
+		"close-terminal", "terminal-1", encoded));
+	g_assert_true(sakura_control_decode_request(encoded->data, encoded->len,
+	                                           &request, &error));
+	g_assert_no_error(error);
+	g_assert_cmpint(request.kind, ==,
+	               SAKURA_CONTROL_REQUEST_CLOSE_TERMINAL);
+	g_assert_cmpstr(request.terminal_id, ==, "terminal-1");
+	sakura_control_request_clear(&request);
 	g_byte_array_unref(encoded);
 }
 
@@ -285,10 +345,145 @@ test_agent_call(const gchar *socket_path, const gchar *request_id,
 	                                             &error));
 	g_assert_no_error(error);
 	g_assert_cmpstr(response->request_id, ==, request_id);
-	g_assert_true(response->has_snapshot);
+	g_assert_true(response->has_snapshot || response->accepted);
 	g_clear_pointer(&response_payload, g_byte_array_unref);
 	g_io_stream_close(G_IO_STREAM(connection), NULL, NULL);
 	g_object_unref(connection);
+}
+
+
+static void
+test_agent_set_event_timeout(GSocketConnection *connection)
+{
+	g_socket_set_timeout(g_socket_connection_get_socket(connection), 10);
+}
+
+
+static gboolean
+test_agent_read_workspace_until(GInputStream *input, gsize terminal_count,
+	                              const gchar *terminal_id,
+	                              guint expected_cols, guint expected_rows)
+{
+	for (guint attempt = 0; attempt < 100; attempt++) {
+		GByteArray *payload = NULL;
+		Sakura__Control__V1__Event *event;
+		GError *error = NULL;
+
+		if (!sakura_control_frame_read(input, &payload, NULL, &error)) {
+			g_clear_error(&error);
+			return FALSE;
+		}
+		event = sakura__control__v1__event__unpack(NULL, payload->len,
+		                                           payload->data);
+		g_byte_array_unref(payload);
+		if (event == NULL)
+			continue;
+		if (event->body_case ==
+				SAKURA__CONTROL__V1__EVENT__BODY_WORKSPACE_CHANGED &&
+		    event->workspace_changed != NULL &&
+		    event->workspace_changed->snapshot != NULL &&
+		    event->workspace_changed->snapshot->n_terminals == terminal_count) {
+			Sakura__Control__V1__WorkspaceSnapshot *snapshot =
+				event->workspace_changed->snapshot;
+			gboolean found = terminal_id == NULL;
+
+			for (gsize index = 0; index < snapshot->n_terminals; index++) {
+				Sakura__Control__V1__Terminal *terminal =
+					snapshot->terminals[index];
+
+				if (terminal_id != NULL &&
+				    g_strcmp0(terminal->id, terminal_id) == 0) {
+					found = TRUE;
+					if (expected_cols != 0)
+						g_assert_cmpuint(terminal->cols, ==, expected_cols);
+					if (expected_rows != 0)
+						g_assert_cmpuint(terminal->rows, ==, expected_rows);
+				}
+			}
+			if (found) {
+				sakura__control__v1__event__free_unpacked(event, NULL);
+				return TRUE;
+			}
+		}
+		sakura__control__v1__event__free_unpacked(event, NULL);
+	}
+	return FALSE;
+}
+
+
+static gboolean
+test_agent_read_output_until(GInputStream *input, const gchar *terminal_id,
+	                           const gchar *needle)
+{
+	for (guint attempt = 0; attempt < 100; attempt++) {
+		GByteArray *payload = NULL;
+		guint64 sequence;
+		gchar *event_terminal_id = NULL;
+		guint8 *data = NULL;
+		gsize data_length = 0;
+		gboolean final_chunk = FALSE;
+		GError *error = NULL;
+
+		if (!sakura_control_frame_read(input, &payload, NULL, &error)) {
+			g_clear_error(&error);
+			return FALSE;
+		}
+		if (sakura_control_decode_terminal_output_event(
+				payload->data, payload->len, &sequence, &event_terminal_id,
+				&data, &data_length, &final_chunk, &error)) {
+			if (data != NULL &&
+			    g_strcmp0(event_terminal_id, terminal_id) == 0 &&
+			    g_strstr_len((const gchar *)data, data_length, needle) != NULL) {
+				g_free(event_terminal_id);
+				g_free(data);
+				g_byte_array_unref(payload);
+				return TRUE;
+			}
+			g_free(event_terminal_id);
+			g_free(data);
+		} else {
+			g_clear_error(&error);
+		}
+		g_byte_array_unref(payload);
+	}
+	return FALSE;
+}
+
+
+static gboolean
+test_agent_read_status_until(GInputStream *input, const gchar *terminal_id,
+	                           guint expected_status)
+{
+	for (guint attempt = 0; attempt < 100; attempt++) {
+		GByteArray *payload = NULL;
+		guint64 sequence;
+		gchar *event_terminal_id = NULL;
+		gchar *message = NULL;
+		guint status = 0;
+		GError *error = NULL;
+
+		if (!sakura_control_frame_read(input, &payload, NULL, &error)) {
+			g_clear_error(&error);
+			return FALSE;
+		}
+		if (sakura_control_decode_terminal_status_event(
+				payload->data, payload->len, &sequence, &event_terminal_id,
+				&status, &message, &error)) {
+			if (g_strcmp0(event_terminal_id, terminal_id) == 0 &&
+			    status == expected_status) {
+				g_free(event_terminal_id);
+				g_free(message);
+				g_byte_array_unref(payload);
+				return TRUE;
+			}
+			g_free(event_terminal_id);
+			g_free(message);
+		} else {
+			g_clear_error(&error);
+		}
+		g_byte_array_unref(payload);
+	}
+	return FALSE;
 }
 
 
@@ -573,6 +768,125 @@ test_agent_create_and_reload(void)
 }
 
 
+static void
+test_agent_terminal_lifecycle(void)
+{
+	GSubprocess *process;
+	GByteArray *request = g_byte_array_new();
+	SakuraControlResponse response = { 0 };
+	GSocketConnection *subscriber;
+	GInputStream *subscriber_input;
+	GOutputStream *subscriber_output;
+	GByteArray *event_payload = NULL;
+	GError *error = NULL;
+	gchar *directory;
+	gchar *socket_path;
+	gchar *session_path;
+	gchar *terminal_id = NULL;
+
+	directory = g_dir_make_tmp("sakura-agent-terminal-XXXXXX", &error);
+	g_assert_no_error(error);
+	g_assert_nonnull(directory);
+	socket_path = g_build_filename(directory, "agent.sock", NULL);
+	session_path = g_build_filename(directory, "workspace.session", NULL);
+	process = test_agent_start(socket_path, session_path);
+
+	subscriber = test_agent_connect_wait(socket_path);
+	test_agent_set_event_timeout(subscriber);
+	subscriber_input = g_io_stream_get_input_stream(G_IO_STREAM(subscriber));
+	subscriber_output = g_io_stream_get_output_stream(G_IO_STREAM(subscriber));
+	g_assert_true(sakura_control_encode_subscribe_events_request(
+		"subscribe-terminal", 0, request));
+	g_assert_true(sakura_control_frame_write(subscriber_output, request->data,
+	                                         request->len, NULL, &error));
+	g_assert_no_error(error);
+	g_assert_true(sakura_control_frame_read(subscriber_input, &event_payload,
+	                                        NULL, &error));
+	g_assert_no_error(error);
+	g_assert_true(sakura_control_decode_response(event_payload->data,
+	                                             event_payload->len, &response,
+	                                             &error));
+	g_assert_no_error(error);
+	g_assert_true(response.accepted);
+	g_assert_cmpstr(response.accepted_kind, ==, "workspace_events");
+	sakura_control_response_clear(&response);
+	g_clear_pointer(&event_payload, g_byte_array_unref);
+	g_assert_true(test_agent_read_workspace_until(subscriber_input, 0, NULL,
+	                                              0, 0));
+
+	g_byte_array_set_size(request, 0);
+	g_assert_true(sakura_control_encode_create_terminal_request(
+		"create-terminal", "root", "root", "/tmp", 100, 40, request));
+	test_agent_call(socket_path, "create-terminal", request, &response);
+	g_assert_true(response.accepted);
+	g_assert_cmpstr(response.accepted_kind, ==, "terminal");
+	g_assert_nonnull(response.accepted_id);
+	terminal_id = g_strdup(response.accepted_id);
+	sakura_control_response_clear(&response);
+	g_assert_true(test_agent_read_workspace_until(subscriber_input, 1,
+	                                              terminal_id, 100, 40));
+
+	g_byte_array_set_size(request, 0);
+	{
+		const gchar input[] = "printf 'sakura-terminal-test\n'\n";
+
+		g_assert_true(sakura_control_encode_terminal_input_request(
+			"terminal-input", terminal_id, (const guint8 *)input,
+			sizeof(input) - 1, request));
+	}
+	test_agent_call(socket_path, "terminal-input", request, &response);
+	g_assert_true(response.accepted);
+	g_assert_cmpstr(response.accepted_kind, ==, "terminal_input");
+	sakura_control_response_clear(&response);
+	g_assert_true(test_agent_read_output_until(
+		subscriber_input, terminal_id, "sakura-terminal-test"));
+
+	g_byte_array_set_size(request, 0);
+	g_assert_true(sakura_control_encode_terminal_resize_request(
+		"terminal-resize", terminal_id, 120, 50, request));
+	test_agent_call(socket_path, "terminal-resize", request, &response);
+	g_assert_true(response.has_snapshot);
+	sakura_control_response_clear(&response);
+	g_assert_true(test_agent_read_workspace_until(subscriber_input, 1,
+	                                              terminal_id, 120, 50));
+
+	g_byte_array_set_size(request, 0);
+	{
+		const gchar input[] = "exit\n";
+
+		g_assert_true(sakura_control_encode_terminal_input_request(
+			"terminal-exit", terminal_id, (const guint8 *)input,
+			sizeof(input) - 1, request));
+	}
+	test_agent_call(socket_path, "terminal-exit", request, &response);
+	g_assert_true(response.accepted);
+	sakura_control_response_clear(&response);
+	g_assert_true(test_agent_read_status_until(
+		subscriber_input, terminal_id, SAKURA_TERMINAL_EXITED));
+
+	g_byte_array_set_size(request, 0);
+	g_assert_true(sakura_control_encode_close_terminal_request(
+		"close-terminal", terminal_id, request));
+	test_agent_call(socket_path, "close-terminal", request, &response);
+	g_assert_true(response.has_snapshot);
+	sakura_control_response_clear(&response);
+	g_assert_true(test_agent_read_workspace_until(subscriber_input, 0, NULL,
+	                                              0, 0));
+
+	g_io_stream_close(G_IO_STREAM(subscriber), NULL, NULL);
+	g_object_unref(subscriber);
+	test_agent_stop(process);
+	g_byte_array_unref(request);
+	g_free(terminal_id);
+	g_remove(session_path);
+	g_remove(socket_path);
+	g_rmdir(directory);
+	g_free(session_path);
+	g_free(socket_path);
+	g_free(directory);
+}
+
+
 int
 main(int argc, char **argv)
 {
@@ -585,5 +899,7 @@ main(int argc, char **argv)
 	                test_mutation_request_roundtrip);
 	g_test_add_func("/control/agent-create-and-reload",
 	                test_agent_create_and_reload);
+	g_test_add_func("/control/agent-terminal-lifecycle",
+	                test_agent_terminal_lifecycle);
 	return g_test_run();
 }

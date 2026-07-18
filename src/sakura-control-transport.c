@@ -1,6 +1,8 @@
 #include "sakura-control-transport.h"
 #include "sakura/control.pb-c.h"
 
+#include <string.h>
+
 
 static gboolean
 sakura_control_error(GError **error, const gchar *message)
@@ -45,11 +47,17 @@ sakura_control_request_clear(SakuraControlRequest *request)
 	g_clear_pointer(&request->directory, g_free);
 	g_clear_pointer(&request->group_id, g_free);
 	g_clear_pointer(&request->task_id, g_free);
+	g_clear_pointer(&request->terminal_id, g_free);
+	g_clear_pointer(&request->cwd, g_free);
 	g_clear_pointer(&request->provider, g_free);
 	g_clear_pointer(&request->external_id, g_free);
 	g_clear_pointer(&request->url, g_free);
 	request->kind = SAKURA_CONTROL_REQUEST_NONE;
 	request->archived = FALSE;
+	g_clear_pointer(&request->input_data, g_free);
+	request->input_length = 0;
+	request->cols = 0;
+	request->rows = 0;
 	request->after_sequence = 0;
 }
 
@@ -60,6 +68,8 @@ sakura_control_response_clear(SakuraControlResponse *response)
 	if (response == NULL)
 		return;
 	g_clear_pointer(&response->request_id, g_free);
+	g_clear_pointer(&response->accepted_kind, g_free);
+	g_clear_pointer(&response->accepted_id, g_free);
 	response->has_snapshot = FALSE;
 	response->accepted = FALSE;
 }
@@ -342,6 +352,104 @@ sakura_control_encode_delete_task_request(const gchar *request_id,
 
 
 gboolean
+sakura_control_encode_create_terminal_request(const gchar *request_id,
+	                                             const gchar *group_id,
+	                                             const gchar *task_id,
+	                                             const gchar *cwd,
+	                                             guint cols, guint rows,
+	                                             GByteArray *payload)
+{
+	Sakura__Control__V1__CreateTerminalRequest create_terminal =
+		SAKURA__CONTROL__V1__CREATE_TERMINAL_REQUEST__INIT;
+	Sakura__Control__V1__Request request =
+		SAKURA__CONTROL__V1__REQUEST__INIT;
+
+	if (payload == NULL || request_id == NULL || request_id[0] == '\0')
+		return FALSE;
+	create_terminal.group_id = (gchar *)sakura_control_string(group_id);
+	create_terminal.task_id = (gchar *)sakura_control_string(task_id);
+	create_terminal.cwd = (gchar *)sakura_control_string(cwd);
+	create_terminal.cols = cols;
+	create_terminal.rows = rows;
+	request.request_id = (gchar *)request_id;
+	request.body_case = SAKURA__CONTROL__V1__REQUEST__BODY_CREATE_TERMINAL;
+	request.create_terminal = &create_terminal;
+	return sakura_control_pack_message(&request.base, payload);
+}
+
+
+gboolean
+sakura_control_encode_terminal_input_request(const gchar *request_id,
+	                                            const gchar *terminal_id,
+	                                            const guint8 *data,
+	                                            gsize data_length,
+	                                            GByteArray *payload)
+{
+	Sakura__Control__V1__TerminalInput terminal_input =
+		SAKURA__CONTROL__V1__TERMINAL_INPUT__INIT;
+	Sakura__Control__V1__Request request =
+		SAKURA__CONTROL__V1__REQUEST__INIT;
+
+	if (payload == NULL || request_id == NULL || request_id[0] == '\0' ||
+	    terminal_id == NULL || terminal_id[0] == '\0' ||
+	    (data == NULL && data_length != 0))
+		return FALSE;
+	terminal_input.terminal_id = (gchar *)terminal_id;
+	terminal_input.data.data = (guint8 *)data;
+	terminal_input.data.len = data_length;
+	request.request_id = (gchar *)request_id;
+	request.body_case = SAKURA__CONTROL__V1__REQUEST__BODY_TERMINAL_INPUT;
+	request.terminal_input = &terminal_input;
+	return sakura_control_pack_message(&request.base, payload);
+}
+
+
+gboolean
+sakura_control_encode_terminal_resize_request(const gchar *request_id,
+	                                             const gchar *terminal_id,
+	                                             guint cols, guint rows,
+	                                             GByteArray *payload)
+{
+	Sakura__Control__V1__TerminalResize terminal_resize =
+		SAKURA__CONTROL__V1__TERMINAL_RESIZE__INIT;
+	Sakura__Control__V1__Request request =
+		SAKURA__CONTROL__V1__REQUEST__INIT;
+
+	if (payload == NULL || request_id == NULL || request_id[0] == '\0' ||
+	    terminal_id == NULL || terminal_id[0] == '\0')
+		return FALSE;
+	terminal_resize.terminal_id = (gchar *)terminal_id;
+	terminal_resize.cols = cols;
+	terminal_resize.rows = rows;
+	request.request_id = (gchar *)request_id;
+	request.body_case = SAKURA__CONTROL__V1__REQUEST__BODY_TERMINAL_RESIZE;
+	request.terminal_resize = &terminal_resize;
+	return sakura_control_pack_message(&request.base, payload);
+}
+
+
+gboolean
+sakura_control_encode_close_terminal_request(const gchar *request_id,
+	                                            const gchar *terminal_id,
+	                                            GByteArray *payload)
+{
+	Sakura__Control__V1__CloseSessionRequest close_terminal =
+		SAKURA__CONTROL__V1__CLOSE_SESSION_REQUEST__INIT;
+	Sakura__Control__V1__Request request =
+		SAKURA__CONTROL__V1__REQUEST__INIT;
+
+	if (payload == NULL || request_id == NULL || request_id[0] == '\0' ||
+	    terminal_id == NULL || terminal_id[0] == '\0')
+		return FALSE;
+	close_terminal.terminal_id = (gchar *)terminal_id;
+	request.request_id = (gchar *)request_id;
+	request.body_case = SAKURA__CONTROL__V1__REQUEST__BODY_CLOSE_SESSION;
+	request.close_session = &close_terminal;
+	return sakura_control_pack_message(&request.base, payload);
+}
+
+
+gboolean
 sakura_control_encode_subscribe_events_request(const gchar *request_id,
 	                                             guint64 after_sequence,
 	                                             GByteArray *payload)
@@ -443,6 +551,42 @@ sakura_control_decode_request(const guint8 *payload,
 			request->task_id = g_strdup(decoded->delete_task->task_id);
 		}
 		break;
+	case SAKURA__CONTROL__V1__REQUEST__BODY_CREATE_TERMINAL:
+		if (decoded->create_terminal != NULL) {
+			request->kind = SAKURA_CONTROL_REQUEST_CREATE_TERMINAL;
+			request->group_id = g_strdup(decoded->create_terminal->group_id);
+			request->task_id = g_strdup(decoded->create_terminal->task_id);
+			request->cwd = g_strdup(decoded->create_terminal->cwd);
+			request->cols = decoded->create_terminal->cols;
+			request->rows = decoded->create_terminal->rows;
+		}
+		break;
+	case SAKURA__CONTROL__V1__REQUEST__BODY_TERMINAL_INPUT:
+		if (decoded->terminal_input != NULL) {
+			request->kind = SAKURA_CONTROL_REQUEST_TERMINAL_INPUT;
+			request->terminal_id = g_strdup(decoded->terminal_input->terminal_id);
+			request->input_length = decoded->terminal_input->data.len;
+			if (request->input_length != 0) {
+				request->input_data = g_malloc(request->input_length);
+				memcpy(request->input_data, decoded->terminal_input->data.data,
+				       request->input_length);
+			}
+		}
+		break;
+	case SAKURA__CONTROL__V1__REQUEST__BODY_TERMINAL_RESIZE:
+		if (decoded->terminal_resize != NULL) {
+			request->kind = SAKURA_CONTROL_REQUEST_TERMINAL_RESIZE;
+			request->terminal_id = g_strdup(decoded->terminal_resize->terminal_id);
+			request->cols = decoded->terminal_resize->cols;
+			request->rows = decoded->terminal_resize->rows;
+		}
+		break;
+	case SAKURA__CONTROL__V1__REQUEST__BODY_CLOSE_SESSION:
+		if (decoded->close_session != NULL) {
+			request->kind = SAKURA_CONTROL_REQUEST_CLOSE_TERMINAL;
+			request->terminal_id = g_strdup(decoded->close_session->terminal_id);
+		}
+		break;
 	case SAKURA__CONTROL__V1__REQUEST__BODY_SUBSCRIBE_EVENTS:
 		if (decoded->subscribe_events != NULL) {
 			request->kind = SAKURA_CONTROL_REQUEST_SUBSCRIBE_EVENTS;
@@ -497,12 +641,31 @@ sakura_control_fill_task(Sakura__Control__V1__Task *message,
 
 
 static void
+sakura_control_fill_terminal(Sakura__Control__V1__Terminal *message,
+	                            const SakuraCoreTerminal *terminal)
+{
+	sakura__control__v1__terminal__init(message);
+	message->id = (gchar *)sakura_control_string(terminal->id);
+	message->group_id = (gchar *)sakura_control_string(
+		terminal->group != NULL ? terminal->group->id : "root");
+	message->task_id = (gchar *)sakura_control_string(
+		terminal->task != NULL ? terminal->task->id : NULL);
+	message->cwd = (gchar *)sakura_control_string(terminal->cwd);
+	message->title = (gchar *)sakura_control_string(terminal->title);
+	message->cols = terminal->cols;
+	message->rows = terminal->rows;
+	message->status = terminal->status;
+}
+
+
+static void
 sakura_control_fill_snapshot(
 	Sakura__Control__V1__WorkspaceSnapshot *snapshot,
 	const SakuraCoreWorkspace *workspace)
 {
 	GPtrArray *groups;
 	GPtrArray *tasks;
+	GPtrArray *terminals;
 
 	sakura__control__v1__workspace_snapshot__init(snapshot);
 	groups = sakura_core_workspace_ordered_groups(workspace);
@@ -535,6 +698,24 @@ sakura_control_fill_snapshot(
 	}
 	g_ptr_array_unref(tasks);
 
+	terminals = workspace != NULL && workspace->terminals != NULL
+	          ? workspace->terminals : g_ptr_array_new();
+	if (terminals->len != 0) {
+		snapshot->terminals = g_new0(Sakura__Control__V1__Terminal *,
+		                             terminals->len);
+		for (guint index = 0; index < terminals->len; index++) {
+			Sakura__Control__V1__Terminal *terminal_message = g_new0(
+				Sakura__Control__V1__Terminal, 1);
+
+			sakura_control_fill_terminal(terminal_message,
+			                             g_ptr_array_index(terminals, index));
+			snapshot->terminals[index] = terminal_message;
+		}
+		snapshot->n_terminals = terminals->len;
+	}
+	if (terminals != workspace->terminals)
+		g_ptr_array_unref(terminals);
+
 	snapshot->active_group_id = (gchar *)sakura_control_string(
 		workspace->active_group != NULL ? workspace->active_group->id : "root");
 	snapshot->active_task_id = (gchar *)sakura_control_string(
@@ -553,8 +734,11 @@ sakura_control_free_snapshot_messages(
 		g_free(snapshot->groups[index]);
 	for (gsize index = 0; index < snapshot->n_tasks; index++)
 		g_free(snapshot->tasks[index]);
+	for (gsize index = 0; index < snapshot->n_terminals; index++)
+		g_free(snapshot->terminals[index]);
 	g_free(snapshot->groups);
 	g_free(snapshot->tasks);
+	g_free(snapshot->terminals);
 }
 
 
@@ -611,6 +795,7 @@ sakura_control_encode_error_response(const gchar *request_id,
 gboolean
 sakura_control_encode_accepted_response(const gchar *request_id,
 	                                      const gchar *kind,
+	                                      const gchar *id,
 	                                      GByteArray *payload)
 {
 	Sakura__Control__V1__EntityRef accepted =
@@ -621,6 +806,7 @@ sakura_control_encode_accepted_response(const gchar *request_id,
 	if (request_id == NULL || payload == NULL)
 		return FALSE;
 	accepted.kind = (gchar *)sakura_control_string(kind);
+	accepted.id = (gchar *)sakura_control_string(id);
 	response.request_id = (gchar *)request_id;
 	response.body_case = SAKURA__CONTROL__V1__RESPONSE__BODY_ACCEPTED;
 	response.accepted = &accepted;
@@ -652,6 +838,56 @@ sakura_control_encode_workspace_changed_event(
 		sakura_control_free_snapshot_messages(&snapshot);
 		return result;
 	}
+}
+
+
+gboolean
+sakura_control_encode_terminal_output_event(guint64 sequence,
+	                                          const gchar *terminal_id,
+	                                          const guint8 *data,
+	                                          gsize data_length,
+	                                          gboolean final_chunk,
+	                                          GByteArray *payload)
+{
+	Sakura__Control__V1__TerminalOutput output =
+		SAKURA__CONTROL__V1__TERMINAL_OUTPUT__INIT;
+	Sakura__Control__V1__Event event = SAKURA__CONTROL__V1__EVENT__INIT;
+
+	if (payload == NULL || terminal_id == NULL || terminal_id[0] == '\0' ||
+	    (data == NULL && data_length != 0))
+		return FALSE;
+	output.terminal_id = (gchar *)terminal_id;
+	output.data.data = (guint8 *)data;
+	output.data.len = data_length;
+	output.final_chunk = final_chunk;
+	event.sequence = sequence;
+	event.body_case = SAKURA__CONTROL__V1__EVENT__BODY_TERMINAL_OUTPUT;
+	event.terminal_output = &output;
+	return sakura_control_pack_message(&event.base, payload);
+}
+
+
+gboolean
+sakura_control_encode_terminal_status_event(guint64 sequence,
+	                                          const gchar *terminal_id,
+	                                          guint status,
+	                                          const gchar *message,
+	                                          GByteArray *payload)
+{
+	Sakura__Control__V1__TerminalStatusChanged changed =
+		SAKURA__CONTROL__V1__TERMINAL_STATUS_CHANGED__INIT;
+	Sakura__Control__V1__Event event = SAKURA__CONTROL__V1__EVENT__INIT;
+
+	if (payload == NULL || terminal_id == NULL || terminal_id[0] == '\0')
+		return FALSE;
+	changed.terminal_id = (gchar *)terminal_id;
+	changed.status = status;
+	changed.message = (gchar *)sakura_control_string(message);
+	event.sequence = sequence;
+	event.body_case =
+		SAKURA__CONTROL__V1__EVENT__BODY_TERMINAL_STATUS_CHANGED;
+	event.terminal_status_changed = &changed;
+	return sakura_control_pack_message(&event.base, payload);
 }
 
 
@@ -688,6 +924,10 @@ sakura_control_decode_response(const guint8 *payload,
 	accepted =
 		decoded->body_case == SAKURA__CONTROL__V1__RESPONSE__BODY_ACCEPTED &&
 		decoded->accepted != NULL;
+	if (accepted) {
+		response->accepted_kind = g_strdup(decoded->accepted->kind);
+		response->accepted_id = g_strdup(decoded->accepted->id);
+	}
 	sakura__control__v1__response__free_unpacked(decoded, NULL);
 	response->has_snapshot = has_snapshot;
 	response->accepted = accepted;
@@ -754,6 +994,85 @@ sakura_control_decode_workspace_changed_event(
 	}
 	*sequence = decoded->sequence;
 	*snapshot = decoded_snapshot;
+	sakura__control__v1__event__free_unpacked(decoded, NULL);
+	return TRUE;
+}
+
+
+gboolean
+sakura_control_decode_terminal_output_event(const guint8 *payload,
+	                                           gsize payload_length,
+	                                           guint64 *sequence,
+	                                           gchar **terminal_id,
+	                                           guint8 **data,
+	                                           gsize *data_length,
+	                                           gboolean *final_chunk,
+	                                           GError **error)
+{
+	Sakura__Control__V1__Event *decoded;
+	Sakura__Control__V1__TerminalOutput *output;
+
+	if (payload == NULL || sequence == NULL || terminal_id == NULL ||
+	    data == NULL || data_length == NULL || final_chunk == NULL)
+		return sakura_control_error(error, "invalid terminal output event");
+	*terminal_id = NULL;
+	*data = NULL;
+	*data_length = 0;
+	*final_chunk = FALSE;
+	decoded = sakura__control__v1__event__unpack(NULL, payload_length, payload);
+	if (decoded == NULL ||
+	    decoded->body_case != SAKURA__CONTROL__V1__EVENT__BODY_TERMINAL_OUTPUT ||
+	    decoded->terminal_output == NULL) {
+		if (decoded != NULL)
+			sakura__control__v1__event__free_unpacked(decoded, NULL);
+		return sakura_control_error(error, "unsupported terminal output event");
+	}
+	output = decoded->terminal_output;
+	*sequence = decoded->sequence;
+	*terminal_id = g_strdup(output->terminal_id);
+	*data_length = output->data.len;
+	if (*data_length != 0) {
+		*data = g_malloc(*data_length);
+		memcpy(*data, output->data.data, *data_length);
+	}
+	*final_chunk = output->final_chunk;
+	sakura__control__v1__event__free_unpacked(decoded, NULL);
+	return TRUE;
+}
+
+
+gboolean
+sakura_control_decode_terminal_status_event(const guint8 *payload,
+	                                           gsize payload_length,
+	                                           guint64 *sequence,
+	                                           gchar **terminal_id,
+	                                           guint *status,
+	                                           gchar **message,
+	                                           GError **error)
+{
+	Sakura__Control__V1__Event *decoded;
+	Sakura__Control__V1__TerminalStatusChanged *changed;
+
+	if (payload == NULL || sequence == NULL || terminal_id == NULL ||
+	    status == NULL || message == NULL)
+		return sakura_control_error(error, "invalid terminal status event");
+	*terminal_id = NULL;
+	*status = 0;
+	*message = NULL;
+	decoded = sakura__control__v1__event__unpack(NULL, payload_length, payload);
+	if (decoded == NULL ||
+	    decoded->body_case !=
+			SAKURA__CONTROL__V1__EVENT__BODY_TERMINAL_STATUS_CHANGED ||
+	    decoded->terminal_status_changed == NULL) {
+		if (decoded != NULL)
+			sakura__control__v1__event__free_unpacked(decoded, NULL);
+		return sakura_control_error(error, "unsupported terminal status event");
+	}
+	changed = decoded->terminal_status_changed;
+	*sequence = decoded->sequence;
+	*terminal_id = g_strdup(changed->terminal_id);
+	*status = changed->status;
+	*message = g_strdup(changed->message);
 	sakura__control__v1__event__free_unpacked(decoded, NULL);
 	return TRUE;
 }
