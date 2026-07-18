@@ -5,6 +5,8 @@ package sakura.control.v1;
 // This is the transport-neutral control contract between a web-facing agent
 // service and a Sakura machine adapter. It is intentionally separate from
 // HTTP/WebSocket framing: the same messages can travel over either.
+// The initial local Unix-socket adapter uses a four-byte big-endian length
+// prefix around each serialized message.
 
 message Group {
   string id = 1;

@@ -3221,6 +3221,7 @@ sakura_destroy_cleanup(void)
 	sakura.sidebar_root = NULL;
 	sakura.active_group_scope = NULL;
 	sakura_codex_name_helper_shutdown();
+	sakura_agent_stop(&sakura);
 
 	g_clear_pointer(&sakura.cfg, g_key_file_free);
 	g_clear_pointer(&sakura.session_cfg, g_key_file_free);
@@ -4005,6 +4006,8 @@ sakura_run(int argc, char **argv)
 	/* Init stuff */
 	gtk_init(&nargc, &nargv); g_strfreev(nargv);
 	sakura_init();
+	if (!sakura_agent_start(&sakura))
+		SAY("Local sakura-agent is unavailable; continuing with the desktop model");
 
 	/* Restore the previous workspace for a normal launch. Explicit multi-tab
 	 * launches and --new-session remain useful for starting fresh instances. */

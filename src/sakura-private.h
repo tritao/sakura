@@ -4,6 +4,7 @@
 #include <stdbool.h>
 
 #include <glib.h>
+#include <gio/gio.h>
 #include <gtk/gtk.h>
 #include <vte/vte.h>
 
@@ -226,6 +227,8 @@ struct sakura_app {
 	guint sidebar_spinner_source_id;
 	guint sidebar_spinner_pulse;
 	GSubprocess *codex_name_helper_process;
+	GSubprocess *agent_process;
+	gchar *agent_socket_path;
 	GDataInputStream *codex_name_helper_output;
 	GOutputStream *codex_name_helper_input;
 	GQueue *codex_name_query_queue;
@@ -789,6 +792,8 @@ gboolean sakura_session_write_snapshot(SakuraApp *app,
                                        const SakuraSessionSnapshot *snapshot);
 gboolean sakura_session_load_file(SakuraApp *app, gboolean restore_session);
 void sakura_session_prepare_bash_integration(SakuraApp *app);
+gboolean sakura_agent_start(SakuraApp *app);
+void sakura_agent_stop(SakuraApp *app);
 
 const gchar *sakura_tool_label(SakuraToolKind tool);
 const gchar *sakura_tool_id(SakuraToolKind tool);

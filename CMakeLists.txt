@@ -60,6 +60,8 @@ SET (SAKURA_APP_SOURCES
 	src/sakura-workspace-model.c
 	src/sakura-workspace-persistence.c
 	src/sakura-integrations.c
+	src/sakura-control.c
+	src/sakura-agent-client.c
 	src/sakura-session.c)
 
 ADD_EXECUTABLE (sakura)
@@ -96,6 +98,19 @@ ADD_LIBRARY (sakura-core STATIC
 TARGET_INCLUDE_DIRECTORIES (sakura-core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
 TARGET_COMPILE_OPTIONS (sakura-core PRIVATE ${SAKURA_WARNING_FLAGS})
 TARGET_LINK_LIBRARIES (sakura-core PUBLIC PkgConfig::GLIB m)
+
+ADD_EXECUTABLE (sakura-agent
+	src/sakura-agent.c
+	src/sakura-control.c)
+TARGET_INCLUDE_DIRECTORIES (sakura-agent PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+TARGET_COMPILE_OPTIONS (sakura-agent PRIVATE ${SAKURA_WARNING_FLAGS})
+TARGET_LINK_LIBRARIES (sakura-agent PRIVATE
+	sakura-core
+	PkgConfig::GLIB
+	PkgConfig::GIO_UNIX)
+ADD_DEPENDENCIES (sakura sakura-agent)
+TARGET_COMPILE_DEFINITIONS (sakura PRIVATE
+	SAKURA_AGENT_BUILD_PATH="${CMAKE_BINARY_DIR}/src/sakura-agent")
 
 IF (CMAKE_BUILD_TYPE MATCHES "Debug")
 	TARGET_COMPILE_OPTIONS (sakura PRIVATE ${SAKURA_WARNING_FLAGS})
@@ -134,6 +149,19 @@ IF (BUILD_TESTING)
 		PkgConfig::GLIB)
 	ADD_TEST (NAME core-model COMMAND sakura-core-model-test)
 
+	ADD_EXECUTABLE (sakura-control-test
+		tests/test-sakura-control.c
+		src/sakura-control.c)
+	TARGET_INCLUDE_DIRECTORIES (sakura-control-test PRIVATE
+		${CMAKE_CURRENT_SOURCE_DIR}/src)
+	TARGET_COMPILE_OPTIONS (sakura-control-test PRIVATE
+		${SAKURA_WARNING_FLAGS})
+	TARGET_LINK_LIBRARIES (sakura-control-test PRIVATE
+		sakura-core
+		PkgConfig::GLIB
+		PkgConfig::GIO_UNIX)
+	ADD_TEST (NAME control COMMAND sakura-control-test)
+
 	ADD_EXECUTABLE (sakura-core-test)
 	TARGET_SOURCES (sakura-core-test PRIVATE
 		tests/test-core.c
@@ -166,7 +194,8 @@ IF (BUILD_TESTING)
 		DATADIR="${CMAKE_INSTALL_PREFIX}/share"
 		SAKURA_SOURCE_ICON_DIR="${CMAKE_SOURCE_DIR}/icons"
 		SAKURA_SOURCE_SCRIPT_DIR="${CMAKE_SOURCE_DIR}/scripts"
-		BUILDTYPE="${CMAKE_BUILD_TYPE}")
+		BUILDTYPE="${CMAKE_BUILD_TYPE}"
+		SAKURA_AGENT_BUILD_PATH="${CMAKE_BINARY_DIR}/src/sakura-agent")
 	TARGET_COMPILE_OPTIONS (sakura-workspace-gtk-test PRIVATE
 		${SAKURA_WARNING_FLAGS})
 	IF (WEBKIT41_FOUND)
@@ -243,7 +272,7 @@ ENDIF (Python3_Interpreter_FOUND)
 
 ADD_SUBDIRECTORY (po)
 
-INSTALL (TARGETS sakura RUNTIME DESTINATION bin)
+INSTALL (TARGETS sakura sakura-agent RUNTIME DESTINATION bin)
 INSTALL (FILES sakura.desktop DESTINATION share/applications)
 INSTALL (FILES terminal-tango.svg DESTINATION share/pixmaps)
 INSTALL (FILES
