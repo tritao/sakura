@@ -91,7 +91,8 @@ SET (SAKURA_WARNING_FLAGS
 # GTK, VTE, X11, or the desktop application lifecycle.
 ADD_LIBRARY (sakura-core STATIC
 	src/sakura-core.c
-	src/sakura-core-session.c)
+	src/sakura-core-session.c
+	src/sakura-core-workspace.c)
 TARGET_INCLUDE_DIRECTORIES (sakura-core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
 TARGET_COMPILE_OPTIONS (sakura-core PRIVATE ${SAKURA_WARNING_FLAGS})
 TARGET_LINK_LIBRARIES (sakura-core PUBLIC PkgConfig::GLIB m)

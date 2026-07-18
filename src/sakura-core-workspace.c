@@ -1,0 +1,720 @@
+#include "sakura-core.h"
+
+
+static GQuark
+sakura_core_workspace_error_quark(void)
+{
+	return g_quark_from_static_string("sakura-core-workspace-error");
+}
+
+
+static gboolean
+sakura_core_workspace_contains_group(const SakuraCoreWorkspace *workspace,
+	                                    const SakuraCoreGroup *group)
+{
+	if (workspace == NULL || workspace->groups == NULL || group == NULL)
+		return FALSE;
+	return g_ptr_array_find(workspace->groups, group, NULL);
+}
+
+
+static gboolean
+sakura_core_workspace_contains_task(const SakuraCoreWorkspace *workspace,
+	                                   const SakuraCoreTask *task)
+{
+	if (workspace == NULL || workspace->tasks == NULL || task == NULL)
+		return FALSE;
+	return g_ptr_array_find(workspace->tasks, task, NULL);
+}
+
+
+SakuraCoreWorkspace *
+sakura_core_workspace_new(void)
+{
+	SakuraCoreWorkspace *workspace = g_new0(SakuraCoreWorkspace, 1);
+
+	workspace->groups = g_ptr_array_new_with_free_func(
+		(GDestroyNotify)sakura_core_group_free);
+	workspace->tasks = g_ptr_array_new_with_free_func(
+		(GDestroyNotify)sakura_core_task_free);
+	return workspace;
+}
+
+
+void
+sakura_core_workspace_free(SakuraCoreWorkspace *workspace)
+{
+	if (workspace == NULL)
+		return;
+	g_clear_pointer(&workspace->tasks, g_ptr_array_unref);
+	g_clear_pointer(&workspace->groups, g_ptr_array_unref);
+	g_free(workspace);
+}
+
+
+SakuraCoreGroup *
+sakura_core_group_new(const gchar *id,
+	                  const gchar *title,
+	                  SakuraCoreGroup *parent)
+{
+	SakuraCoreGroup *group = g_new0(SakuraCoreGroup, 1);
+
+	group->id = g_strdup(id);
+	group->title = g_strdup(title != NULL ? title : "");
+	group->parent = parent;
+	return group;
+}
+
+
+void
+sakura_core_group_free(SakuraCoreGroup *group)
+{
+	if (group == NULL)
+		return;
+	g_free(group->id);
+	g_free(group->title);
+	g_free(group->directory);
+	g_free(group);
+}
+
+
+SakuraCoreTask *
+sakura_core_task_new(const gchar *id,
+	                 const gchar *title,
+	                 SakuraCoreGroup *group,
+	                 SakuraCoreTask *parent)
+{
+	SakuraCoreTask *task = g_new0(SakuraCoreTask, 1);
+
+	task->id = g_strdup(id);
+	task->title = g_strdup(title != NULL ? title : "");
+	task->provider = g_strdup("local");
+	task->status = SAKURA_TASK_READY;
+	task->group = group;
+	task->parent = parent;
+	return task;
+}
+
+
+void
+sakura_core_task_free(SakuraCoreTask *task)
+{
+	if (task == NULL)
+		return;
+	g_free(task->id);
+	g_free(task->title);
+	g_free(task->provider);
+	g_free(task->external_id);
+	g_free(task->url);
+	g_free(task);
+}
+
+
+gboolean
+sakura_core_workspace_set_root(SakuraCoreWorkspace *workspace,
+	                            SakuraCoreGroup *root_group)
+{
+	if (workspace == NULL || root_group == NULL || workspace->root_group != NULL ||
+	    root_group->parent != NULL || root_group->id == NULL ||
+	    sakura_core_workspace_contains_group(workspace, root_group))
+		return FALSE;
+	workspace->root_group = root_group;
+	g_ptr_array_add(workspace->groups, root_group);
+	return TRUE;
+}
+
+
+static gboolean
+sakura_core_workspace_group_is_child_of(const SakuraCoreWorkspace *workspace,
+	                                        const SakuraCoreGroup *group,
+	                                        const SakuraCoreGroup *parent)
+{
+	if (group == NULL || parent == NULL)
+		return FALSE;
+	return group->parent == parent ||
+	       (group->parent == NULL && parent == workspace->root_group);
+}
+
+
+gboolean
+sakura_core_workspace_add_group(SakuraCoreWorkspace *workspace,
+	                             SakuraCoreGroup *group)
+{
+	if (workspace == NULL || group == NULL || group->id == NULL ||
+	    workspace->groups == NULL || group == workspace->root_group ||
+	    sakura_core_workspace_contains_group(workspace, group) ||
+	    sakura_core_workspace_find_group(workspace, group->id) != NULL)
+		return FALSE;
+	if (group->parent == NULL)
+		group->parent = workspace->root_group;
+	if (group->parent != NULL &&
+	    !sakura_core_workspace_contains_group(workspace, group->parent))
+		return FALSE;
+	g_ptr_array_add(workspace->groups, group);
+	return TRUE;
+}
+
+
+gboolean
+sakura_core_workspace_can_remove_group(SakuraCoreWorkspace *workspace,
+	                                    SakuraCoreGroup *group)
+{
+	if (workspace == NULL || group == NULL || group == workspace->root_group ||
+	    !sakura_core_workspace_contains_group(workspace, group))
+		return FALSE;
+	for (guint index = 0; index < workspace->groups->len; index++) {
+		SakuraCoreGroup *candidate = g_ptr_array_index(workspace->groups, index);
+
+		if (candidate != NULL && candidate != group &&
+		    sakura_core_workspace_group_is_child_of(workspace, candidate, group))
+			return FALSE;
+	}
+	for (guint index = 0; index < workspace->tasks->len; index++) {
+		SakuraCoreTask *task = g_ptr_array_index(workspace->tasks, index);
+
+		if (task != NULL && task->group == group)
+			return FALSE;
+	}
+	return TRUE;
+}
+
+
+gboolean
+sakura_core_workspace_remove_group(SakuraCoreWorkspace *workspace,
+	                               SakuraCoreGroup *group)
+{
+	if (!sakura_core_workspace_can_remove_group(workspace, group) ||
+	    !g_ptr_array_remove(workspace->groups, group))
+		return FALSE;
+	if (workspace->active_group == group)
+		workspace->active_group = workspace->root_group;
+	return TRUE;
+}
+
+
+gboolean
+sakura_core_workspace_add_task(SakuraCoreWorkspace *workspace,
+	                            SakuraCoreTask *task)
+{
+	if (workspace == NULL || task == NULL || task->id == NULL ||
+	    workspace->tasks == NULL ||
+	    sakura_core_workspace_find_task(workspace, task->id) != NULL)
+		return FALSE;
+	if (task->group == NULL)
+		task->group = workspace->root_group;
+	if (task->group != NULL &&
+	    !sakura_core_workspace_contains_group(workspace, task->group))
+		return FALSE;
+	if (task->parent != NULL) {
+		if (!sakura_core_workspace_contains_task(workspace, task->parent))
+			return FALSE;
+		if (task->parent->group != task->group)
+			return FALSE;
+	}
+	g_ptr_array_add(workspace->tasks, task);
+	return TRUE;
+}
+
+
+gboolean
+sakura_core_workspace_can_remove_task(SakuraCoreWorkspace *workspace,
+	                                   SakuraCoreTask *task)
+{
+	if (workspace == NULL || task == NULL ||
+	    !sakura_core_workspace_contains_task(workspace, task))
+		return FALSE;
+	for (guint index = 0; index < workspace->tasks->len; index++) {
+		SakuraCoreTask *candidate = g_ptr_array_index(workspace->tasks, index);
+
+		if (candidate != NULL && candidate != task && candidate->parent == task)
+			return FALSE;
+	}
+	return TRUE;
+}
+
+
+gboolean
+sakura_core_workspace_remove_task(SakuraCoreWorkspace *workspace,
+	                              SakuraCoreTask *task)
+{
+	if (!sakura_core_workspace_can_remove_task(workspace, task) ||
+	    !g_ptr_array_remove(workspace->tasks, task))
+		return FALSE;
+	if (workspace->active_task == task)
+		workspace->active_task = NULL;
+	return TRUE;
+}
+
+
+SakuraCoreGroup *
+sakura_core_workspace_find_group(SakuraCoreWorkspace *workspace,
+	                             const gchar *id)
+{
+	if (workspace == NULL || id == NULL || id[0] == '\0' ||
+	    g_strcmp0(id, "root") == 0)
+		return workspace != NULL ? workspace->root_group : NULL;
+	for (guint index = 0; workspace->groups != NULL &&
+	                       index < workspace->groups->len; index++) {
+		SakuraCoreGroup *group = g_ptr_array_index(workspace->groups, index);
+
+		if (group != NULL && g_strcmp0(group->id, id) == 0)
+			return group;
+	}
+	return NULL;
+}
+
+
+SakuraCoreTask *
+sakura_core_workspace_find_task(SakuraCoreWorkspace *workspace,
+	                            const gchar *id)
+{
+	if (workspace == NULL || id == NULL || workspace->tasks == NULL)
+		return NULL;
+	for (guint index = 0; index < workspace->tasks->len; index++) {
+		SakuraCoreTask *task = g_ptr_array_index(workspace->tasks, index);
+
+		if (task != NULL && g_strcmp0(task->id, id) == 0)
+			return task;
+	}
+	return NULL;
+}
+
+
+static gint
+sakura_core_group_order_compare(gconstpointer first,
+	                              gconstpointer second)
+{
+	const SakuraCoreGroup *first_group = first;
+	const SakuraCoreGroup *second_group = second;
+
+	return first_group->order < second_group->order ? -1
+	     : first_group->order > second_group->order ? 1 : 0;
+}
+
+
+static void
+sakura_core_append_ordered_groups(const SakuraCoreWorkspace *workspace,
+	                                 const SakuraCoreGroup *parent,
+	                                 GPtrArray *ordered,
+	                                 GHashTable *seen)
+{
+	GList *children = NULL;
+
+	for (guint index = 0; workspace != NULL && workspace->groups != NULL &&
+	                       index < workspace->groups->len; index++) {
+		SakuraCoreGroup *group = g_ptr_array_index(workspace->groups, index);
+
+		if (group != NULL && group != workspace->root_group &&
+		    sakura_core_workspace_group_is_child_of(workspace, group, parent))
+			children = g_list_prepend(children, group);
+	}
+	children = g_list_sort(children, sakura_core_group_order_compare);
+	for (GList *link = children; link != NULL; link = link->next) {
+		SakuraCoreGroup *group = link->data;
+
+		if (g_hash_table_add(seen, group)) {
+			g_ptr_array_add(ordered, group);
+			sakura_core_append_ordered_groups(workspace, group, ordered, seen);
+		}
+	}
+	g_list_free(children);
+}
+
+
+GPtrArray *
+sakura_core_workspace_ordered_groups(const SakuraCoreWorkspace *workspace)
+{
+	GPtrArray *ordered = g_ptr_array_new();
+	GHashTable *seen = g_hash_table_new(g_direct_hash, g_direct_equal);
+
+	if (workspace != NULL) {
+		sakura_core_append_ordered_groups(workspace, workspace->root_group,
+		                                  ordered, seen);
+		for (guint index = 0; workspace->groups != NULL &&
+		                       index < workspace->groups->len; index++) {
+			SakuraCoreGroup *group = g_ptr_array_index(workspace->groups, index);
+
+			if (group != NULL && group != workspace->root_group &&
+			    g_hash_table_add(seen, group))
+				g_ptr_array_add(ordered, group);
+		}
+	}
+	g_hash_table_destroy(seen);
+	return ordered;
+}
+
+
+static gint
+sakura_core_task_order_compare(gconstpointer first,
+	                             gconstpointer second)
+{
+	const SakuraCoreTask *first_task = first;
+	const SakuraCoreTask *second_task = second;
+
+	return first_task->order < second_task->order ? -1
+	     : first_task->order > second_task->order ? 1 : 0;
+}
+
+
+static void
+sakura_core_append_task_subtree(const SakuraCoreWorkspace *workspace,
+	                               SakuraCoreTask *parent,
+	                               GPtrArray *ordered,
+	                               GHashTable *seen)
+{
+	GList *children = NULL;
+
+	if (parent == NULL || !g_hash_table_add(seen, parent))
+		return;
+	g_ptr_array_add(ordered, parent);
+	for (guint index = 0; workspace != NULL && workspace->tasks != NULL &&
+	                       index < workspace->tasks->len; index++) {
+		SakuraCoreTask *task = g_ptr_array_index(workspace->tasks, index);
+
+		if (task != NULL && task->parent == parent)
+			children = g_list_prepend(children, task);
+	}
+	children = g_list_sort(children, sakura_core_task_order_compare);
+	for (GList *link = children; link != NULL; link = link->next)
+		sakura_core_append_task_subtree(workspace, link->data, ordered, seen);
+	g_list_free(children);
+}
+
+
+static void
+sakura_core_append_ordered_tasks_for_group(const SakuraCoreWorkspace *workspace,
+	                                          SakuraCoreGroup *group,
+	                                          GPtrArray *ordered,
+	                                          GHashTable *seen)
+{
+	GList *tasks = NULL;
+
+	for (guint index = 0; workspace != NULL && workspace->tasks != NULL &&
+	                       index < workspace->tasks->len; index++) {
+		SakuraCoreTask *task = g_ptr_array_index(workspace->tasks, index);
+
+		if (task != NULL && task->parent == NULL &&
+		    (task->group == group ||
+		     (task->group == NULL && group == workspace->root_group)))
+			tasks = g_list_prepend(tasks, task);
+	}
+	tasks = g_list_sort(tasks, sakura_core_task_order_compare);
+	for (GList *link = tasks; link != NULL; link = link->next)
+		sakura_core_append_task_subtree(workspace, link->data, ordered, seen);
+	g_list_free(tasks);
+}
+
+
+GPtrArray *
+sakura_core_workspace_ordered_tasks(const SakuraCoreWorkspace *workspace)
+{
+	GPtrArray *ordered = g_ptr_array_new();
+	GPtrArray *groups;
+	GHashTable *seen;
+
+	if (workspace == NULL || workspace->tasks == NULL)
+		return ordered;
+	seen = g_hash_table_new(g_direct_hash, g_direct_equal);
+	sakura_core_append_ordered_tasks_for_group(workspace,
+	                                          workspace->root_group,
+	                                          ordered, seen);
+	groups = sakura_core_workspace_ordered_groups(workspace);
+	for (guint index = 0; index < groups->len; index++)
+		sakura_core_append_ordered_tasks_for_group(
+			workspace, g_ptr_array_index(groups, index), ordered, seen);
+	g_ptr_array_unref(groups);
+	for (guint index = 0; index < workspace->tasks->len; index++)
+		sakura_core_append_task_subtree(workspace,
+		                                g_ptr_array_index(workspace->tasks, index),
+		                                ordered, seen);
+	g_hash_table_destroy(seen);
+	return ordered;
+}
+
+
+static gboolean
+sakura_core_group_is_within(const SakuraCoreGroup *group,
+	                          const SakuraCoreGroup *ancestor)
+{
+	GHashTable *seen = g_hash_table_new(g_direct_hash, g_direct_equal);
+	gboolean result = FALSE;
+
+	while (group != NULL && g_hash_table_add(seen, (gpointer)group)) {
+		if (group == ancestor) {
+			result = TRUE;
+			break;
+		}
+		group = group->parent;
+	}
+	g_hash_table_destroy(seen);
+	return result;
+}
+
+
+static gboolean
+sakura_core_task_is_within(const SakuraCoreTask *task,
+	                         const SakuraCoreTask *ancestor)
+{
+	GHashTable *seen = g_hash_table_new(g_direct_hash, g_direct_equal);
+	gboolean result = FALSE;
+
+	while (task != NULL && g_hash_table_add(seen, (gpointer)task)) {
+		if (task == ancestor) {
+			result = TRUE;
+			break;
+		}
+		task = task->parent;
+	}
+	g_hash_table_destroy(seen);
+	return result;
+}
+
+
+gboolean
+sakura_core_workspace_group_is_archived(const SakuraCoreWorkspace *workspace,
+	                                     const SakuraCoreGroup *group)
+{
+	(void)workspace;
+	while (group != NULL) {
+		if (group->archived)
+			return TRUE;
+		group = group->parent;
+	}
+	return FALSE;
+}
+
+
+gboolean
+sakura_core_workspace_task_is_archived(const SakuraCoreWorkspace *workspace,
+                                    const SakuraCoreTask *task)
+{
+	const SakuraCoreTask *candidate = task;
+	SakuraCoreGroup *group;
+
+	if (task == NULL)
+		return FALSE;
+	while (candidate != NULL) {
+		if (candidate->archived)
+			return TRUE;
+		candidate = candidate->parent;
+	}
+	group = task->group;
+	return sakura_core_workspace_group_is_archived(workspace, group);
+}
+
+
+void
+sakura_core_workspace_set_group_archived(SakuraCoreWorkspace *workspace,
+	                                     SakuraCoreGroup *group,
+	                                     gboolean archived)
+{
+	if (workspace == NULL || group == NULL)
+		return;
+	for (guint index = 0; index < workspace->groups->len; index++) {
+		SakuraCoreGroup *candidate = g_ptr_array_index(workspace->groups, index);
+
+		if (candidate != NULL && sakura_core_group_is_within(candidate, group))
+			candidate->archived = archived;
+	}
+	for (guint index = 0; index < workspace->tasks->len; index++) {
+		SakuraCoreTask *task = g_ptr_array_index(workspace->tasks, index);
+
+		if (task != NULL && sakura_core_group_is_within(task->group, group))
+			task->archived = archived;
+	}
+}
+
+
+void
+sakura_core_workspace_set_task_archived(SakuraCoreWorkspace *workspace,
+	                                    SakuraCoreTask *task,
+	                                    gboolean archived)
+{
+	if (workspace == NULL || task == NULL)
+		return;
+	for (guint index = 0; index < workspace->tasks->len; index++) {
+		SakuraCoreTask *candidate = g_ptr_array_index(workspace->tasks, index);
+
+		if (candidate != NULL && sakura_core_task_is_within(candidate, task))
+			candidate->archived = archived;
+	}
+}
+
+
+static gboolean
+sakura_core_workspace_add_snapshot_group(SakuraCoreWorkspace *workspace,
+	                                       const SakuraSessionGroupRecord *record)
+{
+	SakuraCoreGroup *group;
+	SakuraCoreGroup *parent;
+
+	if (record == NULL || record->id == NULL ||
+	    sakura_core_workspace_find_group(workspace, record->id) != NULL)
+		return FALSE;
+	parent = sakura_core_workspace_find_group(workspace, record->parent_id);
+	if (parent == NULL)
+		parent = workspace->root_group;
+	group = sakura_core_group_new(record->id, record->title, parent);
+	group->directory = g_strdup(record->directory);
+	group->order = record->order;
+	group->archived = record->archived;
+	if (!sakura_core_workspace_add_group(workspace, group)) {
+		sakura_core_group_free(group);
+		return FALSE;
+	}
+	return TRUE;
+}
+
+
+SakuraCoreWorkspace *
+sakura_core_workspace_from_snapshot(const SakuraSessionSnapshot *snapshot,
+	                                GError **error)
+{
+	SakuraCoreWorkspace *workspace;
+	SakuraCoreGroup *root;
+	guint remaining;
+
+	if (snapshot == NULL) {
+		g_set_error_literal(error, sakura_core_workspace_error_quark(), 1,
+		                    "Cannot restore a NULL session snapshot");
+		return NULL;
+	}
+	workspace = sakura_core_workspace_new();
+	root = sakura_core_group_new("root", "All terminals", NULL);
+	root->directory = g_strdup(snapshot->root_directory);
+	if (!sakura_core_workspace_set_root(workspace, root)) {
+		sakura_core_group_free(root);
+		sakura_core_workspace_free(workspace);
+		g_set_error_literal(error, sakura_core_workspace_error_quark(), 2,
+		                    "Cannot create the workspace root group");
+		return NULL;
+	}
+	remaining = snapshot->groups != NULL ? snapshot->groups->len : 0;
+	for (guint pass = 0; remaining > 0 && pass <= remaining; pass++) {
+		gboolean progress = FALSE;
+
+		for (guint index = 0; index < snapshot->groups->len; index++) {
+			SakuraSessionGroupRecord *record =
+				g_ptr_array_index(snapshot->groups, index);
+
+			if (record != NULL && record->id != NULL &&
+			    sakura_core_workspace_find_group(workspace, record->id) == NULL &&
+			    (record->parent_id == NULL || record->parent_id[0] == '\0' ||
+			     sakura_core_workspace_find_group(workspace,
+			                                    record->parent_id) != NULL) &&
+			    sakura_core_workspace_add_snapshot_group(workspace, record)) {
+				remaining--;
+				progress = TRUE;
+			}
+		}
+		if (!progress)
+			break;
+	}
+	/* Orphans and cycles remain visible under root, as in the desktop model. */
+	if (remaining > 0 && snapshot->groups != NULL) {
+		for (guint index = 0; index < snapshot->groups->len; index++) {
+			SakuraSessionGroupRecord *record =
+				g_ptr_array_index(snapshot->groups, index);
+			SakuraCoreGroup *group;
+
+			if (record == NULL || record->id == NULL ||
+			    sakura_core_workspace_find_group(workspace, record->id) != NULL)
+				continue;
+			group = sakura_core_group_new(record->id, record->title,
+			                              workspace->root_group);
+			group->directory = g_strdup(record->directory);
+			group->order = record->order;
+			group->archived = record->archived;
+			if (sakura_core_workspace_add_group(workspace, group))
+				remaining--;
+			else
+				sakura_core_group_free(group);
+		}
+	}
+
+	remaining = snapshot->tasks != NULL ? snapshot->tasks->len : 0;
+	for (guint pass = 0; remaining > 0 && pass <= remaining; pass++) {
+		gboolean progress = FALSE;
+
+		for (guint index = 0; index < snapshot->tasks->len; index++) {
+			SakuraSessionTaskRecord *record =
+				g_ptr_array_index(snapshot->tasks, index);
+			SakuraCoreTask *parent = NULL;
+			SakuraCoreGroup *group = NULL;
+			SakuraCoreTask *task;
+
+			if (record == NULL || record->id == NULL ||
+			    sakura_core_workspace_find_task(workspace, record->id) != NULL)
+				continue;
+			if (record->parent_id != NULL && record->parent_id[0] != '\0' &&
+			    g_strcmp0(record->parent_id, "root") != 0) {
+				parent = sakura_core_workspace_find_task(workspace,
+				                                      record->parent_id);
+				if (parent != NULL)
+					group = parent->group;
+				else
+					group = sakura_core_workspace_find_group(
+						workspace, record->parent_id);
+				if (group == NULL)
+					continue;
+			} else {
+				group = sakura_core_workspace_find_group(workspace,
+				                                      record->group_id);
+			}
+			if (group == NULL)
+				continue;
+			task = sakura_core_task_new(record->id, record->title, group, parent);
+			g_free(task->provider);
+			task->provider = g_strdup(record->provider != NULL
+			                           ? record->provider : "local");
+			task->external_id = g_strdup(record->external_id);
+			task->url = g_strdup(record->url);
+			task->status = record->status;
+			task->order = record->order;
+			task->archived = record->archived;
+			if (sakura_core_workspace_add_task(workspace, task)) {
+				remaining--;
+				progress = TRUE;
+			} else {
+				sakura_core_task_free(task);
+			}
+		}
+		if (!progress)
+			break;
+	}
+	if (remaining > 0 && snapshot->tasks != NULL) {
+		for (guint index = 0; index < snapshot->tasks->len; index++) {
+			SakuraSessionTaskRecord *record =
+				g_ptr_array_index(snapshot->tasks, index);
+			SakuraCoreGroup *group;
+			SakuraCoreTask *task;
+
+			if (record == NULL || record->id == NULL ||
+			    sakura_core_workspace_find_task(workspace, record->id) != NULL)
+				continue;
+			group = sakura_core_workspace_find_group(workspace, record->group_id);
+			if (group == NULL)
+				group = workspace->root_group;
+			task = sakura_core_task_new(record->id, record->title, group, NULL);
+			g_free(task->provider);
+			task->provider = g_strdup(record->provider != NULL
+			                           ? record->provider : "local");
+			task->external_id = g_strdup(record->external_id);
+			task->url = g_strdup(record->url);
+			task->status = record->status;
+			task->order = record->order;
+			task->archived = record->archived;
+			if (sakura_core_workspace_add_task(workspace, task))
+				remaining--;
+			else
+				sakura_core_task_free(task);
+		}
+	}
+	workspace->active_group = sakura_core_workspace_find_group(
+		workspace, snapshot->active_group_id);
+	if (workspace->active_group == NULL)
+		workspace->active_group = workspace->root_group;
+	workspace->active_task = sakura_core_workspace_find_task(
+		workspace, snapshot->selected_task_id);
+	return workspace;
+}

@@ -1,0 +1,141 @@
+syntax = "proto3";
+
+package sakura.control.v1;
+
+// This is the transport-neutral control contract between a web-facing agent
+// service and a Sakura machine adapter. It is intentionally separate from
+// HTTP/WebSocket framing: the same messages can travel over either.
+
+message Group {
+  string id = 1;
+  string parent_id = 2;
+  string title = 3;
+  string directory = 4;
+  uint32 order = 5;
+  bool archived = 6;
+}
+
+message Task {
+  string id = 1;
+  string parent_id = 2;
+  string group_id = 3;
+  string title = 4;
+  string provider = 5;
+  string external_id = 6;
+  string url = 7;
+  uint32 status = 8;
+  uint32 order = 9;
+  bool archived = 10;
+}
+
+message WorkspaceSnapshot {
+  repeated Group groups = 1;
+  repeated Task tasks = 2;
+  string active_group_id = 3;
+  string active_task_id = 4;
+  string root_directory = 5;
+  uint64 sequence = 6;
+}
+
+message EntityRef {
+  string kind = 1;
+  string id = 2;
+}
+
+message Error {
+  string code = 1;
+  string message = 2;
+  bool retryable = 3;
+}
+
+message GetSnapshotRequest {}
+
+message CreateGroupRequest {
+  string parent_id = 1;
+  string title = 2;
+  string directory = 3;
+}
+
+message CreateTaskRequest {
+  string group_id = 1;
+  string parent_id = 2;
+  string title = 3;
+  string provider = 4;
+  string external_id = 5;
+  string url = 6;
+}
+
+message CreateTerminalRequest {
+  string group_id = 1;
+  string task_id = 2;
+  string cwd = 3;
+  uint32 cols = 4;
+  uint32 rows = 5;
+}
+
+message TerminalInput {
+  string terminal_id = 1;
+  bytes data = 2;
+}
+
+message TerminalResize {
+  string terminal_id = 1;
+  uint32 cols = 2;
+  uint32 rows = 3;
+}
+
+message CloseSessionRequest {
+  string terminal_id = 1;
+}
+
+message SubscribeEventsRequest {
+  uint64 after_sequence = 1;
+}
+
+message Request {
+  string request_id = 1;
+  oneof body {
+    GetSnapshotRequest get_snapshot = 2;
+    CreateGroupRequest create_group = 3;
+    CreateTaskRequest create_task = 4;
+    CreateTerminalRequest create_terminal = 5;
+    TerminalInput terminal_input = 6;
+    TerminalResize terminal_resize = 7;
+    CloseSessionRequest close_session = 8;
+    SubscribeEventsRequest subscribe_events = 9;
+  }
+}
+
+message Response {
+  string request_id = 1;
+  oneof body {
+    WorkspaceSnapshot snapshot = 2;
+    EntityRef accepted = 3;
+    Error error = 4;
+  }
+}
+
+message WorkspaceChanged {
+  WorkspaceSnapshot snapshot = 1;
+}
+
+message TerminalOutput {
+  string terminal_id = 1;
+  bytes data = 2;
+  bool final_chunk = 3;
+}
+
+message TerminalStatusChanged {
+  string terminal_id = 1;
+  uint32 status = 2;
+  string message = 3;
+}
+
+message Event {
+  uint64 sequence = 1;
+  oneof body {
+    WorkspaceChanged workspace_changed = 2;
+    TerminalOutput terminal_output = 3;
+    TerminalStatusChanged terminal_status_changed = 4;
+  }
+}

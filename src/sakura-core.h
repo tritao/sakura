@@ -56,6 +56,9 @@ typedef enum {
 } SakuraTaskStatus;
 
 typedef struct sakura_session_snapshot SakuraSessionSnapshot;
+typedef struct sakura_core_workspace SakuraCoreWorkspace;
+typedef struct sakura_core_group SakuraCoreGroup;
+typedef struct sakura_core_task SakuraCoreTask;
 
 typedef struct {
 	gchar *id;
@@ -135,6 +138,39 @@ struct sakura_session_snapshot {
 	gboolean show_archived;
 };
 
+/* GTK-free workspace state. These objects deliberately contain no widgets,
+ * pages, terminals, or sidebar nodes. A desktop or web adapter can project
+ * this model into its own view without becoming the owner of the domain. */
+struct sakura_core_group {
+	gchar *id;
+	gchar *title;
+	gchar *directory;
+	SakuraCoreGroup *parent;
+	guint order;
+	gboolean archived;
+};
+
+struct sakura_core_task {
+	gchar *id;
+	gchar *title;
+	gchar *provider;
+	gchar *external_id;
+	gchar *url;
+	SakuraTaskStatus status;
+	SakuraCoreTask *parent;
+	SakuraCoreGroup *group;
+	guint order;
+	gboolean archived;
+};
+
+struct sakura_core_workspace {
+	SakuraCoreGroup *root_group;
+	GPtrArray *groups; /* SakuraCoreGroup *, owned. */
+	GPtrArray *tasks;  /* SakuraCoreTask *, owned. */
+	SakuraCoreGroup *active_group; /* Borrowed. */
+	SakuraCoreTask *active_task; /* Borrowed. */
+};
+
 SakuraSessionSnapshot *sakura_session_snapshot_new(void);
 void sakura_session_snapshot_free(SakuraSessionSnapshot *snapshot);
 gboolean sakura_session_snapshot_load(GKeyFile *key_file,
@@ -142,5 +178,52 @@ gboolean sakura_session_snapshot_load(GKeyFile *key_file,
                                       GError **error);
 void sakura_session_snapshot_save(const SakuraSessionSnapshot *snapshot,
                                   GKeyFile *key_file);
+
+SakuraCoreWorkspace *sakura_core_workspace_new(void);
+void sakura_core_workspace_free(SakuraCoreWorkspace *workspace);
+SakuraCoreGroup *sakura_core_group_new(const gchar *id,
+                                       const gchar *title,
+                                       SakuraCoreGroup *parent);
+void sakura_core_group_free(SakuraCoreGroup *group);
+SakuraCoreTask *sakura_core_task_new(const gchar *id,
+                                     const gchar *title,
+                                     SakuraCoreGroup *group,
+                                     SakuraCoreTask *parent);
+void sakura_core_task_free(SakuraCoreTask *task);
+
+gboolean sakura_core_workspace_set_root(SakuraCoreWorkspace *workspace,
+                                         SakuraCoreGroup *root_group);
+gboolean sakura_core_workspace_add_group(SakuraCoreWorkspace *workspace,
+                                         SakuraCoreGroup *group);
+gboolean sakura_core_workspace_can_remove_group(
+	SakuraCoreWorkspace *workspace, SakuraCoreGroup *group);
+gboolean sakura_core_workspace_remove_group(SakuraCoreWorkspace *workspace,
+                                            SakuraCoreGroup *group);
+gboolean sakura_core_workspace_add_task(SakuraCoreWorkspace *workspace,
+                                        SakuraCoreTask *task);
+gboolean sakura_core_workspace_can_remove_task(
+	SakuraCoreWorkspace *workspace, SakuraCoreTask *task);
+gboolean sakura_core_workspace_remove_task(SakuraCoreWorkspace *workspace,
+                                           SakuraCoreTask *task);
+SakuraCoreGroup *sakura_core_workspace_find_group(
+	SakuraCoreWorkspace *workspace, const gchar *id);
+SakuraCoreTask *sakura_core_workspace_find_task(
+	SakuraCoreWorkspace *workspace, const gchar *id);
+GPtrArray *sakura_core_workspace_ordered_groups(
+	const SakuraCoreWorkspace *workspace);
+GPtrArray *sakura_core_workspace_ordered_tasks(
+	const SakuraCoreWorkspace *workspace);
+gboolean sakura_core_workspace_group_is_archived(
+	const SakuraCoreWorkspace *workspace, const SakuraCoreGroup *group);
+gboolean sakura_core_workspace_task_is_archived(
+	const SakuraCoreWorkspace *workspace, const SakuraCoreTask *task);
+void sakura_core_workspace_set_group_archived(SakuraCoreWorkspace *workspace,
+                                              SakuraCoreGroup *group,
+                                              gboolean archived);
+void sakura_core_workspace_set_task_archived(SakuraCoreWorkspace *workspace,
+                                             SakuraCoreTask *task,
+                                             gboolean archived);
+SakuraCoreWorkspace *sakura_core_workspace_from_snapshot(
+	const SakuraSessionSnapshot *snapshot, GError **error);
 
 #endif /* SAKURA_CORE_H */
