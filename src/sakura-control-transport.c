@@ -48,6 +48,7 @@ sakura_control_request_clear(SakuraControlRequest *request)
 	g_clear_pointer(&request->external_id, g_free);
 	g_clear_pointer(&request->url, g_free);
 	request->kind = SAKURA_CONTROL_REQUEST_NONE;
+	request->after_sequence = 0;
 }
 
 
@@ -58,6 +59,7 @@ sakura_control_response_clear(SakuraControlResponse *response)
 		return;
 	g_clear_pointer(&response->request_id, g_free);
 	response->has_snapshot = FALSE;
+	response->accepted = FALSE;
 }
 
 
@@ -200,6 +202,26 @@ sakura_control_encode_create_task_request(const gchar *request_id,
 
 
 gboolean
+sakura_control_encode_subscribe_events_request(const gchar *request_id,
+	                                             guint64 after_sequence,
+	                                             GByteArray *payload)
+{
+	Sakura__Control__V1__SubscribeEventsRequest subscribe =
+		SAKURA__CONTROL__V1__SUBSCRIBE_EVENTS_REQUEST__INIT;
+	Sakura__Control__V1__Request request =
+		SAKURA__CONTROL__V1__REQUEST__INIT;
+
+	if (payload == NULL || request_id == NULL || request_id[0] == '\0')
+		return FALSE;
+	subscribe.after_sequence = after_sequence;
+	request.request_id = (gchar *)request_id;
+	request.body_case = SAKURA__CONTROL__V1__REQUEST__BODY_SUBSCRIBE_EVENTS;
+	request.subscribe_events = &subscribe;
+	return sakura_control_pack_message(&request.base, payload);
+}
+
+
+gboolean
 sakura_control_decode_request(const guint8 *payload,
 	                            gsize payload_length,
 	                            SakuraControlRequest *request,
@@ -237,6 +259,12 @@ sakura_control_decode_request(const guint8 *payload,
 			request->provider = g_strdup(decoded->create_task->provider);
 			request->external_id = g_strdup(decoded->create_task->external_id);
 			request->url = g_strdup(decoded->create_task->url);
+		}
+		break;
+	case SAKURA__CONTROL__V1__REQUEST__BODY_SUBSCRIBE_EVENTS:
+		if (decoded->subscribe_events != NULL) {
+			request->kind = SAKURA_CONTROL_REQUEST_SUBSCRIBE_EVENTS;
+			request->after_sequence = decoded->subscribe_events->after_sequence;
 		}
 		break;
 	default:
@@ -286,8 +314,71 @@ sakura_control_fill_task(Sakura__Control__V1__Task *message,
 }
 
 
+static void
+sakura_control_fill_snapshot(
+	Sakura__Control__V1__WorkspaceSnapshot *snapshot,
+	const SakuraCoreWorkspace *workspace)
+{
+	GPtrArray *groups;
+	GPtrArray *tasks;
+
+	sakura__control__v1__workspace_snapshot__init(snapshot);
+	groups = sakura_core_workspace_ordered_groups(workspace);
+	if (groups->len != 0) {
+		snapshot->groups = g_new0(Sakura__Control__V1__Group *, groups->len);
+		for (guint index = 0; index < groups->len; index++) {
+			Sakura__Control__V1__Group *group_message = g_new0(
+				Sakura__Control__V1__Group, 1);
+
+			sakura_control_fill_group(group_message,
+			                          g_ptr_array_index(groups, index));
+			snapshot->groups[index] = group_message;
+		}
+		snapshot->n_groups = groups->len;
+	}
+	g_ptr_array_unref(groups);
+
+	tasks = sakura_core_workspace_ordered_tasks(workspace);
+	if (tasks->len != 0) {
+		snapshot->tasks = g_new0(Sakura__Control__V1__Task *, tasks->len);
+		for (guint index = 0; index < tasks->len; index++) {
+			Sakura__Control__V1__Task *task_message = g_new0(
+				Sakura__Control__V1__Task, 1);
+
+			sakura_control_fill_task(task_message,
+			                         g_ptr_array_index(tasks, index));
+			snapshot->tasks[index] = task_message;
+		}
+		snapshot->n_tasks = tasks->len;
+	}
+	g_ptr_array_unref(tasks);
+
+	snapshot->active_group_id = (gchar *)sakura_control_string(
+		workspace->active_group != NULL ? workspace->active_group->id : "root");
+	snapshot->active_task_id = (gchar *)sakura_control_string(
+		workspace->active_task != NULL ? workspace->active_task->id : NULL);
+	snapshot->root_directory = (gchar *)sakura_control_string(
+		workspace->root_group != NULL ? workspace->root_group->directory : NULL);
+	snapshot->sequence = 0;
+}
+
+
+static void
+sakura_control_free_snapshot_messages(
+	Sakura__Control__V1__WorkspaceSnapshot *snapshot)
+{
+	for (gsize index = 0; index < snapshot->n_groups; index++)
+		g_free(snapshot->groups[index]);
+	for (gsize index = 0; index < snapshot->n_tasks; index++)
+		g_free(snapshot->tasks[index]);
+	g_free(snapshot->groups);
+	g_free(snapshot->tasks);
+}
+
+
 gboolean
 sakura_control_encode_snapshot_response(const gchar *request_id,
+	                                    guint64 sequence,
 	                                    const SakuraCoreWorkspace *workspace,
 	                                    GByteArray *payload)
 {
@@ -295,47 +386,11 @@ sakura_control_encode_snapshot_response(const gchar *request_id,
 		SAKURA__CONTROL__V1__WORKSPACE_SNAPSHOT__INIT;
 	Sakura__Control__V1__Response response =
 		SAKURA__CONTROL__V1__RESPONSE__INIT;
-	GPtrArray *groups;
-	GPtrArray *tasks;
 
 	if (request_id == NULL || workspace == NULL || payload == NULL)
 		return FALSE;
-	groups = sakura_core_workspace_ordered_groups(workspace);
-	if (groups->len != 0) {
-		snapshot.groups = g_new0(Sakura__Control__V1__Group *, groups->len);
-		for (guint index = 0; index < groups->len; index++) {
-			Sakura__Control__V1__Group *group_message = g_new0(
-				Sakura__Control__V1__Group, 1);
-
-			sakura_control_fill_group(group_message,
-			                          g_ptr_array_index(groups, index));
-			snapshot.groups[index] = group_message;
-		}
-		snapshot.n_groups = groups->len;
-	}
-	g_ptr_array_unref(groups);
-
-	tasks = sakura_core_workspace_ordered_tasks(workspace);
-	if (tasks->len != 0) {
-		snapshot.tasks = g_new0(Sakura__Control__V1__Task *, tasks->len);
-		for (guint index = 0; index < tasks->len; index++) {
-			Sakura__Control__V1__Task *task_message = g_new0(
-				Sakura__Control__V1__Task, 1);
-
-			sakura_control_fill_task(task_message,
-			                         g_ptr_array_index(tasks, index));
-			snapshot.tasks[index] = task_message;
-		}
-		snapshot.n_tasks = tasks->len;
-	}
-	g_ptr_array_unref(tasks);
-
-	snapshot.active_group_id = (gchar *)sakura_control_string(
-		workspace->active_group != NULL ? workspace->active_group->id : "root");
-	snapshot.active_task_id = (gchar *)sakura_control_string(
-		workspace->active_task != NULL ? workspace->active_task->id : NULL);
-	snapshot.root_directory = (gchar *)sakura_control_string(
-		workspace->root_group != NULL ? workspace->root_group->directory : NULL);
+	sakura_control_fill_snapshot(&snapshot, workspace);
+	snapshot.sequence = sequence;
 	response.request_id = (gchar *)request_id;
 	response.body_case = SAKURA__CONTROL__V1__RESPONSE__BODY_SNAPSHOT;
 	response.snapshot = &snapshot;
@@ -343,12 +398,7 @@ sakura_control_encode_snapshot_response(const gchar *request_id,
 	{
 		gboolean result = sakura_control_pack_message(&response.base, payload);
 
-		for (gsize index = 0; index < snapshot.n_groups; index++)
-			g_free(snapshot.groups[index]);
-		for (gsize index = 0; index < snapshot.n_tasks; index++)
-			g_free(snapshot.tasks[index]);
-		g_free(snapshot.groups);
-		g_free(snapshot.tasks);
+		sakura_control_free_snapshot_messages(&snapshot);
 		return result;
 	}
 }
@@ -377,6 +427,53 @@ sakura_control_encode_error_response(const gchar *request_id,
 
 
 gboolean
+sakura_control_encode_accepted_response(const gchar *request_id,
+	                                      const gchar *kind,
+	                                      GByteArray *payload)
+{
+	Sakura__Control__V1__EntityRef accepted =
+		SAKURA__CONTROL__V1__ENTITY_REF__INIT;
+	Sakura__Control__V1__Response response =
+		SAKURA__CONTROL__V1__RESPONSE__INIT;
+
+	if (request_id == NULL || payload == NULL)
+		return FALSE;
+	accepted.kind = (gchar *)sakura_control_string(kind);
+	response.request_id = (gchar *)request_id;
+	response.body_case = SAKURA__CONTROL__V1__RESPONSE__BODY_ACCEPTED;
+	response.accepted = &accepted;
+	return sakura_control_pack_message(&response.base, payload);
+}
+
+
+gboolean
+sakura_control_encode_workspace_changed_event(
+	guint64 sequence, const SakuraCoreWorkspace *workspace, GByteArray *payload)
+{
+	Sakura__Control__V1__WorkspaceSnapshot snapshot =
+		SAKURA__CONTROL__V1__WORKSPACE_SNAPSHOT__INIT;
+	Sakura__Control__V1__WorkspaceChanged changed =
+		SAKURA__CONTROL__V1__WORKSPACE_CHANGED__INIT;
+	Sakura__Control__V1__Event event = SAKURA__CONTROL__V1__EVENT__INIT;
+
+	if (workspace == NULL || payload == NULL)
+		return FALSE;
+	sakura_control_fill_snapshot(&snapshot, workspace);
+	snapshot.sequence = sequence;
+	changed.snapshot = &snapshot;
+	event.sequence = sequence;
+	event.body_case = SAKURA__CONTROL__V1__EVENT__BODY_WORKSPACE_CHANGED;
+	event.workspace_changed = &changed;
+	{
+		gboolean result = sakura_control_pack_message(&event.base, payload);
+
+		sakura_control_free_snapshot_messages(&snapshot);
+		return result;
+	}
+}
+
+
+gboolean
 sakura_control_decode_response(const guint8 *payload,
 	                             gsize payload_length,
 	                             SakuraControlResponse *response,
@@ -384,6 +481,7 @@ sakura_control_decode_response(const guint8 *payload,
 {
 	Sakura__Control__V1__Response *decoded;
 	gboolean has_snapshot;
+	gboolean accepted;
 
 	if (payload == NULL || response == NULL)
 		return sakura_control_error(error, "invalid control response");
@@ -405,9 +503,75 @@ sakura_control_decode_response(const guint8 *payload,
 	has_snapshot =
 		decoded->body_case == SAKURA__CONTROL__V1__RESPONSE__BODY_SNAPSHOT &&
 		decoded->snapshot != NULL;
+	accepted =
+		decoded->body_case == SAKURA__CONTROL__V1__RESPONSE__BODY_ACCEPTED &&
+		decoded->accepted != NULL;
 	sakura__control__v1__response__free_unpacked(decoded, NULL);
 	response->has_snapshot = has_snapshot;
-	if (response->request_id == NULL || !response->has_snapshot)
+	response->accepted = accepted;
+	if (response->request_id == NULL ||
+	    (!response->has_snapshot && !response->accepted))
 		return sakura_control_error(error, "unsupported control response");
+	return TRUE;
+}
+
+
+gboolean
+sakura_control_decode_workspace_changed_event(
+	const guint8 *payload, gsize payload_length, guint64 *sequence,
+	SakuraSessionSnapshot **snapshot, GError **error)
+{
+	Sakura__Control__V1__Event *decoded;
+	Sakura__Control__V1__WorkspaceSnapshot *wire_snapshot;
+	SakuraSessionSnapshot *decoded_snapshot;
+
+	if (payload == NULL || sequence == NULL || snapshot == NULL)
+		return sakura_control_error(error, "invalid control event");
+	*snapshot = NULL;
+	decoded = sakura__control__v1__event__unpack(NULL, payload_length, payload);
+	if (decoded == NULL ||
+	    decoded->body_case != SAKURA__CONTROL__V1__EVENT__BODY_WORKSPACE_CHANGED ||
+	    decoded->workspace_changed == NULL ||
+	    decoded->workspace_changed->snapshot == NULL) {
+		if (decoded != NULL)
+			sakura__control__v1__event__free_unpacked(decoded, NULL);
+		return sakura_control_error(error, "unsupported control event");
+	}
+	wire_snapshot = decoded->workspace_changed->snapshot;
+	decoded_snapshot = sakura_session_snapshot_new();
+	g_free(decoded_snapshot->active_group_id);
+	decoded_snapshot->active_group_id = g_strdup(wire_snapshot->active_group_id);
+	decoded_snapshot->root_directory = g_strdup(wire_snapshot->root_directory);
+	for (gsize index = 0; index < wire_snapshot->n_groups; index++) {
+		Sakura__Control__V1__Group *wire_group = wire_snapshot->groups[index];
+		SakuraSessionGroupRecord *group = g_new0(SakuraSessionGroupRecord, 1);
+
+		group->id = g_strdup(wire_group->id);
+		group->parent_id = g_strdup(wire_group->parent_id);
+		group->title = g_strdup(wire_group->title);
+		group->directory = g_strdup(wire_group->directory);
+		group->order = wire_group->order;
+		group->archived = wire_group->archived;
+		g_ptr_array_add(decoded_snapshot->groups, group);
+	}
+	for (gsize index = 0; index < wire_snapshot->n_tasks; index++) {
+		Sakura__Control__V1__Task *wire_task = wire_snapshot->tasks[index];
+		SakuraSessionTaskRecord *task = g_new0(SakuraSessionTaskRecord, 1);
+
+		task->id = g_strdup(wire_task->id);
+		task->parent_id = g_strdup(wire_task->parent_id);
+		task->group_id = g_strdup(wire_task->group_id);
+		task->title = g_strdup(wire_task->title);
+		task->provider = g_strdup(wire_task->provider);
+		task->external_id = g_strdup(wire_task->external_id);
+		task->url = g_strdup(wire_task->url);
+		task->status = wire_task->status;
+		task->order = wire_task->order;
+		task->archived = wire_task->archived;
+		g_ptr_array_add(decoded_snapshot->tasks, task);
+	}
+	*sequence = decoded->sequence;
+	*snapshot = decoded_snapshot;
+	sakura__control__v1__event__free_unpacked(decoded, NULL);
 	return TRUE;
 }

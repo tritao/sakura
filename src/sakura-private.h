@@ -229,6 +229,11 @@ struct sakura_app {
 	GSubprocess *codex_name_helper_process;
 	GSubprocess *agent_process;
 	gchar *agent_socket_path;
+	GThread *agent_event_thread;
+	GSocketConnection *agent_event_connection;
+	GMutex agent_event_mutex;
+	gboolean agent_event_mutex_initialized;
+	gboolean agent_event_stopping;
 	GDataInputStream *codex_name_helper_output;
 	GOutputStream *codex_name_helper_input;
 	GQueue *codex_name_query_queue;

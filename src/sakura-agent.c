@@ -24,6 +24,8 @@ struct _SakuraAgent {
 	SakuraCoreWorkspace *workspace;
 	SakuraSessionSnapshot *session_snapshot;
 	GMutex state_mutex;
+	GPtrArray *subscribers; /* GSocketConnection *, owned references. */
+	guint64 sequence;
 	gchar *socket_path;
 	gchar *session_path;
 };
@@ -266,6 +268,57 @@ sakura_agent_apply_request(SakuraAgent *agent,
 }
 
 
+static gboolean
+sakura_agent_send_event(SakuraAgent *agent, GSocketConnection *connection,
+	                      GError **error)
+{
+	GByteArray *event;
+	gboolean result;
+
+	event = g_byte_array_new();
+	if (!sakura_control_encode_workspace_changed_event(
+		agent->sequence, agent->workspace, event)) {
+		g_byte_array_unref(event);
+		return sakura_agent_error(error, "could not encode workspace event");
+	}
+	result = sakura_control_frame_write(
+		g_io_stream_get_output_stream(G_IO_STREAM(connection)), event->data,
+		event->len, NULL, error);
+	g_byte_array_unref(event);
+	return result;
+}
+
+
+static void
+sakura_agent_broadcast_event(SakuraAgent *agent)
+{
+	for (guint index = 0; index < agent->subscribers->len;) {
+		GSocketConnection *connection = g_ptr_array_index(
+			agent->subscribers, index);
+		GError *error = NULL;
+
+		if (sakura_agent_send_event(agent, connection, &error)) {
+			index++;
+			continue;
+		}
+		g_clear_error(&error);
+		g_ptr_array_remove_index(agent->subscribers, index);
+	}
+}
+
+
+static void
+sakura_agent_remove_subscriber(SakuraAgent *agent, GSocketConnection *connection)
+{
+	for (guint index = 0; index < agent->subscribers->len; index++) {
+		if (g_ptr_array_index(agent->subscribers, index) == connection) {
+			g_ptr_array_remove_index(agent->subscribers, index);
+			break;
+		}
+	}
+}
+
+
 static gpointer
 sakura_agent_connection_thread(gpointer data)
 {
@@ -274,9 +327,11 @@ sakura_agent_connection_thread(gpointer data)
 	GOutputStream *output;
 	GByteArray *payload = NULL;
 	GByteArray *response = NULL;
+	GByteArray *initial_event = NULL;
 	SakuraControlRequest decoded = { 0 };
 	GError *error = NULL;
 	const gchar *request_id = "unknown";
+	gboolean subscribed = FALSE;
 
 	input = g_io_stream_get_input_stream(G_IO_STREAM(request->connection));
 	output = g_io_stream_get_output_stream(G_IO_STREAM(request->connection));
@@ -286,11 +341,29 @@ sakura_agent_connection_thread(gpointer data)
 	    sakura_control_decode_request(payload->data, payload->len, &decoded,
 	                                   &error)) {
 		request_id = decoded.request_id != NULL ? decoded.request_id : "unknown";
-		if (decoded.kind == SAKURA_CONTROL_REQUEST_GET_SNAPSHOT ||
-		    sakura_agent_apply_request(request->agent, &decoded, &error)) {
+		if (decoded.kind == SAKURA_CONTROL_REQUEST_SUBSCRIBE_EVENTS) {
+			g_ptr_array_add(request->agent->subscribers,
+			                 g_object_ref(request->connection));
+			sakura_control_encode_accepted_response(request_id,
+			                                        "workspace_events", response);
+			initial_event = g_byte_array_new();
+			if (!sakura_control_encode_workspace_changed_event(
+				request->agent->sequence, request->agent->workspace,
+				initial_event))
+				g_clear_pointer(&initial_event, g_byte_array_unref);
+			subscribed = TRUE;
+		} else if (decoded.kind == SAKURA_CONTROL_REQUEST_GET_SNAPSHOT) {
 			sakura_control_encode_snapshot_response(request_id,
+			                                       request->agent->sequence,
 			                                       request->agent->workspace,
 			                                       response);
+		} else if (sakura_agent_apply_request(request->agent, &decoded, &error)) {
+			request->agent->sequence++;
+			sakura_control_encode_snapshot_response(request_id,
+			                                       request->agent->sequence,
+			                                       request->agent->workspace,
+			                                       response);
+			sakura_agent_broadcast_event(request->agent);
 		}
 	}
 	if (response->len == 0) {
@@ -299,13 +372,25 @@ sakura_agent_connection_thread(gpointer data)
 		sakura_control_encode_error_response(request_id, "invalid_request",
 		                                    message, response);
 	}
-	g_mutex_unlock(&request->agent->state_mutex);
 	if (response != NULL && response->len != 0)
 		sakura_control_frame_write(output, response->data, response->len,
 		                           NULL, NULL);
+	if (subscribed && initial_event != NULL)
+		sakura_control_frame_write(output, initial_event->data, initial_event->len,
+		                           NULL, NULL);
+	g_mutex_unlock(&request->agent->state_mutex);
+	if (subscribed) {
+		while (sakura_control_frame_read(input, &payload, NULL, &error))
+			g_clear_pointer(&payload, g_byte_array_unref);
+		g_clear_error(&error);
+		g_mutex_lock(&request->agent->state_mutex);
+		sakura_agent_remove_subscriber(request->agent, request->connection);
+		g_mutex_unlock(&request->agent->state_mutex);
+	}
 	g_clear_error(&error);
 	g_clear_pointer(&payload, g_byte_array_unref);
 	g_clear_pointer(&response, g_byte_array_unref);
+	g_clear_pointer(&initial_event, g_byte_array_unref);
 	sakura_control_request_clear(&decoded);
 	g_io_stream_close(G_IO_STREAM(request->connection), NULL, NULL);
 	g_object_unref(request->connection);
@@ -474,6 +559,7 @@ main(int argc, char **argv)
 	agent.loop = loop;
 	agent.workspace = workspace;
 	agent.session_snapshot = session_snapshot;
+	agent.subscribers = g_ptr_array_new_with_free_func(g_object_unref);
 	agent.socket_path = socket_path;
 	agent.session_path = session_path;
 	g_mutex_init(&agent.state_mutex);
@@ -487,6 +573,7 @@ main(int argc, char **argv)
 	g_main_loop_unref(loop);
 	g_object_unref(service);
 	g_mutex_clear(&agent.state_mutex);
+	g_clear_pointer(&agent.subscribers, g_ptr_array_unref);
 	sakura_core_workspace_free(workspace);
 	sakura_session_snapshot_free(session_snapshot);
 	g_remove(socket_path);

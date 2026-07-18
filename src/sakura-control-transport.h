@@ -14,7 +14,8 @@ typedef enum {
 	SAKURA_CONTROL_REQUEST_NONE,
 	SAKURA_CONTROL_REQUEST_GET_SNAPSHOT,
 	SAKURA_CONTROL_REQUEST_CREATE_GROUP,
-	SAKURA_CONTROL_REQUEST_CREATE_TASK
+	SAKURA_CONTROL_REQUEST_CREATE_TASK,
+	SAKURA_CONTROL_REQUEST_SUBSCRIBE_EVENTS
 } SakuraControlRequestKind;
 
 typedef struct {
@@ -27,11 +28,13 @@ typedef struct {
 	gchar *provider;
 	gchar *external_id;
 	gchar *url;
+	guint64 after_sequence;
 } SakuraControlRequest;
 
 typedef struct {
 	gchar *request_id;
 	gboolean has_snapshot;
+	gboolean accepted;
 } SakuraControlResponse;
 
 void sakura_control_request_clear(SakuraControlRequest *request);
@@ -56,20 +59,31 @@ gboolean sakura_control_encode_create_task_request(
 	const gchar *request_id, const gchar *group_id, const gchar *parent_id,
 	const gchar *title, const gchar *provider, const gchar *external_id,
 	const gchar *url, GByteArray *payload);
+gboolean sakura_control_encode_subscribe_events_request(
+	const gchar *request_id, guint64 after_sequence, GByteArray *payload);
 gboolean sakura_control_decode_request(const guint8 *payload,
 	                                     gsize payload_length,
 	                                     SakuraControlRequest *request,
 	                                     GError **error);
 gboolean sakura_control_encode_snapshot_response(
-	const gchar *request_id, const SakuraCoreWorkspace *workspace,
+	const gchar *request_id, guint64 sequence,
+	const SakuraCoreWorkspace *workspace,
 	GByteArray *payload);
 gboolean sakura_control_encode_error_response(const gchar *request_id,
 	                                            const gchar *code,
 	                                            const gchar *message,
 	                                            GByteArray *payload);
+gboolean sakura_control_encode_accepted_response(const gchar *request_id,
+	                                               const gchar *kind,
+	                                               GByteArray *payload);
+gboolean sakura_control_encode_workspace_changed_event(
+	guint64 sequence, const SakuraCoreWorkspace *workspace, GByteArray *payload);
 gboolean sakura_control_decode_response(const guint8 *payload,
 	                                      gsize payload_length,
 	                                      SakuraControlResponse *response,
 	                                      GError **error);
+gboolean sakura_control_decode_workspace_changed_event(
+	const guint8 *payload, gsize payload_length, guint64 *sequence,
+	SakuraSessionSnapshot **snapshot, GError **error);
 
 #endif /* SAKURA_CONTROL_TRANSPORT_H */

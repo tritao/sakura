@@ -66,8 +66,8 @@ test_snapshot_response_roundtrip(void)
 	SakuraControlResponse response = { 0 };
 	GError *error = NULL;
 
-	g_assert_true(sakura_control_encode_snapshot_response("request-2", workspace,
-	                                                     encoded));
+	g_assert_true(sakura_control_encode_snapshot_response("request-2", 0,
+	                                                     workspace, encoded));
 	g_assert_true(sakura_control_decode_response(encoded->data, encoded->len,
 	                                            &response, &error));
 	g_assert_no_error(error);
@@ -253,6 +253,12 @@ test_agent_create_and_reload(void)
 	SakuraSessionGroupRecord *group;
 	SakuraSessionTaskRecord *task;
 	GError *error = NULL;
+	GSocketConnection *subscriber;
+	GInputStream *subscriber_input;
+	GOutputStream *subscriber_output;
+	GByteArray *event_payload = NULL;
+	SakuraSessionSnapshot *event_snapshot = NULL;
+	guint64 event_sequence;
 	gchar *directory;
 	gchar *socket_path;
 	gchar *session_path;
@@ -297,6 +303,58 @@ test_agent_create_and_reload(void)
 	g_assert_true(sakura_control_encode_get_snapshot_request("reload", request));
 	test_agent_call(socket_path, "reload", request, &response);
 	sakura_control_response_clear(&response);
+
+	subscriber = test_agent_connect_wait(socket_path);
+	subscriber_input = g_io_stream_get_input_stream(G_IO_STREAM(subscriber));
+	subscriber_output = g_io_stream_get_output_stream(G_IO_STREAM(subscriber));
+	g_byte_array_set_size(request, 0);
+	g_assert_true(sakura_control_encode_subscribe_events_request(
+		"subscribe", 0, request));
+	g_assert_true(sakura_control_frame_write(subscriber_output, request->data,
+	                                         request->len, NULL, &error));
+	g_assert_no_error(error);
+	g_assert_true(sakura_control_frame_read(subscriber_input, &event_payload,
+	                                        NULL, &error));
+	g_assert_no_error(error);
+	g_assert_true(sakura_control_decode_response(event_payload->data,
+	                                             event_payload->len, &response,
+	                                             &error));
+	g_assert_no_error(error);
+	g_assert_true(response.accepted);
+	sakura_control_response_clear(&response);
+	g_clear_pointer(&event_payload, g_byte_array_unref);
+	g_assert_true(sakura_control_frame_read(subscriber_input, &event_payload,
+	                                        NULL, &error));
+	g_assert_no_error(error);
+	g_assert_true(sakura_control_decode_workspace_changed_event(
+		event_payload->data, event_payload->len, &event_sequence,
+		&event_snapshot, &error));
+	g_assert_no_error(error);
+	g_assert_cmpuint(event_sequence, ==, 0);
+	g_assert_cmpuint(event_snapshot->groups->len, ==, 1);
+	g_assert_cmpuint(event_snapshot->tasks->len, ==, 1);
+	sakura_session_snapshot_free(event_snapshot);
+	event_snapshot = NULL;
+	g_clear_pointer(&event_payload, g_byte_array_unref);
+
+	g_byte_array_set_size(request, 0);
+	g_assert_true(sakura_control_encode_create_group_request(
+		"second-group", "root", "Archive", "", request));
+	test_agent_call(socket_path, "second-group", request, &response);
+	sakura_control_response_clear(&response);
+	g_assert_true(sakura_control_frame_read(subscriber_input, &event_payload,
+	                                        NULL, &error));
+	g_assert_no_error(error);
+	g_assert_true(sakura_control_decode_workspace_changed_event(
+		event_payload->data, event_payload->len, &event_sequence,
+		&event_snapshot, &error));
+	g_assert_no_error(error);
+	g_assert_cmpuint(event_sequence, ==, 1);
+	g_assert_cmpuint(event_snapshot->groups->len, ==, 2);
+	sakura_session_snapshot_free(event_snapshot);
+	g_clear_pointer(&event_payload, g_byte_array_unref);
+	g_io_stream_close(G_IO_STREAM(subscriber), NULL, NULL);
+	g_object_unref(subscriber);
 	test_agent_stop(process);
 
 	g_byte_array_unref(request);
