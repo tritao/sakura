@@ -14,7 +14,6 @@
 #endif
 
 #define PALETTE_SIZE 16
-#define NUM_COLORSETS 6
 #define SAKURA_CODEX_REASONING_EFFORT_DATA_KEY "sakura-codex-reasoning-effort"
 
 typedef struct sakura_app SakuraApp;
@@ -802,10 +801,5 @@ gboolean sakura_tool_is_available(SakuraToolKind tool);
 SakuraTab *sakura_find_tool_tab(SakuraToolKind tool, const gchar *cwd);
 SakuraTab *sakura_find_tool_target_tab(SakuraToolKind tool, const gchar *target);
 
-gboolean sakura_session_snapshot_load(GKeyFile *key_file,
-                                      SakuraSessionSnapshot *snapshot,
-                                      GError **error);
-void sakura_session_snapshot_save(const SakuraSessionSnapshot *snapshot,
-                                  GKeyFile *key_file);
 
 #endif /* SAKURA_PRIVATE_H */

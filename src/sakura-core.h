@@ -3,6 +3,9 @@
 
 #include <glib.h>
 
+#define SAKURA_SESSION_VERSION 7
+#define NUM_COLORSETS 6
+
 /* The domain layer owns these bounds. GTK rendering and persistence must
  * validate the same layout values before they reach different clients. */
 #define SAKURA_LAYOUT_MIN_RATIO 0.05
@@ -134,5 +137,10 @@ struct sakura_session_snapshot {
 
 SakuraSessionSnapshot *sakura_session_snapshot_new(void);
 void sakura_session_snapshot_free(SakuraSessionSnapshot *snapshot);
+gboolean sakura_session_snapshot_load(GKeyFile *key_file,
+                                      SakuraSessionSnapshot *snapshot,
+                                      GError **error);
+void sakura_session_snapshot_save(const SakuraSessionSnapshot *snapshot,
+                                  GKeyFile *key_file);
 
 #endif /* SAKURA_CORE_H */

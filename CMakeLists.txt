@@ -90,10 +90,11 @@ SET (SAKURA_WARNING_FLAGS
 # so the future agent can consume the same core boundary without pulling in
 # GTK, VTE, X11, or the desktop application lifecycle.
 ADD_LIBRARY (sakura-core STATIC
-	src/sakura-core.c)
+	src/sakura-core.c
+	src/sakura-core-session.c)
 TARGET_INCLUDE_DIRECTORIES (sakura-core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
 TARGET_COMPILE_OPTIONS (sakura-core PRIVATE ${SAKURA_WARNING_FLAGS})
-TARGET_LINK_LIBRARIES (sakura-core PUBLIC PkgConfig::GLIB)
+TARGET_LINK_LIBRARIES (sakura-core PUBLIC PkgConfig::GLIB m)
 
 IF (CMAKE_BUILD_TYPE MATCHES "Debug")
 	TARGET_COMPILE_OPTIONS (sakura PRIVATE ${SAKURA_WARNING_FLAGS})
@@ -136,8 +137,7 @@ IF (BUILD_TESTING)
 	TARGET_SOURCES (sakura-core-test PRIVATE
 		tests/test-core.c
 		src/sakura-layout.c
-		src/sakura-integrations.c
-		src/sakura-session.c)
+		src/sakura-integrations.c)
 	SET_PROPERTY (TARGET sakura-core-test APPEND PROPERTY COMPILE_DEFINITIONS SAKURA_CORE_TEST)
 	TARGET_INCLUDE_DIRECTORIES (sakura-core-test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 	TARGET_COMPILE_OPTIONS (sakura-core-test PRIVATE ${SAKURA_WARNING_FLAGS})
