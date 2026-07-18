@@ -645,6 +645,8 @@ test_leaf_widget_can_split(void)
 	g_assert_nonnull(new_tab->layout_leaf);
 	g_assert_true(new_tab->layout_leaf->widget == new_tab->hbox);
 	g_assert_true(gtk_widget_get_visible(new_tab->hbox));
+	g_assert_cmpfloat(new_tab->layout_leaf->parent->data.split.ratio, ==,
+	                  SAKURA_LAYOUT_DEFAULT_RATIO);
 	assert_workspace_consistent();
 
 	teardown_workspace();
@@ -789,6 +791,20 @@ test_sidebar_column(SakuraTab *tab, guint column)
 
 
 static gchar *
+test_sidebar_node_column(SakuraSidebarNode *node, guint column)
+{
+	GtkTreeIter iter;
+	gchar *value = NULL;
+
+	g_assert_nonnull(node);
+	g_assert_true(sakura_sidebar_get_iter(node, &iter));
+	gtk_tree_model_get(GTK_TREE_MODEL(sakura.sidebar_model), &iter,
+	                   column, &value, -1);
+	return value;
+}
+
+
+static gchar *
 test_sidebar_page_column(SakuraPage *page, guint column)
 {
 	GtkTreeIter iter;
@@ -870,8 +886,9 @@ static void
 test_sidebar_hides_redundant_directory(void)
 {
 	SakuraPage *split_page;
+	SakuraSidebarNode *nested_group;
 	SakuraTab *same, *different, *split_pane;
-	gchar *subtitle, *tooltip;
+	gchar *markup, *subtitle, *tooltip;
 
 	setup_workspace();
 	setup_sidebar_fixture();
@@ -894,6 +911,17 @@ test_sidebar_hides_redundant_directory(void)
 	subtitle = test_sidebar_column(different, SAKURA_SIDEBAR_COLUMN_SUBTITLE);
 	g_assert_cmpstr(subtitle, ==, "/var");
 	g_free(subtitle);
+	markup = test_sidebar_column(different, SAKURA_SIDEBAR_COLUMN_MARKUP);
+	g_assert_null(g_strstr_len(markup, -1, "\n"));
+	g_assert_nonnull(g_strstr_len(markup, -1, "/var"));
+	g_free(markup);
+
+	nested_group = test_sidebar_add_group("nested-directory-group", "Nested",
+	                                     sakura.sidebar_root);
+	subtitle = test_sidebar_node_column(nested_group,
+	                                    SAKURA_SIDEBAR_COLUMN_SUBTITLE);
+	g_assert_cmpstr(subtitle, ==, "");
+	g_free(subtitle);
 
 	split_page = sakura_page_at_page(0);
 	split_pane = g_new0(SakuraTab, 1);
@@ -910,6 +938,9 @@ test_sidebar_hides_redundant_directory(void)
 	                                    SAKURA_SIDEBAR_COLUMN_SUBTITLE);
 	g_assert_cmpstr(subtitle, ==, "Multiple directories");
 	g_free(subtitle);
+	markup = test_sidebar_page_column(split_page, SAKURA_SIDEBAR_COLUMN_MARKUP);
+	g_assert_null(g_strstr_len(markup, -1, "\n"));
+	g_free(markup);
 
 	g_free(split_pane->cwd);
 	split_pane->cwd = g_strdup("/tmp");

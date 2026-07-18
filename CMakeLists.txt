@@ -123,7 +123,8 @@ IF (BUILD_TESTING)
 		PkgConfig::GLIB
 		PkgConfig::GIO_UNIX
 		PkgConfig::GTK
-		PkgConfig::VTE)
+		PkgConfig::VTE
+		m)
 	IF (SAKURA_ENABLE_SANITIZERS)
 		TARGET_COMPILE_OPTIONS (sakura-core-test PRIVATE -fsanitize=address,undefined -fno-omit-frame-pointer)
 		TARGET_LINK_OPTIONS (sakura-core-test PRIVATE -fsanitize=address,undefined)

@@ -2,10 +2,6 @@
 
 #include <math.h>
 
-#define SAKURA_LAYOUT_MIN_RATIO 0.05
-#define SAKURA_LAYOUT_MAX_RATIO 0.95
-#define SAKURA_LAYOUT_MAX_DEPTH 32
-
 static guint next_layout_id;
 
 
@@ -56,6 +52,11 @@ sakura_layout_paned_position_cb(GObject *object, GParamSpec *pspec, gpointer dat
 	if (node == NULL || node->kind != SAKURA_LAYOUT_SPLIT ||
 	    !GTK_IS_PANED(object))
 		return;
+	/* GtkPaned emits position notifications while it is being allocated. Do
+	 * not mistake that initial/default position for a user adjustment before
+	 * the saved ratio has had a chance to apply. */
+	if (!node->ratio_applied)
+		return;
 	gtk_widget_get_allocation(GTK_WIDGET(object), &allocation);
 	available = node->data.split.direction == SAKURA_SPLIT_RIGHT
 	          ? allocation.width : allocation.height;
@@ -63,13 +64,55 @@ sakura_layout_paned_position_cb(GObject *object, GParamSpec *pspec, gpointer dat
 	if (available <= 0 || position <= 0)
 		return;
 	ratio = (gdouble)position / (gdouble)available;
-	if (ratio >= 0.05 && ratio <= 0.95 && isfinite(ratio) &&
+	if (ratio >= SAKURA_LAYOUT_MIN_RATIO &&
+	    ratio <= SAKURA_LAYOUT_MAX_RATIO && isfinite(ratio) &&
 	    fabs(node->data.split.ratio - ratio) > 0.001) {
 		node->data.split.ratio = ratio;
 	#ifndef SAKURA_CORE_TEST
 		sakura_session_mark_dirty();
 	#endif
 	}
+}
+
+
+static gboolean
+sakura_layout_apply_ratio(SakuraLayoutNode *split)
+{
+	GtkAllocation allocation;
+	gint available, position;
+
+	if (split == NULL || split->kind != SAKURA_LAYOUT_SPLIT ||
+	    split->widget == NULL || !GTK_IS_PANED(split->widget))
+		return FALSE;
+	gtk_widget_get_allocation(split->widget, &allocation);
+	available = split->data.split.direction == SAKURA_SPLIT_RIGHT
+	          ? allocation.width : allocation.height;
+	if (available <= 0)
+		return FALSE;
+	position = CLAMP((gint)(available * split->data.split.ratio), 1,
+	                 MAX(1, available - 1));
+	if (gtk_paned_get_position(GTK_PANED(split->widget)) != position) {
+		/* The position notification caused by restoration must not overwrite the
+		 * normalized ratio with a transient pixel position. */
+		split->ratio_applied = FALSE;
+		gtk_paned_set_position(GTK_PANED(split->widget), position);
+	}
+	split->ratio_applied = TRUE;
+	return TRUE;
+}
+
+
+static void
+sakura_layout_paned_size_allocate_cb(GtkWidget *widget,
+                                     GtkAllocation *allocation,
+                                     gpointer data)
+{
+	SakuraLayoutNode *node = data;
+
+	(void)allocation;
+	if (node == NULL || node->widget != widget)
+		return;
+	sakura_layout_apply_ratio(node);
 }
 
 static gchar *
@@ -84,7 +127,7 @@ sakura_layout_normalize_ratio(gdouble ratio)
 {
 	if (!isfinite(ratio) || ratio < SAKURA_LAYOUT_MIN_RATIO ||
 	    ratio > SAKURA_LAYOUT_MAX_RATIO)
-		return 0.5;
+		return SAKURA_LAYOUT_DEFAULT_RATIO;
 	return ratio;
 }
 
@@ -92,22 +135,10 @@ sakura_layout_normalize_ratio(gdouble ratio)
 void
 sakura_layout_set_ratio(SakuraLayoutNode *split, gdouble ratio)
 {
-	GtkAllocation allocation;
-	gint available;
-	gint position;
-
 	if (split == NULL || split->kind != SAKURA_LAYOUT_SPLIT)
 		return;
 	split->data.split.ratio = sakura_layout_normalize_ratio(ratio);
-	if (split->widget == NULL || !GTK_IS_PANED(split->widget))
-		return;
-	gtk_widget_get_allocation(split->widget, &allocation);
-	available = split->data.split.direction == SAKURA_SPLIT_RIGHT
-	          ? allocation.width : allocation.height;
-	if (available <= 0)
-		return;
-	position = (gint)(available * split->data.split.ratio);
-	gtk_paned_set_position(GTK_PANED(split->widget), position);
+	sakura_layout_apply_ratio(split);
 }
 
 
@@ -288,7 +319,7 @@ sakura_layout_split_leaf(SakuraLayoutNode *leaf,
 		return FALSE;
 	}
 	split->data.split.direction = direction;
-	split->data.split.ratio = 0.5;
+	split->data.split.ratio = SAKURA_LAYOUT_DEFAULT_RATIO;
 	split->data.split.first = leaf;
 	split->data.split.second = new_leaf;
 	if (old_parent == NULL) {
@@ -382,6 +413,8 @@ sakura_layout_split_leaf_widgets(SakuraLayoutNode *leaf,
 	split->widget = paned;
 	g_signal_connect(paned, "notify::position",
 	                 G_CALLBACK(sakura_layout_paned_position_cb), split);
+	g_signal_connect(paned, "size-allocate",
+	                 G_CALLBACK(sakura_layout_paned_size_allocate_cb), split);
 	gtk_widget_show_all(paned);
 	return TRUE;
 }
@@ -425,7 +458,7 @@ sakura_layout_split_node_widgets(SakuraLayoutNode *node,
 			return FALSE;
 		}
 		split->data.split.direction = direction;
-		split->data.split.ratio = 0.5;
+		split->data.split.ratio = SAKURA_LAYOUT_DEFAULT_RATIO;
 		split->data.split.first = node;
 		split->data.split.second = new_leaf;
 		if (old_parent == NULL) {
@@ -478,6 +511,8 @@ sakura_layout_split_node_widgets(SakuraLayoutNode *node,
 	split->widget = paned;
 	g_signal_connect(paned, "notify::position",
 	                 G_CALLBACK(sakura_layout_paned_position_cb), split);
+	g_signal_connect(paned, "size-allocate",
+	                 G_CALLBACK(sakura_layout_paned_size_allocate_cb), split);
 	gtk_widget_show_all(paned);
 	return TRUE;
 }

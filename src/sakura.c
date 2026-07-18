@@ -1523,7 +1523,7 @@ sakura_split_current_cb (GtkWidget *widget, void *data)
 
 	config.target_page = page;
 	config.target_layout = tab->layout_leaf;
-	config.target_ratio = 0.5;
+	config.target_ratio = SAKURA_LAYOUT_DEFAULT_RATIO;
 	config.split_direction = direction;
 	sakura_session_accept_changes();
 	sakura_workspace_begin_mutation();

@@ -151,6 +151,16 @@ files. Other shells still receive `HISTFILE` and can use their native history
 settings. Set `SAKURA_DISABLE_HISTORY_INTEGRATION=1` before launching Sakura
 to disable the automatic Bash layer.
 
+### Split panes
+
+Use **Split Right** or **Split Down** from a terminal's context menu (or their
+keybindings) to divide a notebook page into panes. The recursive pane tree,
+split directions, divider positions, and active pane on each page are saved in
+the session file and restored on the next launch. A regular split starts with
+the existing pane at 60% and the new pane at 40%; the **Layout preset** menu
+also provides balanced columns, rows, a 2 × 2 grid, and a main-plus-stack
+layout.
+
 ### Session persistence stress test
 
 With `Xvfb` and `xdotool` installed, the isolated session stress test can be

@@ -15,6 +15,16 @@
 #define NUM_COLORSETS 6
 #define SAKURA_CODEX_REASONING_EFFORT_DATA_KEY "sakura-codex-reasoning-effort"
 
+/* Layout ratios are persisted as fractions of the paned allocation. Keep the
+ * bounds in one place so model validation, GTK restoration, and session
+ * serialization agree on what is safe. A slightly larger primary pane makes
+ * the ordinary one-action split more useful while the explicit presets keep
+ * their own balanced ratios. */
+#define SAKURA_LAYOUT_MIN_RATIO 0.05
+#define SAKURA_LAYOUT_MAX_RATIO 0.95
+#define SAKURA_LAYOUT_DEFAULT_RATIO 0.60
+#define SAKURA_LAYOUT_MAX_DEPTH 32
+
 typedef struct sakura_app SakuraApp;
 typedef struct sakura_workspace_model SakuraWorkspaceModel;
 typedef struct sakura_page SakuraPage;
@@ -363,6 +373,7 @@ struct sakura_sidebar_node {
 	gchar *id;
 	gchar *title;
 	gchar *subtitle;
+	gboolean subtitle_is_directory;
 	gchar *tooltip;
 	SakuraSidebarNode *parent;
 	SakuraGroup *group;
@@ -419,6 +430,7 @@ struct sakura_layout_node {
 	SakuraLayoutNode *parent;
 	SakuraPage *page;
 	GtkWidget *widget;
+	gboolean ratio_applied;
 	union {
 		struct {
 			SakuraTab *tab;

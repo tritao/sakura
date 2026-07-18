@@ -191,7 +191,7 @@ sakura_workspace_snapshot_append_layout(SakuraSessionSnapshot *snapshot,
 	record->id = g_strdup(node->id);
 	record->page_id = g_strdup(page->id);
 	record->ratio = node->kind == SAKURA_LAYOUT_SPLIT
-	             ? node->data.split.ratio : 0.5;
+	             ? node->data.split.ratio : SAKURA_LAYOUT_DEFAULT_RATIO;
 	if (node->kind == SAKURA_LAYOUT_LEAF) {
 		record->type = g_strdup("leaf");
 		record->terminal_id = g_strdup(node->data.leaf.tab != NULL

@@ -773,6 +773,32 @@ sakura_session_repair_duplicate_page_ids(SakuraSessionSnapshot *snapshot)
 
 
 static gboolean
+sakura_session_layout_reachable(const SakuraSessionLayoutRecord *record,
+                                const gchar *page_id,
+                                GHashTable *layouts,
+                                GHashTable *seen,
+                                guint depth)
+{
+	SakuraSessionLayoutRecord *first, *second;
+
+	if (record == NULL || page_id == NULL || layouts == NULL || seen == NULL ||
+	    depth > SAKURA_LAYOUT_MAX_DEPTH ||
+	    g_strcmp0(record->page_id, page_id) != 0 ||
+	    g_hash_table_contains(seen, record->id))
+		return FALSE;
+	g_hash_table_add(seen, record->id);
+	if (g_strcmp0(record->type, "leaf") == 0)
+		return TRUE;
+	first = g_hash_table_lookup(layouts, record->first_id);
+	second = g_hash_table_lookup(layouts, record->second_id);
+	return sakura_session_layout_reachable(first, page_id, layouts, seen,
+	                                       depth + 1) &&
+	       sakura_session_layout_reachable(second, page_id, layouts, seen,
+	                                       depth + 1);
+}
+
+
+static gboolean
 sakura_session_layout_valid(const SakuraSessionSnapshot *snapshot,
                              GError **error)
 {
@@ -781,6 +807,7 @@ sakura_session_layout_valid(const SakuraSessionSnapshot *snapshot,
 	GHashTable *terminals = g_hash_table_new(g_str_hash, g_str_equal);
 	GHashTable *children = g_hash_table_new(g_str_hash, g_str_equal);
 	GHashTable *leaf_terminals = g_hash_table_new(g_str_hash, g_str_equal);
+	GHashTable *reachable = g_hash_table_new(g_str_hash, g_str_equal);
 	GHashTable *groups = g_hash_table_new(g_str_hash, g_str_equal);
 	GHashTable *tasks = g_hash_table_new(g_str_hash, g_str_equal);
 	guint index;
@@ -809,6 +836,7 @@ sakura_session_layout_valid(const SakuraSessionSnapshot *snapshot,
 		g_hash_table_destroy(terminals);
 		g_hash_table_destroy(children);
 		g_hash_table_destroy(leaf_terminals);
+		g_hash_table_destroy(reachable);
 		g_hash_table_destroy(groups);
 		g_hash_table_destroy(tasks);
 		return TRUE;
@@ -845,6 +873,13 @@ sakura_session_layout_valid(const SakuraSessionSnapshot *snapshot,
 		if (tab->terminal_id != NULL && tab->terminal_id[0] != '\0')
 			g_hash_table_add(terminals, tab->terminal_id);
 	}
+	for (index = 0; index < snapshot->pages->len; index++) {
+		SakuraSessionPageRecord *page = g_ptr_array_index(snapshot->pages, index);
+		if (page->active_terminal_id != NULL &&
+		    page->active_terminal_id[0] != '\0' &&
+		    !g_hash_table_contains(terminals, page->active_terminal_id))
+			goto invalid;
+	}
 	for (index = 0; index < snapshot->layouts->len; index++) {
 		SakuraSessionLayoutRecord *layout = g_ptr_array_index(snapshot->layouts, index);
 		if (layout->id == NULL || layout->id[0] == '\0' ||
@@ -861,8 +896,11 @@ sakura_session_layout_valid(const SakuraSessionSnapshot *snapshot,
 				goto invalid;
 			g_hash_table_add(leaf_terminals, layout->terminal_id);
 		} else if (layout->first_id == NULL || layout->second_id == NULL ||
-		           !isfinite(layout->ratio) || layout->ratio < 0.05 ||
-		           layout->ratio > 0.95 ||
+		           (layout->direction != SAKURA_SPLIT_RIGHT &&
+		            layout->direction != SAKURA_SPLIT_DOWN) ||
+		           !isfinite(layout->ratio) ||
+		           layout->ratio < SAKURA_LAYOUT_MIN_RATIO ||
+		           layout->ratio > SAKURA_LAYOUT_MAX_RATIO ||
 		           g_strcmp0(layout->first_id, layout->second_id) == 0)
 			goto invalid;
 		g_hash_table_insert(layouts, layout->id, layout);
@@ -888,7 +926,32 @@ sakura_session_layout_valid(const SakuraSessionSnapshot *snapshot,
 		    !g_hash_table_contains(layouts, page->root_layout_id) ||
 		    g_hash_table_contains(children, page->root_layout_id))
 			goto invalid;
+		if (!sakura_session_layout_reachable(
+				g_hash_table_lookup(layouts, page->root_layout_id), page->id,
+				layouts, reachable, 0))
+			goto invalid;
+		if (page->active_terminal_id != NULL &&
+		    page->active_terminal_id[0] != '\0') {
+			SakuraSessionLayoutRecord *active_layout = NULL;
+
+			for (guint layout_index = 0;
+			     layout_index < snapshot->layouts->len; layout_index++) {
+				SakuraSessionLayoutRecord *candidate =
+					g_ptr_array_index(snapshot->layouts, layout_index);
+				if (g_strcmp0(candidate->type, "leaf") == 0 &&
+				    g_strcmp0(candidate->terminal_id,
+				              page->active_terminal_id) == 0) {
+					active_layout = candidate;
+					break;
+				}
+			}
+			if (active_layout == NULL ||
+			    g_strcmp0(active_layout->page_id, page->id) != 0)
+				goto invalid;
+		}
 	}
+	if (g_hash_table_size(reachable) != snapshot->layouts->len)
+		goto invalid;
 	if (g_hash_table_size(leaf_terminals) != g_hash_table_size(terminals))
 		goto invalid;
 	g_hash_table_destroy(pages);
@@ -896,6 +959,7 @@ sakura_session_layout_valid(const SakuraSessionSnapshot *snapshot,
 	g_hash_table_destroy(terminals);
 	g_hash_table_destroy(children);
 	g_hash_table_destroy(leaf_terminals);
+	g_hash_table_destroy(reachable);
 	g_hash_table_destroy(groups);
 	g_hash_table_destroy(tasks);
 	return TRUE;
@@ -906,6 +970,7 @@ invalid:
 	g_hash_table_destroy(terminals);
 	g_hash_table_destroy(children);
 	g_hash_table_destroy(leaf_terminals);
+	g_hash_table_destroy(reachable);
 	g_hash_table_destroy(groups);
 	g_hash_table_destroy(tasks);
 	return sakura_session_error(error, G_KEY_FILE_ERROR_INVALID_VALUE,
@@ -1085,7 +1150,7 @@ sakura_session_snapshot_load_into(GKeyFile *key_file,
 		g_free(direction);
 		layout->ratio = g_key_file_get_double(key_file, section, "ratio", NULL);
 		if (layout->ratio == 0.0)
-			layout->ratio = 0.5;
+			layout->ratio = SAKURA_LAYOUT_DEFAULT_RATIO;
 		layout->first_id = g_key_file_get_string(key_file, section, "first", NULL);
 		layout->second_id = g_key_file_get_string(key_file, section, "second", NULL);
 		layout->terminal_id = g_key_file_get_string(key_file, section, "terminal_id", NULL);

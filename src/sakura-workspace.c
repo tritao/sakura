@@ -229,6 +229,7 @@ sakura_task_update_row(SakuraTask *task)
 	g_free(node->tooltip);
 	node->title = g_strdup(task->title != NULL ? task->title : "");
 	node->subtitle = subtitle;
+	node->subtitle_is_directory = FALSE;
 	node->tooltip = g_strdup_printf("%s\n%s", node->title,
 	                                sakura_task_status_label(task->status));
 	if (sakura_sidebar_get_iter(node, &iter))
@@ -387,7 +388,7 @@ sakura_sidebar_update_group_row(SakuraSidebarNode *node)
 {
 	GtkTreeIter iter;
 	SakuraGroup *group;
-	const gchar *directory;
+	const gchar *directory, *display_directory;
 	gchar *display, *tooltip;
 
 	if (node == NULL || node->type != SAKURA_SIDEBAR_GROUP || node->group == NULL)
@@ -398,7 +399,12 @@ sakura_sidebar_update_group_row(SakuraSidebarNode *node)
 	g_free(node->title);
 	node->title = g_strdup(group->title);
 	directory = sakura_sidebar_group_directory(node);
-	display = sakura_sidebar_directory_display(directory);
+	/* An inherited directory is useful context, but repeating it on every
+	 * nested group makes the tree read like a list of paths. Show only the
+	 * directory explicitly assigned to this group; the effective path remains
+	 * available in the row tooltip. */
+	display_directory = group->directory;
+	display = sakura_sidebar_directory_display(display_directory);
 	if (group->directory != NULL && group->directory[0] != '\0')
 		tooltip = g_strdup_printf(_("Working directory: %s"), group->directory);
 	else if (directory != NULL)
@@ -408,6 +414,7 @@ sakura_sidebar_update_group_row(SakuraSidebarNode *node)
 
 	g_free(node->subtitle);
 	node->subtitle = display != NULL ? display : g_strdup("");
+	node->subtitle_is_directory = display != NULL;
 	g_free(node->tooltip);
 	node->tooltip = tooltip;
 	if (sakura_sidebar_get_iter(node, &iter))
@@ -3250,6 +3257,17 @@ sakura_workspace_tab_record(GHashTable *records, const gchar *terminal_id)
 }
 
 
+static void
+sakura_workspace_restore_tab_state(SakuraTab *tab,
+                                    const SakuraSessionTabRecord *record)
+{
+	if (tab == NULL || record == NULL || tab->kind != SAKURA_TAB_CODEX)
+		return;
+	sakura_tab_restore_state(tab, record->status, record->attention,
+	                         record->attention_timestamp);
+}
+
+
 void
 sakura_workspace_finish_restore(void)
 {
@@ -3339,6 +3357,7 @@ sakura_workspace_restore_layout_subtree(SakuraPage *page,
 	second_tab = sakura_find_pane_by_terminal_id(second_tab_record->terminal_id);
 	if (second_tab == NULL || second_tab->layout_leaf == NULL)
 		return NULL;
+	sakura_workspace_restore_tab_state(second_tab, second_tab_record);
 	split = second_tab->layout_leaf->parent;
 	if (split == NULL)
 		return NULL;
@@ -3415,6 +3434,7 @@ sakura_workspace_restore_layout_snapshot(SakuraSessionSnapshot *snapshot)
 			failed = TRUE;
 			break;
 		}
+		sakura_workspace_restore_tab_state(tab, tab_record);
 		g_free(tab->page->id);
 		tab->page->id = g_strdup(page_record->id);
 		tab->page->title = g_strdup(page_record->title);
@@ -3443,6 +3463,37 @@ sakura_workspace_restore_layout_snapshot(SakuraSessionSnapshot *snapshot)
 	 * saved selection. */
 	sakura_notebook_sync_page_order();
 	sakura_sidebar_rebuild_projection();
+	/* Splitting while restoring naturally makes the newest leaf active. Restore
+	 * each page's own active pane after the complete tree exists; the global
+	 * selection below may then choose a different page without losing these
+	 * per-page focus anchors. */
+	for (index = 0; index < snapshot->pages->len; index++) {
+		SakuraSessionPageRecord *page_record =
+			g_ptr_array_index(snapshot->pages, index);
+		SakuraPage *page = NULL;
+		SakuraTab *active = NULL;
+
+		for (guint page_index = 0;
+		     sakura.workspace->pages != NULL &&
+		     page_index < sakura.workspace->pages->len; page_index++) {
+			SakuraPage *candidate =
+				g_ptr_array_index(sakura.workspace->pages, page_index);
+			if (candidate != NULL &&
+			    g_strcmp0(candidate->id, page_record->id) == 0) {
+				page = candidate;
+				break;
+			}
+		}
+		if (page == NULL || page_record->active_terminal_id == NULL)
+			continue;
+		active = sakura_find_pane_by_terminal_id(
+			page_record->active_terminal_id);
+		if (active == NULL || active->page != page)
+			continue;
+		page->active_tab = active;
+		g_free(page->last_active_terminal_id);
+		page->last_active_terminal_id = g_strdup(active->terminal_id);
+	}
 
 	if (snapshot->selected_terminal_id != NULL) {
 		SakuraTab *selected = sakura_find_pane_by_terminal_id(snapshot->selected_terminal_id);
@@ -3523,10 +3574,8 @@ sakura_workspace_restore_snapshot (SakuraSessionSnapshot *snapshot)
 		                            record->colorset);
 		SakuraTab *restored_tab = sakura_find_pane_by_terminal_id(record->terminal_id);
 		restored_page = restored_tab != NULL ? sakura_page_for_tab(restored_tab) : -1;
-		if (tab_kind == SAKURA_TAB_CODEX && restored_page >= 0)
-			sakura_tab_restore_state(restored_tab,
-			                        record->status, record->attention,
-			                        record->attention_timestamp);
+		if (restored_page >= 0)
+			sakura_workspace_restore_tab_state(restored_tab, record);
 		if (selected_terminal == (gint)i)
 			selected_terminal = restored;
 		restored++;
@@ -3670,7 +3719,7 @@ sakura_sidebar_init (gboolean restore_session)
 	sakura.sidebar_selection = gtk_tree_view_get_selection(GTK_TREE_VIEW(sakura.sidebar_tree));
 	gtk_tree_selection_set_mode(sakura.sidebar_selection, GTK_SELECTION_SINGLE);
 	gtk_tree_view_set_headers_visible(GTK_TREE_VIEW(sakura.sidebar_tree), FALSE);
-	gtk_tree_view_set_enable_tree_lines(GTK_TREE_VIEW(sakura.sidebar_tree), TRUE);
+	gtk_tree_view_set_enable_tree_lines(GTK_TREE_VIEW(sakura.sidebar_tree), FALSE);
 	gtk_tree_view_set_activate_on_single_click(GTK_TREE_VIEW(sakura.sidebar_tree), TRUE);
 	gtk_tree_view_set_reorderable(GTK_TREE_VIEW(sakura.sidebar_tree), TRUE);
 	g_signal_connect(sakura.sidebar_tree, "drag-begin",
@@ -3686,9 +3735,11 @@ sakura_sidebar_init (gboolean restore_session)
 
 	icon_renderer = gtk_cell_renderer_pixbuf_new();
 	attention_renderer = gtk_cell_renderer_text_new();
+	/* Keep the attention stripe, but leave a little breathing room above and
+	 * below it so a busy workspace does not look continuously highlighted. */
 	g_object_set(attention_renderer, "text", " ", "xalign", 0.5, "yalign", 0.5,
 	             "xpad", 0, "ypad", 0, NULL);
-	gtk_cell_renderer_set_fixed_size(attention_renderer, 4, -1);
+	gtk_cell_renderer_set_fixed_size(attention_renderer, 4, 14);
 	status_renderer = gtk_cell_renderer_text_new();
 	g_object_set(status_renderer, "xalign", 0.5, "yalign", 0.5,
 	             "xpad", 0, "ypad", 0, NULL);
@@ -4223,7 +4274,12 @@ sakura_sidebar_set_node_row(SakuraSidebarNode *node, GtkTreeIter *iter)
 		g_free(title_markup);
 		title_markup = muted_title;
 	}
-	if (node->subtitle != NULL && node->subtitle[0] != '\0')
+	if (node->subtitle != NULL && node->subtitle[0] != '\0' &&
+	    node->subtitle_is_directory)
+		markup = g_strdup_printf(
+			"%s <span foreground=\"#888888\"><small>· %s</small></span>",
+			title_markup, escaped_subtitle);
+	else if (node->subtitle != NULL && node->subtitle[0] != '\0')
 		markup = g_strdup_printf("%s\n<small>%s</small>", title_markup, escaped_subtitle);
 	else
 		markup = g_strdup(title_markup);
@@ -4315,6 +4371,10 @@ sakura_sidebar_update_page(SakuraPage *page)
 	g_free(node->tooltip);
 	node->title = title;
 	node->subtitle = subtitle;
+	node->subtitle_is_directory = pane_count > 1
+	                           ? subtitle[0] != '\0'
+	                           : active != NULL && active->sidebar_node != NULL &&
+	                             active->sidebar_node->subtitle_is_directory;
 	node->tooltip = tooltip;
 	if (sakura_sidebar_get_iter(node, &iter))
 		sakura_sidebar_set_node_row(node, &iter);
@@ -5017,6 +5077,7 @@ sakura_sidebar_update_tab(SakuraTab *tab)
 		subtitle = g_strdup(tab->host);
 	else
 		subtitle = g_strdup(full_subtitle);
+	node->subtitle_is_directory = display_path != NULL && !hide_directory;
 
 	if (tab->raw_title != NULL && tab->raw_title[0] != '\0' && full_subtitle[0] != '\0')
 		tooltip = g_strdup_printf("%s\n%s", tab->raw_title, full_subtitle);

@@ -502,7 +502,7 @@ sakura_tab_add_with_options (const gchar *restore_cwd,
 		.suppress_current_cwd_fallback = FALSE,
 		.target_page = NULL,
 		.target_layout = NULL,
-		.target_ratio = 0.5,
+		.target_ratio = SAKURA_LAYOUT_DEFAULT_RATIO,
 		.split_direction = SAKURA_SPLIT_RIGHT
 	};
 	const SakuraTabLaunchConfig *config = launch_config != NULL ? launch_config : &default_config;
