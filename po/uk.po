@@ -7,7 +7,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: sakura\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-07-18 17:52+0100\n"
+"POT-Creation-Date: 2026-07-18 19:11+0100\n"
 "PO-Revision-Date: 2018-04-29 13:18+0000\n"
 "Last-Translator: Andriy Nezhivy <adiynziy@gmail.com>\n"
 "Language-Team: Ukrainian <uk@li.org>\n"
@@ -260,6 +260,18 @@ msgid "_Exit"
 msgstr ""
 
 msgid "_Launch new instance"
+msgstr ""
+
+msgid "Starting saved terminal sessions…"
+msgstr ""
+
+msgid "Restoring saved workspace…"
+msgstr ""
+
+msgid "Starting workspace agent…"
+msgstr ""
+
+msgid "Preparing saved workspace…"
 msgstr ""
 
 msgid "Idle"
@@ -639,24 +651,12 @@ msgstr ""
 msgid "New window title"
 msgstr "Новий заголовок вікна"
 
-msgid "Starting workspace agent…"
-msgstr ""
-
-msgid "Restoring saved workspace…"
-msgstr ""
-
-msgid "Starting saved terminal sessions…"
-msgstr ""
-
 #, c-format
 msgid "Could not create a separate persistent session.\n"
 msgstr ""
 
 #, c-format
 msgid "Could not lock the Sakura session.\n"
-msgstr ""
-
-msgid "Preparing saved workspace…"
 msgstr ""
 
 msgid "Codex session tracking enabled"

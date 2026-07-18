@@ -21,6 +21,7 @@ typedef struct sakura_app SakuraApp;
 typedef struct sakura_workspace_model SakuraWorkspaceModel;
 typedef struct sakura_agent_terminal_start_result SakuraAgentTerminalStartResult;
 typedef struct sakura_page SakuraPage;
+typedef struct sakura_startup SakuraStartup;
 /* Semantic vocabulary: a page is the user-facing session container, while a
  * tab is one terminal surface/pane inside that session. Keep the historical
  * names as aliases until the implementation can be migrated module by
@@ -144,11 +145,39 @@ struct sakura_workspace_model {
 	guint next_task_id;
 };
 
+typedef enum {
+	SAKURA_STARTUP_IDLE,
+	SAKURA_STARTUP_SCHEDULED,
+	SAKURA_STARTUP_RESTORING,
+	SAKURA_STARTUP_READY
+} SakuraStartupPhase;
+
+typedef struct {
+	gchar *codex_session;
+	gboolean new_session;
+	gboolean new_window;
+	guint ntabs;
+	gboolean fullscreen;
+} SakuraStartupOptions;
+
+typedef void (*SakuraStartupFinishedCallback)(gpointer data);
+
+struct sakura_startup {
+	GtkWidget *overlay;
+	GtkWidget *spinner;
+	GtkWidget *status_label;
+	SakuraStartupPhase phase;
+	SakuraStartupOptions options;
+	bool preserve_failed_session;
+	guint pending_terminal_starts;
+	guint restore_source_id;
+	SakuraStartupFinishedCallback finished_callback;
+	gpointer finished_data;
+};
+
 struct sakura_app {
 	GtkWidget *main_window;
-	GtkWidget *startup_overlay;
-	GtkWidget *startup_spinner;
-	GtkWidget *startup_status_label;
+	SakuraStartup startup;
 	GtkWidget *header_bar;
 	GtkWidget *sidebar_paned;
 	GtkWidget *sidebar;
@@ -224,10 +253,6 @@ struct sakura_app {
 	bool session_ready;
 	bool session_shutting_down;
 	bool session_restore_failed;
-	bool startup_preserve_failed_session;
-	bool startup_workspace_ready;
-	guint startup_pending_terminal_starts;
-	guint startup_restore_source_id;
 	guint workspace_mutation_depth;
 	guint workspace_pending_changes;
 	gboolean workspace_reconciling;
@@ -738,6 +763,7 @@ int sakura_session_lock_acquire(SakuraApp *app, const gchar *sessionfile);
 gboolean sakura_session_backup_existing(const gchar *sessionfile);
 gboolean sakura_session_confirm_new_instance(SakuraApp *app);
 gboolean sakura_session_start_new_instance(SakuraApp *app);
+void sakura_add_tab(void);
 void sakura_add_tab_with_options(const gchar *restore_cwd,
                                  SakuraSidebarNode *sidebar_parent,
                                  const gchar *restore_title,
@@ -846,6 +872,12 @@ gboolean sakura_session_write_snapshot(SakuraApp *app,
                                        const SakuraSessionSnapshot *snapshot);
 gboolean sakura_session_load_file(SakuraApp *app, gboolean restore_session);
 void sakura_session_prepare_bash_integration(SakuraApp *app);
+void sakura_sanitize_working_directory(void);
+void sakura_startup_init_ui(void);
+void sakura_startup_begin(const SakuraStartupOptions *options,
+                          SakuraStartupFinishedCallback callback,
+                          gpointer data);
+void sakura_startup_stop(void);
 void sakura_startup_terminal_start_pending(SakuraApp *app, gboolean pending);
 gboolean sakura_agent_start(SakuraApp *app);
 void sakura_agent_apply_pending_snapshot(SakuraApp *app);

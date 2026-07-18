@@ -94,6 +94,7 @@ SET (SAKURA_APP_SOURCES
 	src/sakura-workspace-model.c
 	src/sakura-workspace-persistence.c
 	src/sakura-integrations.c
+	src/sakura-startup.c
 	${SAKURA_CONTROL_SOURCES}
 	src/sakura-agent-client.c
 	src/sakura-session.c)
