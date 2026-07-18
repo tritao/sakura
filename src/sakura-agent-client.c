@@ -44,7 +44,8 @@ sakura_agent_connect(const gchar *socket_path, GError **error)
 	(SAKURA_CONTROL_CAPABILITY_WORKSPACE | \
 	 SAKURA_CONTROL_CAPABILITY_TERMINALS | \
 	 SAKURA_CONTROL_CAPABILITY_TERMINAL_ATTACH | \
-	 SAKURA_CONTROL_CAPABILITY_EVENT_STREAM)
+	 SAKURA_CONTROL_CAPABILITY_EVENT_STREAM | \
+	 SAKURA_CONTROL_CAPABILITY_TERMINAL_RESTART)
 
 
 static gboolean
@@ -1128,6 +1129,38 @@ sakura_agent_create_terminal(SakuraApp *app, const gchar *requested_terminal_id,
 
 
 gboolean
+sakura_agent_restart_terminal(SakuraApp *app, const gchar *terminal_id,
+	                            const gchar *group_id, const gchar *task_id,
+	                            const gchar *cwd, guint cols, guint rows,
+	                            GError **error)
+{
+	GByteArray *request;
+	gchar *request_id;
+	gchar *accepted_id = NULL;
+	gboolean result;
+
+	if (app == NULL || app->agent_socket_path == NULL ||
+	    terminal_id == NULL || terminal_id[0] == '\0')
+		return FALSE;
+	request_id = g_uuid_string_random();
+	request = g_byte_array_new();
+	if (!sakura_control_encode_restart_terminal_request(
+			request_id, terminal_id, group_id, task_id, cwd, cols, rows, request)) {
+		g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT,
+		                    "could not encode restart terminal request");
+		result = FALSE;
+	} else {
+		result = sakura_agent_request_accepted(app, request_id, request,
+		                                      &accepted_id, error);
+	}
+	g_byte_array_unref(request);
+	g_free(request_id);
+	g_free(accepted_id);
+	return result;
+}
+
+
+gboolean
 sakura_agent_attach_terminal(SakuraApp *app, const gchar *terminal_id,
 	                           guint cols, guint rows, guint8 **replay_data,
 	                           gsize *replay_length, guint *attached_cols,
@@ -1269,7 +1302,23 @@ sakura_agent_mark_terminals_lost(SakuraApp *app)
 		sakura_tab_agent_status(tab, SAKURA_TERMINAL_EXITED,
 		                       "embedded agent exited");
 		tab->agent_backed = FALSE;
+		tab->agent_terminal_lost = TRUE;
 		sakura_tab_set_status(tab, SAKURA_TAB_STATUS_ERROR, TRUE);
+	}
+}
+
+
+static void
+sakura_agent_recover_terminals(SakuraApp *app)
+{
+	if (app == NULL || app->workspace == NULL || app->workspace->panes == NULL)
+		return;
+	for (guint index = 0; index < app->workspace->panes->len; index++) {
+		SakuraTab *tab = g_ptr_array_index(app->workspace->panes, index);
+
+		if (tab == NULL || !tab->agent_terminal_lost)
+			continue;
+		(void)sakura_tab_restart_agent_terminal(tab);
 	}
 }
 
@@ -1386,6 +1435,7 @@ sakura_agent_restart_cb(gpointer data)
 	}
 	sakura_agent_subscribe_start(app);
 	sakura_agent_command_start(app);
+	sakura_agent_recover_terminals(app);
 	return G_SOURCE_REMOVE;
 }
 

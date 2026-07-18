@@ -434,6 +434,7 @@ struct sakura_tab {
 	guint agent_rows;
 	gboolean agent_backed;
 	gboolean agent_terminal_exited;
+	gboolean agent_terminal_lost;
 #ifdef HAVE_WEBKITGTK
 	GtkWidget *browser;
 	GtkWidget *browser_back;
@@ -517,6 +518,7 @@ void sakura_tab_disconnect_exit_handler(SakuraTab *tab);
 SakuraTab *sakura_tab_for_vte(VteTerminal *vte);
 SakuraTab *sakura_find_pane_by_terminal_id(const gchar *terminal_id);
 gboolean sakura_tab_start_agent_terminal(SakuraTab *tab, const gchar *cwd);
+gboolean sakura_tab_restart_agent_terminal(SakuraTab *tab);
 void sakura_tab_agent_feed_output(SakuraTab *tab, const guint8 *data,
                                   gsize data_length);
 void sakura_tab_agent_status(SakuraTab *tab, guint status,
@@ -850,6 +852,10 @@ gboolean sakura_agent_create_terminal(
 	SakuraApp *app, const gchar *requested_terminal_id,
 	const gchar *group_id, const gchar *task_id, const gchar *cwd,
 	guint cols, guint rows, gchar **created_terminal_id, GError **error);
+gboolean sakura_agent_restart_terminal(
+	SakuraApp *app, const gchar *terminal_id, const gchar *group_id,
+	const gchar *task_id, const gchar *cwd, guint cols, guint rows,
+	GError **error);
 gboolean sakura_agent_attach_terminal(
 	SakuraApp *app, const gchar *terminal_id, guint cols, guint rows,
 	guint8 **replay_data, gsize *replay_length, guint *attached_cols,

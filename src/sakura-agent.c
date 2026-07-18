@@ -41,7 +41,8 @@ typedef struct {
 	(SAKURA_CONTROL_CAPABILITY_WORKSPACE | \
 	 SAKURA_CONTROL_CAPABILITY_TERMINALS | \
 	 SAKURA_CONTROL_CAPABILITY_TERMINAL_ATTACH | \
-	 SAKURA_CONTROL_CAPABILITY_EVENT_STREAM)
+	 SAKURA_CONTROL_CAPABILITY_EVENT_STREAM | \
+	 SAKURA_CONTROL_CAPABILITY_TERMINAL_RESTART)
 
 struct _SakuraAgent {
 	GMainLoop *loop;
@@ -293,6 +294,11 @@ sakura_agent_terminal_reader(gpointer data)
 		ssize_t count = read(terminal->master_fd, buffer, sizeof(buffer));
 
 		if (count > 0) {
+			/* A restart/close may have stopped this reader while read() was
+			 * returning data. Do not enter the agent mutex after the owner has
+			 * begun retiring this runtime. */
+			if (terminal->stopping)
+				break;
 			GByteArray *event = g_byte_array_new();
 
 			g_mutex_lock(&agent->state_mutex);
@@ -312,22 +318,24 @@ sakura_agent_terminal_reader(gpointer data)
 		break;
 	}
 
-	g_mutex_lock(&agent->state_mutex);
-	if (terminal->master_fd >= 0) {
-		close(terminal->master_fd);
-		terminal->master_fd = -1;
-	}
-	if (!terminal->stopping && terminal->core != NULL) {
-		GByteArray *event = g_byte_array_new();
+	if (!terminal->stopping) {
+		g_mutex_lock(&agent->state_mutex);
+		if (terminal->master_fd >= 0) {
+			close(terminal->master_fd);
+			terminal->master_fd = -1;
+		}
+		if (terminal->core != NULL) {
+			GByteArray *event = g_byte_array_new();
 
-		terminal->core->status = SAKURA_TERMINAL_EXITED;
-		if (sakura_control_encode_terminal_status_event(
-				++agent->sequence, terminal->id, terminal->core->status,
-				"terminal process exited", event))
-			sakura_agent_broadcast_payload(agent, event);
-		g_byte_array_unref(event);
+			terminal->core->status = SAKURA_TERMINAL_EXITED;
+			if (sakura_control_encode_terminal_status_event(
+					++agent->sequence, terminal->id, terminal->core->status,
+					"terminal process exited", event))
+				sakura_agent_broadcast_payload(agent, event);
+			g_byte_array_unref(event);
+		}
+		g_mutex_unlock(&agent->state_mutex);
 	}
-	g_mutex_unlock(&agent->state_mutex);
 	if (terminal->pid > 0) {
 		waitpid(terminal->pid, NULL, 0);
 		terminal->pid = 0;
@@ -823,9 +831,58 @@ sakura_agent_close_terminal(SakuraAgent *agent,
 
 
 static gboolean
+sakura_agent_restart_terminal(SakuraAgent *agent,
+	                             const SakuraControlRequest *request,
+	                             gchar **accepted_id,
+	                             SakuraAgentTerminal **retired_terminal,
+	                             GError **error)
+{
+	SakuraAgentTerminal *existing = NULL;
+	guint existing_index = 0;
+
+	if (retired_terminal != NULL)
+		*retired_terminal = NULL;
+	if (request->terminal_id == NULL || request->terminal_id[0] == '\0' ||
+	    !sakura_agent_terminal_id_is_valid(request->terminal_id))
+		return sakura_agent_error(error, "terminal id is invalid");
+
+	/* Restart is an idempotent replacement operation. This matters both after
+	 * an agent process restart and when a caller retries a request after losing
+	 * its response. Retire any runtime with the logical ID before creating the
+	 * replacement. The retired object is handed to the connection thread and
+	 * joined after the workspace mutex is released. */
+	for (guint index = 0; index < agent->terminals->len; index++) {
+		SakuraAgentTerminal *candidate = g_ptr_array_index(agent->terminals, index);
+
+		if (candidate != NULL &&
+		    g_strcmp0(candidate->id, request->terminal_id) == 0) {
+			existing = candidate;
+			existing_index = index;
+			break;
+		}
+	}
+	if (existing != NULL) {
+		sakura_agent_terminal_stop(existing);
+		if (existing->core != NULL) {
+			if (!sakura_core_workspace_remove_terminal(agent->workspace,
+			                                           existing->core))
+				return sakura_agent_error(error,
+				                         "could not retire terminal runtime");
+			existing->core = NULL;
+		}
+		if (retired_terminal != NULL)
+			*retired_terminal = g_ptr_array_steal_index(agent->terminals,
+			                                           existing_index);
+	}
+	return sakura_agent_create_terminal(agent, request, accepted_id, error);
+}
+
+
+static gboolean
 sakura_agent_apply_request(SakuraAgent *agent,
 	                         const SakuraControlRequest *request,
 	                         gchar **accepted_id,
+	                         SakuraAgentTerminal **retired_terminal,
 	                         GError **error)
 {
 	gboolean changed = FALSE;
@@ -858,6 +915,10 @@ sakura_agent_apply_request(SakuraAgent *agent,
 	case SAKURA_CONTROL_REQUEST_CREATE_TERMINAL:
 		changed = sakura_agent_create_terminal(agent, request, accepted_id,
 		                                       error);
+		break;
+	case SAKURA_CONTROL_REQUEST_RESTART_TERMINAL:
+		changed = sakura_agent_restart_terminal(agent, request, accepted_id,
+		                                        retired_terminal, error);
 		break;
 	case SAKURA_CONTROL_REQUEST_TERMINAL_INPUT:
 		changed = sakura_agent_terminal_input(agent, request, error);
@@ -945,6 +1006,7 @@ sakura_agent_connection_thread(gpointer data)
 	GError *error = NULL;
 	const gchar *request_id = "unknown";
 	gchar *accepted_id = NULL;
+	SakuraAgentTerminal *retired_terminal = NULL;
 	gboolean subscribed = FALSE;
 	gboolean handshaken = FALSE;
 
@@ -958,6 +1020,7 @@ sakura_agent_connection_thread(gpointer data)
 		error = NULL;
 		request_id = "unknown";
 		accepted_id = NULL;
+		retired_terminal = NULL;
 		subscribed = FALSE;
 		if (!sakura_control_frame_read(input, &payload, NULL, &error))
 			break;
@@ -1010,9 +1073,11 @@ sakura_agent_connection_thread(gpointer data)
 					request_id, "terminal_detached", decoded.terminal_id,
 					response);
 		} else if (sakura_agent_apply_request(request->agent, &decoded,
-		                                      &accepted_id, &error)) {
+		                                      &accepted_id, &retired_terminal,
+		                                      &error)) {
 			request->agent->sequence++;
-			if (decoded.kind == SAKURA_CONTROL_REQUEST_CREATE_TERMINAL)
+			if (decoded.kind == SAKURA_CONTROL_REQUEST_CREATE_TERMINAL ||
+			    decoded.kind == SAKURA_CONTROL_REQUEST_RESTART_TERMINAL)
 				sakura_control_encode_accepted_response(
 					request_id, "terminal", accepted_id, response);
 			else if (decoded.kind == SAKURA_CONTROL_REQUEST_TERMINAL_INPUT)
@@ -1038,6 +1103,10 @@ sakura_agent_connection_thread(gpointer data)
 			sakura_control_frame_write(output, initial_event->data, initial_event->len,
 		                           NULL, NULL);
 		g_mutex_unlock(&request->agent->state_mutex);
+		if (retired_terminal != NULL) {
+			sakura_agent_terminal_free(retired_terminal);
+			retired_terminal = NULL;
+		}
 		if (subscribed) {
 			while (sakura_control_frame_read(input, &payload, NULL, &error))
 				g_clear_pointer(&payload, g_byte_array_unref);

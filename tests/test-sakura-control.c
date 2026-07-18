@@ -245,6 +245,23 @@ test_mutation_request_roundtrip(void)
 	sakura_control_request_clear(&request);
 	g_byte_array_set_size(encoded, 0);
 
+	g_assert_true(sakura_control_encode_restart_terminal_request(
+		"restart-terminal", "terminal-1", "group-1", "task-1", "/tmp",
+		120, 50, encoded));
+	g_assert_true(sakura_control_decode_request(encoded->data, encoded->len,
+	                                           &request, &error));
+	g_assert_no_error(error);
+	g_assert_cmpint(request.kind, ==,
+	               SAKURA_CONTROL_REQUEST_RESTART_TERMINAL);
+	g_assert_cmpstr(request.terminal_id, ==, "terminal-1");
+	g_assert_cmpstr(request.group_id, ==, "group-1");
+	g_assert_cmpstr(request.task_id, ==, "task-1");
+	g_assert_cmpstr(request.cwd, ==, "/tmp");
+	g_assert_cmpuint(request.cols, ==, 120);
+	g_assert_cmpuint(request.rows, ==, 50);
+	sakura_control_request_clear(&request);
+	g_byte_array_set_size(encoded, 0);
+
 	{
 		const guint8 input[] = "echo terminal";
 
@@ -923,6 +940,19 @@ test_agent_terminal_lifecycle(void)
 	sakura_control_response_clear(&response);
 	g_assert_true(test_agent_read_workspace_until(subscriber_input, 1,
 	                                              terminal_id, 100, 40));
+
+	g_byte_array_set_size(request, 0);
+	g_assert_true(sakura_control_encode_restart_terminal_request(
+		"terminal-restart", terminal_id, "root", "root", directory, 120, 50,
+		request));
+	test_agent_call_on_connection(command_connection, "terminal-restart", request,
+	                              &response);
+	g_assert_true(response.accepted);
+	g_assert_cmpstr(response.accepted_kind, ==, "terminal");
+	g_assert_cmpstr(response.accepted_id, ==, terminal_id);
+	sakura_control_response_clear(&response);
+	g_assert_true(test_agent_read_workspace_until(subscriber_input, 1,
+	                                              terminal_id, 120, 50));
 
 	g_byte_array_set_size(request, 0);
 	{

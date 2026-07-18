@@ -532,6 +532,36 @@ sakura_control_encode_detach_terminal_request(const gchar *request_id,
 
 
 gboolean
+sakura_control_encode_restart_terminal_request(const gchar *request_id,
+	                                               const gchar *terminal_id,
+	                                               const gchar *group_id,
+	                                               const gchar *task_id,
+	                                               const gchar *cwd,
+	                                               guint cols, guint rows,
+	                                               GByteArray *payload)
+{
+	Sakura__Control__V1__RestartTerminalRequest restart =
+		SAKURA__CONTROL__V1__RESTART_TERMINAL_REQUEST__INIT;
+	Sakura__Control__V1__Request request =
+		SAKURA__CONTROL__V1__REQUEST__INIT;
+
+	if (payload == NULL || request_id == NULL || request_id[0] == '\0' ||
+	    terminal_id == NULL || terminal_id[0] == '\0')
+		return FALSE;
+	restart.terminal_id = (gchar *)terminal_id;
+	restart.group_id = (gchar *)sakura_control_string(group_id);
+	restart.task_id = (gchar *)sakura_control_string(task_id);
+	restart.cwd = (gchar *)sakura_control_string(cwd);
+	restart.cols = cols;
+	restart.rows = rows;
+	request.request_id = (gchar *)request_id;
+	request.body_case = SAKURA__CONTROL__V1__REQUEST__BODY_RESTART_TERMINAL;
+	request.restart_terminal = &restart;
+	return sakura_control_pack_message(&request.base, payload);
+}
+
+
+gboolean
 sakura_control_encode_subscribe_events_request(const gchar *request_id,
 	                                             guint64 after_sequence,
 	                                             GByteArray *payload)
@@ -691,6 +721,18 @@ sakura_control_decode_request(const guint8 *payload,
 			request->kind = SAKURA_CONTROL_REQUEST_DETACH_TERMINAL;
 			request->terminal_id = g_strdup(
 				decoded->detach_terminal->terminal_id);
+		}
+		break;
+	case SAKURA__CONTROL__V1__REQUEST__BODY_RESTART_TERMINAL:
+		if (decoded->restart_terminal != NULL) {
+			request->kind = SAKURA_CONTROL_REQUEST_RESTART_TERMINAL;
+			request->terminal_id = g_strdup(
+				decoded->restart_terminal->terminal_id);
+			request->group_id = g_strdup(decoded->restart_terminal->group_id);
+			request->task_id = g_strdup(decoded->restart_terminal->task_id);
+			request->cwd = g_strdup(decoded->restart_terminal->cwd);
+			request->cols = decoded->restart_terminal->cols;
+			request->rows = decoded->restart_terminal->rows;
 		}
 		break;
 	case SAKURA__CONTROL__V1__REQUEST__BODY_SUBSCRIBE_EVENTS:

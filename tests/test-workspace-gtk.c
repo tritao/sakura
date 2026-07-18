@@ -2522,6 +2522,8 @@ test_embedded_agent_restarts(void)
 {
 	GError *error = NULL;
 	GSubprocess *first_process;
+	SakuraPage *page;
+	SakuraTab *tab;
 	gchar *directory;
 	gchar *session_path;
 	gchar *socket_path;
@@ -2535,9 +2537,20 @@ test_embedded_agent_restarts(void)
 	memset(&sakura, 0, sizeof(sakura));
 	sakura.sessionfile = g_strdup(session_path);
 	sakura.agent_socket_path_override = g_strdup(socket_path);
+	sakura.workspace = sakura_workspace_model_new();
 
 	g_assert_true(sakura_agent_start(&sakura));
 	g_assert_nonnull(sakura.agent_process);
+	page = sakura_page_new("page-agent-recovery");
+	tab = sakura_tab_new();
+	tab->terminal_id = g_strdup("terminal-agent-recovery");
+	tab->cwd = g_strdup(directory);
+	sakura_tab_create_widgets(tab);
+	g_assert_nonnull(sakura_layout_leaf_new(page, tab));
+	g_ptr_array_add(sakura.workspace->pages, page);
+	g_ptr_array_add(sakura.workspace->panes, tab);
+	g_assert_true(sakura_tab_start_agent_terminal(tab, directory));
+	g_assert_true(tab->agent_backed);
 	first_process = g_object_ref(sakura.agent_process);
 	g_test_expect_message(NULL, G_LOG_LEVEL_WARNING,
 	                      "*Embedded sakura-agent exited; restarting it*");
@@ -2548,7 +2561,9 @@ test_embedded_agent_restarts(void)
 		if (sakura.agent_process != NULL &&
 		    sakura.agent_process != first_process &&
 		    sakura.agent_command_mutex_initialized &&
-		    sakura.agent_event_mutex_initialized) {
+		    sakura.agent_event_mutex_initialized &&
+		    tab->agent_backed && !tab->agent_terminal_lost &&
+		    g_strcmp0(tab->terminal_id, "terminal-agent-recovery") == 0) {
 			restarted = TRUE;
 			break;
 		}
@@ -2562,6 +2577,8 @@ test_embedded_agent_restarts(void)
 
 	sakura_agent_stop(&sakura);
 	g_object_unref(first_process);
+	sakura_workspace_model_free(sakura.workspace);
+	sakura.workspace = NULL;
 	g_free(sakura.sessionfile);
 	sakura.sessionfile = NULL;
 	g_free(sakura.agent_socket_path_override);

@@ -147,6 +147,15 @@ message DetachTerminalRequest {
   string terminal_id = 1;
 }
 
+message RestartTerminalRequest {
+  string terminal_id = 1;
+  string group_id = 2;
+  string task_id = 3;
+  string cwd = 4;
+  uint32 cols = 5;
+  uint32 rows = 6;
+}
+
 message SubscribeEventsRequest {
   uint64 after_sequence = 1;
 }
@@ -171,6 +180,7 @@ message Request {
     AttachTerminalRequest attach_terminal = 16;
     DetachTerminalRequest detach_terminal = 17;
     HelloRequest hello = 18;
+    RestartTerminalRequest restart_terminal = 19;
   }
 }
 

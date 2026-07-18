@@ -498,6 +498,7 @@ sakura_tab_agent_input_cb(gint fd, GIOCondition condition, gpointer data)
 			          error != NULL ? error->message : "unknown error");
 			g_clear_error(&error);
 			tab->agent_terminal_exited = TRUE;
+			tab->agent_terminal_lost = TRUE;
 			sakura_tab_set_status(tab, SAKURA_TAB_STATUS_ERROR, TRUE);
 			return G_SOURCE_REMOVE;
 		}
@@ -597,6 +598,7 @@ sakura_tab_start_agent_terminal(SakuraTab *tab, const gchar *cwd)
 	tab->agent_rows = rows;
 	tab->agent_backed = TRUE;
 	tab->agent_terminal_exited = FALSE;
+	tab->agent_terminal_lost = FALSE;
 	if (attached) {
 		if (attached_cols != 0)
 			tab->agent_cols = attached_cols;
@@ -627,6 +629,55 @@ fail:
 		g_clear_error(&error);
 	}
 	return FALSE;
+}
+
+
+gboolean
+sakura_tab_restart_agent_terminal(SakuraTab *tab)
+{
+	const gchar *group_id = "root";
+	const gchar *task_id = "root";
+	const gchar *cwd;
+	guint cols, rows;
+	GError *error = NULL;
+
+	if (tab == NULL || !tab->agent_terminal_lost || tab->terminal_id == NULL ||
+	    tab->vte == NULL || sakura.agent_socket_path == NULL)
+		return FALSE;
+	if (tab->page != NULL && tab->page->group != NULL &&
+	    tab->page->group->id != NULL)
+		group_id = tab->page->group->id;
+	if (tab->page != NULL && tab->page->task != NULL &&
+	    tab->page->task->id != NULL)
+		task_id = tab->page->task->id;
+	cwd = tab->cwd != NULL && tab->cwd[0] != '\0' ? tab->cwd : NULL;
+	cols = vte_terminal_get_column_count(VTE_TERMINAL(tab->vte));
+	rows = vte_terminal_get_row_count(VTE_TERMINAL(tab->vte));
+	if (cols == 0)
+		cols = sakura.columns > 0 ? sakura.columns : 80;
+	if (rows == 0)
+		rows = sakura.rows > 0 ? sakura.rows : 24;
+
+	/* Drop only the GTK-side proxy. The protocol restart operation owns
+	 * replacement of the remote runtime and preserves the logical ID. */
+	sakura_tab_close_agent_terminal(tab);
+	tab->agent_terminal_lost = TRUE;
+	if (!sakura_agent_restart_terminal(&sakura, tab->terminal_id, group_id,
+	                                   task_id, cwd, cols, rows, &error)) {
+		g_warning("Could not restart agent terminal %s: %s", tab->terminal_id,
+		          error != NULL ? error->message : "unknown error");
+		g_clear_error(&error);
+		sakura_tab_set_status(tab, SAKURA_TAB_STATUS_ERROR, TRUE);
+		return FALSE;
+	}
+	if (!sakura_tab_start_agent_terminal(tab, cwd)) {
+		g_warning("Could not reattach restarted agent terminal %s",
+		          tab->terminal_id);
+		sakura_tab_set_status(tab, SAKURA_TAB_STATUS_ERROR, TRUE);
+		return FALSE;
+	}
+	sakura_tab_set_status(tab, SAKURA_TAB_STATUS_READY, FALSE);
+	return TRUE;
 }
 
 
@@ -714,6 +765,7 @@ sakura_tab_close_agent_terminal(SakuraTab *tab)
 	g_clear_object(&tab->agent_pty);
 	tab->agent_backed = FALSE;
 	tab->agent_terminal_exited = FALSE;
+	tab->agent_terminal_lost = FALSE;
 }
 
 void

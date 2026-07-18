@@ -13,6 +13,7 @@
 #define SAKURA_CONTROL_CAPABILITY_TERMINALS G_GUINT64_CONSTANT(2)
 #define SAKURA_CONTROL_CAPABILITY_TERMINAL_ATTACH G_GUINT64_CONSTANT(4)
 #define SAKURA_CONTROL_CAPABILITY_EVENT_STREAM G_GUINT64_CONSTANT(8)
+#define SAKURA_CONTROL_CAPABILITY_TERMINAL_RESTART G_GUINT64_CONSTANT(16)
 
 typedef enum {
 	SAKURA_CONTROL_REQUEST_NONE,
@@ -32,7 +33,8 @@ typedef enum {
 	SAKURA_CONTROL_REQUEST_SUBSCRIBE_EVENTS,
 	SAKURA_CONTROL_REQUEST_ATTACH_TERMINAL,
 	SAKURA_CONTROL_REQUEST_DETACH_TERMINAL,
-	SAKURA_CONTROL_REQUEST_HELLO
+	SAKURA_CONTROL_REQUEST_HELLO,
+	SAKURA_CONTROL_REQUEST_RESTART_TERMINAL
 } SakuraControlRequestKind;
 
 typedef struct {
@@ -136,6 +138,10 @@ gboolean sakura_control_encode_attach_terminal_request(
 	GByteArray *payload);
 gboolean sakura_control_encode_detach_terminal_request(
 	const gchar *request_id, const gchar *terminal_id, GByteArray *payload);
+gboolean sakura_control_encode_restart_terminal_request(
+	const gchar *request_id, const gchar *terminal_id, const gchar *group_id,
+	const gchar *task_id, const gchar *cwd, guint cols, guint rows,
+	GByteArray *payload);
 gboolean sakura_control_encode_subscribe_events_request(
 	const gchar *request_id, guint64 after_sequence, GByteArray *payload);
 gboolean sakura_control_decode_request(const guint8 *payload,
