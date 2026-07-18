@@ -27,6 +27,40 @@ IF (NOT GIO_UNIX_FOUND)
 	MESSAGE(FATAL_ERROR "You don't seem to have glib >= 2.40 development libraries installed...")
 ENDIF (NOT GIO_UNIX_FOUND)
 
+SET (SAKURA_PROTOBUF_PREFIX "" CACHE PATH
+	"Project-local protobuf/protobuf-c installation prefix")
+FIND_PROGRAM (SAKURA_PROTOC_EXECUTABLE protoc
+	HINTS "${SAKURA_PROTOBUF_PREFIX}/bin")
+FIND_PROGRAM (SAKURA_PROTOC_C_EXECUTABLE protoc-c
+	HINTS "${SAKURA_PROTOBUF_PREFIX}/bin")
+IF (NOT SAKURA_PROTOC_EXECUTABLE OR NOT SAKURA_PROTOC_C_EXECUTABLE)
+	MESSAGE (FATAL_ERROR
+		"protoc and protoc-c are required. Run ./build.sh to fetch the project-local protobuf tools.")
+ENDIF ()
+pkg_check_modules (PROTOBUF_C REQUIRED IMPORTED_TARGET libprotobuf-c)
+
+SET (SAKURA_PROTO_GENERATED_DIR "${CMAKE_CURRENT_BINARY_DIR}/generated")
+SET (SAKURA_PROTO_GENERATED_C
+	"${SAKURA_PROTO_GENERATED_DIR}/sakura/control.pb-c.c")
+SET (SAKURA_PROTO_GENERATED_H
+	"${SAKURA_PROTO_GENERATED_DIR}/sakura/control.pb-c.h")
+ADD_CUSTOM_COMMAND (
+	OUTPUT ${SAKURA_PROTO_GENERATED_C} ${SAKURA_PROTO_GENERATED_H}
+	COMMAND ${CMAKE_COMMAND} -E make_directory "${SAKURA_PROTO_GENERATED_DIR}"
+	COMMAND ${SAKURA_PROTOC_C_EXECUTABLE}
+		--proto_path=${CMAKE_CURRENT_SOURCE_DIR}/proto
+		--c_out=${SAKURA_PROTO_GENERATED_DIR}
+		"${CMAKE_CURRENT_SOURCE_DIR}/proto/sakura/control.proto"
+	DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/proto/sakura/control.proto"
+	COMMENT "Generating protobuf-c control bindings"
+	VERBATIM)
+ADD_CUSTOM_TARGET (sakura-proto-generated
+	DEPENDS ${SAKURA_PROTO_GENERATED_C} ${SAKURA_PROTO_GENERATED_H})
+
+SET (SAKURA_CONTROL_SOURCES
+	src/sakura-control-transport.c
+	${SAKURA_PROTO_GENERATED_C})
+
 pkg_check_modules (GTK REQUIRED IMPORTED_TARGET gtk+-3.0>=3.20)
 IF (NOT GTK_FOUND)
 	MESSAGE(FATAL_ERROR "You don't seem to have gtk >= 3.20 development libraries installed...")
@@ -60,7 +94,7 @@ SET (SAKURA_APP_SOURCES
 	src/sakura-workspace-model.c
 	src/sakura-workspace-persistence.c
 	src/sakura-integrations.c
-	src/sakura-control.c
+	${SAKURA_CONTROL_SOURCES}
 	src/sakura-agent-client.c
 	src/sakura-session.c)
 
@@ -69,7 +103,9 @@ TARGET_SOURCES (sakura PRIVATE
 	src/sakura-main.c
 	${SAKURA_APP_SOURCES})
 
-TARGET_INCLUDE_DIRECTORIES (sakura PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+TARGET_INCLUDE_DIRECTORIES (sakura PRIVATE
+	${CMAKE_CURRENT_SOURCE_DIR}
+	${SAKURA_PROTO_GENERATED_DIR})
 TARGET_COMPILE_DEFINITIONS (sakura PRIVATE
 	VERSION="${VERSION}"
 	DATADIR="${CMAKE_INSTALL_PREFIX}/share"
@@ -101,14 +137,18 @@ TARGET_LINK_LIBRARIES (sakura-core PUBLIC PkgConfig::GLIB m)
 
 ADD_EXECUTABLE (sakura-agent
 	src/sakura-agent.c
-	src/sakura-control.c)
-TARGET_INCLUDE_DIRECTORIES (sakura-agent PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+	${SAKURA_CONTROL_SOURCES})
+TARGET_INCLUDE_DIRECTORIES (sakura-agent PRIVATE
+	${CMAKE_CURRENT_SOURCE_DIR}/src
+	${SAKURA_PROTO_GENERATED_DIR})
 TARGET_COMPILE_OPTIONS (sakura-agent PRIVATE ${SAKURA_WARNING_FLAGS})
 TARGET_LINK_LIBRARIES (sakura-agent PRIVATE
 	sakura-core
 	PkgConfig::GLIB
-	PkgConfig::GIO_UNIX)
-ADD_DEPENDENCIES (sakura sakura-agent)
+	PkgConfig::GIO_UNIX
+	PkgConfig::PROTOBUF_C)
+ADD_DEPENDENCIES (sakura sakura-agent sakura-proto-generated)
+ADD_DEPENDENCIES (sakura-agent sakura-proto-generated)
 TARGET_COMPILE_DEFINITIONS (sakura PRIVATE
 	SAKURA_AGENT_BUILD_PATH="${CMAKE_BINARY_DIR}/src/sakura-agent")
 
@@ -130,6 +170,7 @@ TARGET_LINK_LIBRARIES (sakura PRIVATE
 	PkgConfig::GTK
 	PkgConfig::VTE
 	PkgConfig::X11
+	PkgConfig::PROTOBUF_C
 	m)
 
 IF (SAKURA_ENABLE_SANITIZERS)
@@ -151,15 +192,18 @@ IF (BUILD_TESTING)
 
 	ADD_EXECUTABLE (sakura-control-test
 		tests/test-sakura-control.c
-		src/sakura-control.c)
+		${SAKURA_CONTROL_SOURCES})
 	TARGET_INCLUDE_DIRECTORIES (sakura-control-test PRIVATE
-		${CMAKE_CURRENT_SOURCE_DIR}/src)
+		${CMAKE_CURRENT_SOURCE_DIR}/src
+		${SAKURA_PROTO_GENERATED_DIR})
 	TARGET_COMPILE_OPTIONS (sakura-control-test PRIVATE
 		${SAKURA_WARNING_FLAGS})
 	TARGET_LINK_LIBRARIES (sakura-control-test PRIVATE
 		sakura-core
 		PkgConfig::GLIB
-		PkgConfig::GIO_UNIX)
+		PkgConfig::GIO_UNIX
+		PkgConfig::PROTOBUF_C)
+	ADD_DEPENDENCIES (sakura-control-test sakura-proto-generated)
 	ADD_TEST (NAME control COMMAND sakura-control-test)
 
 	ADD_EXECUTABLE (sakura-core-test)
@@ -188,7 +232,8 @@ IF (BUILD_TESTING)
 		tests/test-workspace-gtk.c
 		${SAKURA_APP_SOURCES})
 	TARGET_INCLUDE_DIRECTORIES (sakura-workspace-gtk-test PRIVATE
-		${CMAKE_CURRENT_SOURCE_DIR})
+		${CMAKE_CURRENT_SOURCE_DIR}
+		${SAKURA_PROTO_GENERATED_DIR})
 	TARGET_COMPILE_DEFINITIONS (sakura-workspace-gtk-test PRIVATE
 		VERSION="${VERSION}"
 		DATADIR="${CMAKE_INSTALL_PREFIX}/share"
@@ -212,7 +257,9 @@ IF (BUILD_TESTING)
 		PkgConfig::GTK
 		PkgConfig::VTE
 		PkgConfig::X11
+		PkgConfig::PROTOBUF_C
 		m)
+	ADD_DEPENDENCIES (sakura-workspace-gtk-test sakura-proto-generated)
 	IF (SAKURA_ENABLE_SANITIZERS)
 		TARGET_COMPILE_OPTIONS (sakura-workspace-gtk-test PRIVATE
 			-fsanitize=address,undefined -fno-omit-frame-pointer)

@@ -1,6 +1,6 @@
 #include <gio/gio.h>
 
-#include "sakura-control.h"
+#include "sakura-control-transport.h"
 
 
 static SakuraCoreWorkspace *

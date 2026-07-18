@@ -5,6 +5,7 @@ Makefile
 build/
 build-debug/
 build-asan/
+.deps/
 *.gmo
 *.mo
 po/sakura.pot

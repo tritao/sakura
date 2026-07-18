@@ -1,14 +1,12 @@
-#ifndef SAKURA_CONTROL_H
-#define SAKURA_CONTROL_H
+#ifndef SAKURA_CONTROL_TRANSPORT_H
+#define SAKURA_CONTROL_TRANSPORT_H
 
 #include <gio/gio.h>
 
 #include "sakura-core.h"
 
-/* The payload is a protobuf message from proto/sakura/control.proto. The
- * local Unix-socket transport adds a four-byte big-endian payload length. This
- * small wire implementation covers the first endpoint without requiring the
- * protobuf-c compiler; it can be replaced by generated bindings later. */
+/* The protobuf payload is framed separately so the same generated messages
+ * can later be carried by an HTTP or WebSocket adapter. */
 #define SAKURA_CONTROL_PROTOCOL_VERSION 1
 #define SAKURA_CONTROL_MAX_FRAME (1024 * 1024)
 
@@ -53,4 +51,4 @@ gboolean sakura_control_decode_response(const guint8 *payload,
 	                                      SakuraControlResponse *response,
 	                                      GError **error);
 
-#endif /* SAKURA_CONTROL_H */
+#endif /* SAKURA_CONTROL_TRANSPORT_H */

@@ -7,7 +7,7 @@
 #include <gio/gio.h>
 #include <glib-unix.h>
 
-#include "sakura-control.h"
+#include "sakura-control-transport.h"
 
 
 typedef struct {

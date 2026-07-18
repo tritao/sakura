@@ -2,7 +2,7 @@
 #include <unistd.h>
 
 #include "sakura-private.h"
-#include "sakura-control.h"
+#include "sakura-control-transport.h"
 
 
 static gchar *
