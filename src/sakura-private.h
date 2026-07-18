@@ -512,6 +512,7 @@ struct sakura_tab {
 	SakuraTabStatus status;
 	gboolean attention;
 	gint64 attention_timestamp;
+	gboolean attention_restore_pending;
 	gboolean text_selection_mode;
 	gboolean hold;
 	SakuraSidebarNode *sidebar_node;

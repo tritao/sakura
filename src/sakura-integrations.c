@@ -1825,6 +1825,9 @@ sakura_codex_tracking_poll_cb(gpointer data)
 				}
 				if (state != NULL && sakura_codex_status_from_state(state, &status, &attention)) {
 					gboolean preserve_interrupt;
+					gboolean preserve_restored_state =
+						tab->attention_restore_pending &&
+						g_strcmp0(event_name, "SessionStart") == 0;
 
 					if (turn_id != NULL && turn_id[0] != '\0') {
 						g_free(tab->codex_turn_id);
@@ -1832,7 +1835,12 @@ sakura_codex_tracking_poll_cb(gpointer data)
 					}
 					preserve_interrupt = sakura_codex_interrupt_matches_event(
 						tab, event_name, turn_id);
-					if (status == SAKURA_TAB_STATUS_RUNNING && preserve_interrupt) {
+					if (preserve_restored_state) {
+						/* Resuming a saved Codex session emits an initial idle
+						 * SessionStart event. It describes process startup, not an
+						 * acknowledgement of the saved ready/attention state. Keep
+						 * the restored marker until a real turn event arrives. */
+					} else if (status == SAKURA_TAB_STATUS_RUNNING && preserve_interrupt) {
 						/* A delayed running event from the interrupted turn must
 						 * not restart the activity spinner. */
 					} else {

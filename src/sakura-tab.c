@@ -2391,7 +2391,8 @@ sakura_pane_focus_in_cb(GtkWidget *widget, GdkEventFocus *event, gpointer data)
 	sakura.workspace->active_tab = tab;
 	sakura.workspace->active_page = tab->page;
 	tab->page->active_tab = tab;
-	sakura_tab_clear_attention(tab);
+	if (!sakura.session_restoring)
+		sakura_tab_clear_attention(tab);
 	if (tab->page->panes != NULL && tab->page->panes->len <= 1)
 		sakura_sidebar_queue_select_node(tab->page->sidebar_node);
 	else
@@ -2466,6 +2467,7 @@ sakura_tab_set_status(SakuraTab *tab, SakuraTabStatus status, gboolean attention
 
 	if (tab == NULL)
 		return;
+	tab->attention_restore_pending = FALSE;
 
 	/* A state change in the visible, focused terminal is already visible to the
 	 * user. Keep the state marker, but don't turn it into an unread alert. */
@@ -2503,7 +2505,10 @@ sakura_tab_set_status(SakuraTab *tab, SakuraTabStatus status, gboolean attention
 void
 sakura_tab_clear_attention(SakuraTab *tab)
 {
-	if (tab == NULL || !tab->attention)
+	if (tab == NULL)
+		return;
+	tab->attention_restore_pending = FALSE;
+	if (!tab->attention)
 		return;
 
 	tab->attention = FALSE;
@@ -2524,6 +2529,7 @@ sakura_tab_restore_state(SakuraTab *tab, SakuraTabStatus status,
 
 	tab->status = status;
 	tab->attention = attention;
+	tab->attention_restore_pending = attention;
 	tab->attention_timestamp = attention_timestamp > 0 ? attention_timestamp : 0;
 	if (tab->spinner != NULL) {
 		if ((!tab->runtime_deferred && status == SAKURA_TAB_STATUS_RUNNING) ||

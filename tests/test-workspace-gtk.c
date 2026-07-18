@@ -5,6 +5,10 @@
 
 #include "src/sakura-private.h"
 
+static void setup_sidebar_fixture(void);
+static void setup_workspace(void);
+static void teardown_workspace(void);
+
 static SakuraSessionSnapshot *
 test_workspace_snapshot_new(void)
 {
@@ -32,6 +36,80 @@ test_codex_interrupt_event_matching(void)
 	tab.codex_interrupt_requested = FALSE;
 	g_assert_false(sakura_codex_interrupt_matches_event(
 		&tab, "SubagentStart", NULL));
+}
+
+
+static void
+test_codex_tracking_write(const gchar *directory, const gchar *token,
+                          const gchar *event_name, const gchar *state)
+{
+	GError *error = NULL;
+	gchar *path = g_build_filename(directory, token, NULL);
+	gchar *contents = g_strdup_printf(
+		"[tracking]\n"
+		"session_id=session-1\n"
+		"event=%s\n"
+		"state=%s\n",
+		event_name, state);
+
+	g_assert_true(g_file_set_contents(path, contents, -1, &error));
+	g_assert_no_error(error);
+	g_free(contents);
+	g_free(path);
+}
+
+
+static void
+test_restored_attention_survives_codex_session_start(void)
+{
+	SakuraTab *codex_tab;
+	SakuraTab *shell_tab;
+	GError *error = NULL;
+	gchar *directory;
+
+	setup_workspace();
+	setup_sidebar_fixture();
+	codex_tab = sakura_page_at_page(1)->active_tab;
+	shell_tab = sakura_page_at_page(2)->active_tab;
+	codex_tab->kind = SAKURA_TAB_CODEX;
+	codex_tab->codex_tracking_token = g_strdup("attention-session");
+
+	directory = g_dir_make_tmp("sakura-attention-XXXXXX", &error);
+	g_assert_no_error(error);
+	g_assert_nonnull(directory);
+	sakura.codex_tracking_dir = g_strdup(directory);
+
+	/* The restored state is already visible when the app's first tracking
+	 * event arrives, just as it is after startup restoration completes. */
+	sakura_tab_restore_state(codex_tab, SAKURA_TAB_STATUS_READY, TRUE, 123);
+	sakura_tab_restore_state(shell_tab, SAKURA_TAB_STATUS_READY, TRUE, 456);
+	sakura.session_restoring = FALSE;
+	test_codex_tracking_write(directory, "attention-session", "SessionStart", "idle");
+	sakura_codex_tracking_poll_cb(NULL);
+	g_assert_cmpint(codex_tab->status, ==, SAKURA_TAB_STATUS_READY);
+	g_assert_true(codex_tab->attention);
+
+	/* A real turn event supersedes the restored state. */
+	test_codex_tracking_write(directory, "attention-session",
+	                          "UserPromptSubmit", "running");
+	sakura_codex_tracking_poll_cb(NULL);
+	g_assert_cmpint(codex_tab->status, ==, SAKURA_TAB_STATUS_RUNNING);
+	g_assert_false(codex_tab->attention);
+	g_assert_false(codex_tab->attention_restore_pending);
+
+	/* Attention restoration is not limited to Codex tabs. */
+	g_assert_cmpint(shell_tab->status, ==, SAKURA_TAB_STATUS_READY);
+	g_assert_true(shell_tab->attention);
+
+	g_free(codex_tab->codex_tracking_token);
+	codex_tab->codex_tracking_token = NULL;
+	g_free(codex_tab->codex_session_id);
+	codex_tab->codex_session_id = NULL;
+	g_free(sakura.codex_tracking_dir);
+	sakura.codex_tracking_dir = NULL;
+	g_rmdir(directory);
+	g_free(directory);
+	teardown_workspace();
 }
 
 
@@ -2661,6 +2739,8 @@ main(int argc, char **argv)
 	                test_notebook_identity_and_reorder);
 	g_test_add_func("/workspace/codex-interrupt-event-matching",
 	                test_codex_interrupt_event_matching);
+	g_test_add_func("/workspace/restored-attention-survives-codex-session-start",
+	                test_restored_attention_survives_codex_session_start);
 	g_test_add_func("/workspace/leaf-widget-split", test_leaf_widget_can_split);
 	g_test_add_func("/workspace/generated-page-id-avoids-existing",
 	                test_generated_page_id_avoids_existing_page);

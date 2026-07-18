@@ -811,7 +811,7 @@ sakura_focus_in_cb (GtkWidget *widget, GdkEvent *event, void *data)
 
 	/* Reset urgency hint */
 	gtk_window_set_urgency_hint(GTK_WINDOW(sakura.main_window), FALSE);
-	if (sakura.notebook != NULL) {
+	if (!sakura.session_restoring && sakura.notebook != NULL) {
 		sakura_tab_clear_attention(sakura.workspace->active_tab != NULL
 		                         ? sakura.workspace->active_tab
 		                         : sakura_tab_at_page(gtk_notebook_get_current_page(

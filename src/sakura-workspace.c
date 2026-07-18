@@ -3442,7 +3442,7 @@ static void
 sakura_workspace_restore_tab_state(SakuraTab *tab,
                                     const SakuraSessionTabRecord *record)
 {
-	if (tab == NULL || record == NULL || tab->kind != SAKURA_TAB_CODEX)
+	if (tab == NULL || record == NULL)
 		return;
 	sakura_tab_restore_state(tab, record->status, record->attention,
 	                         record->attention_timestamp);
@@ -4595,7 +4595,8 @@ sakura_switch_page_cb (GtkWidget *widget, GtkWidget *widget_page,
 	sakura.workspace->active_page = page;
 	sakura_workspace_start_page_runtime(page);
 	sakura_remember_current_scope_tab(tab);
-	sakura_tab_clear_attention(tab);
+	if (!sakura.session_restoring)
+		sakura_tab_clear_attention(tab);
 	/* A notebook switch can be triggered while a sidebar click is still being
 	 * dispatched. Queue the tree update so the original click's target wins
 	 * over any intermediate scope/fallback switch. */
