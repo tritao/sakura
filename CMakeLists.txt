@@ -85,6 +85,16 @@ ENDIF ()
 SET (SAKURA_WARNING_FLAGS
 	-Wall -Wextra -Wformat=2
 	-Wno-unused-parameter -Wno-sign-compare)
+
+# GTK-free domain/session ownership. Keep this as a separately linkable target
+# so the future agent can consume the same core boundary without pulling in
+# GTK, VTE, X11, or the desktop application lifecycle.
+ADD_LIBRARY (sakura-core STATIC
+	src/sakura-core.c)
+TARGET_INCLUDE_DIRECTORIES (sakura-core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
+TARGET_COMPILE_OPTIONS (sakura-core PRIVATE ${SAKURA_WARNING_FLAGS})
+TARGET_LINK_LIBRARIES (sakura-core PUBLIC PkgConfig::GLIB)
+
 IF (CMAKE_BUILD_TYPE MATCHES "Debug")
 	TARGET_COMPILE_OPTIONS (sakura PRIVATE ${SAKURA_WARNING_FLAGS})
 ELSE ()
@@ -97,6 +107,7 @@ ELSEIF (WEBKIT40_FOUND)
 	TARGET_LINK_LIBRARIES (sakura PRIVATE PkgConfig::WEBKIT40)
 ENDIF ()
 TARGET_LINK_LIBRARIES (sakura PRIVATE
+	sakura-core
 	PkgConfig::GLIB
 	PkgConfig::GIO_UNIX
 	PkgConfig::GTK
@@ -110,6 +121,17 @@ IF (SAKURA_ENABLE_SANITIZERS)
 ENDIF ()
 
 IF (BUILD_TESTING)
+	ADD_EXECUTABLE (sakura-core-model-test
+		tests/test-sakura-core.c)
+	TARGET_INCLUDE_DIRECTORIES (sakura-core-model-test PRIVATE
+		${CMAKE_CURRENT_SOURCE_DIR}/src)
+	TARGET_COMPILE_OPTIONS (sakura-core-model-test PRIVATE
+		${SAKURA_WARNING_FLAGS})
+	TARGET_LINK_LIBRARIES (sakura-core-model-test PRIVATE
+		sakura-core
+		PkgConfig::GLIB)
+	ADD_TEST (NAME core-model COMMAND sakura-core-model-test)
+
 	ADD_EXECUTABLE (sakura-core-test)
 	TARGET_SOURCES (sakura-core-test PRIVATE
 		tests/test-core.c
@@ -120,6 +142,7 @@ IF (BUILD_TESTING)
 	TARGET_INCLUDE_DIRECTORIES (sakura-core-test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 	TARGET_COMPILE_OPTIONS (sakura-core-test PRIVATE ${SAKURA_WARNING_FLAGS})
 	TARGET_LINK_LIBRARIES (sakura-core-test PRIVATE
+		sakura-core
 		PkgConfig::GLIB
 		PkgConfig::GIO_UNIX
 		PkgConfig::GTK
@@ -153,6 +176,7 @@ IF (BUILD_TESTING)
 		TARGET_LINK_LIBRARIES (sakura-workspace-gtk-test PRIVATE PkgConfig::WEBKIT40)
 	ENDIF ()
 	TARGET_LINK_LIBRARIES (sakura-workspace-gtk-test PRIVATE
+		sakura-core
 		PkgConfig::GLIB
 		PkgConfig::GIO_UNIX
 		PkgConfig::GTK

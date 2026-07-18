@@ -7,6 +7,8 @@
 #include <gtk/gtk.h>
 #include <vte/vte.h>
 
+#include "sakura-core.h"
+
 #ifdef HAVE_WEBKITGTK
 #include <webkit2/webkit2.h>
 #endif
@@ -14,16 +16,6 @@
 #define PALETTE_SIZE 16
 #define NUM_COLORSETS 6
 #define SAKURA_CODEX_REASONING_EFFORT_DATA_KEY "sakura-codex-reasoning-effort"
-
-/* Layout ratios are persisted as fractions of the paned allocation. Keep the
- * bounds in one place so model validation, GTK restoration, and session
- * serialization agree on what is safe. A slightly larger primary pane makes
- * the ordinary one-action split more useful while the explicit presets keep
- * their own balanced ratios. */
-#define SAKURA_LAYOUT_MIN_RATIO 0.05
-#define SAKURA_LAYOUT_MAX_RATIO 0.95
-#define SAKURA_LAYOUT_DEFAULT_RATIO 0.60
-#define SAKURA_LAYOUT_MAX_DEPTH 32
 
 typedef struct sakura_app SakuraApp;
 typedef struct sakura_workspace_model SakuraWorkspaceModel;
@@ -41,7 +33,6 @@ typedef struct sakura_tab SakuraTab;
 typedef SakuraTab SakuraPane;
 typedef struct sakura_task SakuraTask;
 /* This is the saved workspace snapshot; it is not one page-level session. */
-typedef struct sakura_session_snapshot SakuraSessionSnapshot;
 
 struct sakura_codex_name_query;
 
@@ -52,49 +43,15 @@ typedef enum {
 } ShowTabBar;
 
 typedef enum {
-	SAKURA_TAB_SHELL,
-	SAKURA_TAB_CODEX,
-	SAKURA_TAB_TOOL
-} SakuraTabKind;
-
-typedef enum {
-	SAKURA_TOOL_NONE,
-	SAKURA_TOOL_GITUI,
-	SAKURA_TOOL_GH_DASH,
-	SAKURA_TOOL_GH_PR,
-	SAKURA_TOOL_GIT_COLA
-} SakuraToolKind;
-
-typedef enum {
 	SAKURA_OPEN_HERE_FILE_MANAGER,
 	SAKURA_OPEN_HERE_EDITOR
 } SakuraOpenHereKind;
-
-typedef enum {
-	SAKURA_TAB_STATUS_NONE,
-	SAKURA_TAB_STATUS_IDLE,
-	SAKURA_TAB_STATUS_RUNNING,
-	SAKURA_TAB_STATUS_NEEDS_APPROVAL,
-	SAKURA_TAB_STATUS_READY,
-	SAKURA_TAB_STATUS_INTERRUPTED,
-	SAKURA_TAB_STATUS_ERROR
-} SakuraTabStatus;
 
 typedef enum {
 	SAKURA_CODEX_TRACKING_MISSING,
 	SAKURA_CODEX_TRACKING_PARTIAL,
 	SAKURA_CODEX_TRACKING_ENABLED
 } SakuraCodexTrackingState;
-
-typedef enum {
-	SAKURA_LAYOUT_LEAF,
-	SAKURA_LAYOUT_SPLIT
-} SakuraLayoutKind;
-
-typedef enum {
-	SAKURA_SPLIT_RIGHT,
-	SAKURA_SPLIT_DOWN
-} SakuraSplitDirection;
 
 typedef enum {
 	SAKURA_LAYOUT_PRESET_TWO_COLUMNS,
@@ -133,14 +90,6 @@ typedef enum {
 	SAKURA_WORKSPACE_CHANGE_SELECTION = 1 << 2,
 	SAKURA_WORKSPACE_CHANGE_METADATA = 1 << 3
 } SakuraWorkspaceChange;
-
-typedef enum {
-	SAKURA_TASK_READY,
-	SAKURA_TASK_WORKING,
-	SAKURA_TASK_BLOCKED,
-	SAKURA_TASK_REVIEW,
-	SAKURA_TASK_DONE
-} SakuraTaskStatus;
 
 typedef struct {
 	const gchar *execute_command;
@@ -853,86 +802,6 @@ gboolean sakura_tool_is_available(SakuraToolKind tool);
 SakuraTab *sakura_find_tool_tab(SakuraToolKind tool, const gchar *cwd);
 SakuraTab *sakura_find_tool_target_tab(SakuraToolKind tool, const gchar *target);
 
-typedef struct {
-	gchar *id;
-	gchar *parent_id;
-	gchar *title;
-	gchar *directory;
-	guint order;
-	gboolean archived;
-} SakuraSessionGroupRecord;
-
-typedef struct {
-	gchar *id;
-	gchar *parent_id;
-	gchar *group_id;
-	gchar *title;
-	gchar *provider;
-	gchar *external_id;
-	gchar *url;
-	SakuraTaskStatus status;
-	guint order;
-	gboolean archived;
-} SakuraSessionTaskRecord;
-
-typedef struct {
-	gchar *parent_id;
-	gchar *cwd;
-	gchar *title;
-	gchar *terminal_id;
-	gchar *tool_id;
-	gchar *tool_target;
-	gchar *codex_session_id;
-	gchar *codex_session_name;
-	gchar *codex_reasoning_effort;
-	gint colorset;
-	SakuraTabKind kind;
-	gboolean title_set_by_user;
-	SakuraTabStatus status;
-	gboolean attention;
-	gint64 attention_timestamp;
-} SakuraSessionTabRecord;
-
-typedef struct {
-	gchar *id;
-	gchar *parent_id;
-	gchar *title;
-	gboolean title_set_by_user;
-	gchar *root_layout_id;
-	gchar *active_terminal_id;
-	gchar *task_id;
-} SakuraSessionPageRecord;
-
-typedef struct {
-	gchar *id;
-	gchar *page_id;
-	gchar *type;
-	SakuraSplitDirection direction;
-	gdouble ratio;
-	gchar *first_id;
-	gchar *second_id;
-	gchar *terminal_id;
-} SakuraSessionLayoutRecord;
-
-struct sakura_session_snapshot {
-	GPtrArray *groups;
-	GPtrArray *tasks;
-	GPtrArray *tabs;
-	GPtrArray *pages;
-	GPtrArray *layouts;
-	gint selected_terminal;
-	gchar *selected_terminal_id;
-	gchar *selected_page_id;
-	gchar *selected_task_id;
-	gchar *active_group_id;
-	gchar *root_directory;
-	gboolean sidebar_visible;
-	gint sidebar_width;
-	gboolean show_archived;
-};
-
-SakuraSessionSnapshot *sakura_session_snapshot_new(void);
-void sakura_session_snapshot_free(SakuraSessionSnapshot *snapshot);
 gboolean sakura_session_snapshot_load(GKeyFile *key_file,
                                       SakuraSessionSnapshot *snapshot,
                                       GError **error);
