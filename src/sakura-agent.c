@@ -2,6 +2,7 @@
 #include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include <pty.h>
 #include <sys/stat.h>
 #include <sys/ioctl.h>
@@ -199,6 +200,23 @@ sakura_agent_find_terminal(SakuraAgent *agent, const gchar *terminal_id,
 	g_set_error(error, G_IO_ERROR, G_IO_ERROR_NOT_FOUND,
 	            "terminal %s was not found", terminal_id);
 	return NULL;
+}
+
+
+static gboolean
+sakura_agent_terminal_id_is_valid(const gchar *terminal_id)
+{
+	const gchar *cursor;
+
+	if (terminal_id == NULL || terminal_id[0] == '\0' ||
+	    strlen(terminal_id) > 128)
+		return FALSE;
+	for (cursor = terminal_id; *cursor != '\0'; cursor++) {
+		if (!g_ascii_isalnum(*cursor) && *cursor != '-' &&
+		    *cursor != '_' && *cursor != '.')
+			return FALSE;
+	}
+	return TRUE;
 }
 
 
@@ -555,7 +573,16 @@ sakura_agent_create_terminal(SakuraAgent *agent,
 	shell = g_getenv("SHELL");
 	if (shell == NULL || shell[0] == '\0')
 		shell = "/bin/sh";
-	id = g_uuid_string_random();
+	if (request->terminal_id != NULL && request->terminal_id[0] != '\0') {
+		if (!sakura_agent_terminal_id_is_valid(request->terminal_id))
+			return sakura_agent_error(error, "terminal id is invalid");
+		if (sakura_core_workspace_find_terminal(agent->workspace,
+	                                       request->terminal_id) != NULL)
+			return sakura_agent_error(error, "terminal id is already in use");
+		id = g_strdup(request->terminal_id);
+	} else {
+		id = g_uuid_string_random();
+	}
 	pid = forkpty(&master_fd, NULL, NULL, &size);
 	if (pid < 0) {
 		g_set_error(error, G_IO_ERROR, g_io_error_from_errno(errno),

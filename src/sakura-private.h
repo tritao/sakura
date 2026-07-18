@@ -417,6 +417,13 @@ struct sakura_tab {
 	GtkWidget *tab_button_close;
 	GtkWidget *vte;      /* Reference to VTE terminal */
 	GtkWidget *scrollbar;
+	VtePty *agent_pty;  /* VTE's local proxy for an agent-owned PTY */
+	int agent_proxy_slave_fd;
+	guint agent_proxy_input_source_id;
+	guint agent_cols;
+	guint agent_rows;
+	gboolean agent_backed;
+	gboolean agent_terminal_exited;
 #ifdef HAVE_WEBKITGTK
 	GtkWidget *browser;
 	GtkWidget *browser_back;
@@ -499,6 +506,13 @@ void sakura_tab_free(SakuraTab *tab);
 void sakura_tab_disconnect_exit_handler(SakuraTab *tab);
 SakuraTab *sakura_tab_for_vte(VteTerminal *vte);
 SakuraTab *sakura_find_pane_by_terminal_id(const gchar *terminal_id);
+gboolean sakura_tab_start_agent_terminal(SakuraTab *tab, const gchar *cwd);
+void sakura_tab_agent_feed_output(SakuraTab *tab, const guint8 *data,
+                                  gsize data_length);
+void sakura_tab_agent_status(SakuraTab *tab, guint status,
+                             const gchar *message);
+void sakura_tab_sync_agent_size(SakuraTab *tab);
+void sakura_tab_close_agent_terminal(SakuraTab *tab);
 void sakura_set_tab_label_text(const gchar *title, gint page);
 void sakura_set_window_title(const gchar *title);
 gboolean sakura_update_tab_cwd(SakuraTab *tab);
@@ -822,10 +836,10 @@ gboolean sakura_agent_set_task_archived(SakuraApp *app,
                                         gboolean archived, GError **error);
 gboolean sakura_agent_delete_task(SakuraApp *app, const gchar *task_id,
                                   GError **error);
-gboolean sakura_agent_create_terminal(SakuraApp *app, const gchar *group_id,
-                                       const gchar *task_id, const gchar *cwd,
-                                       guint cols, guint rows,
-                                       gchar **terminal_id, GError **error);
+gboolean sakura_agent_create_terminal(
+	SakuraApp *app, const gchar *requested_terminal_id,
+	const gchar *group_id, const gchar *task_id, const gchar *cwd,
+	guint cols, guint rows, gchar **created_terminal_id, GError **error);
 gboolean sakura_agent_terminal_input(SakuraApp *app, const gchar *terminal_id,
                                      const guint8 *data, gsize data_length,
                                      GError **error);

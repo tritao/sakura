@@ -7,8 +7,11 @@
 #include <unistd.h>
 
 #include <glib/gstdio.h>
+#include <glib-unix.h>
 
 #include <gdk/gdkx.h>
+#include <pty.h>
+#include <termios.h>
 
 #define PCRE2_CODE_UNIT_WIDTH 8
 #include <pcre2.h>
@@ -128,7 +131,10 @@ sakura_tab_can_split(SakuraTab *tab)
 SakuraTab *
 sakura_tab_new(void)
 {
-	return g_new0(SakuraTab, 1);
+	SakuraTab *tab = g_new0(SakuraTab, 1);
+
+	tab->agent_proxy_slave_fd = -1;
+	return tab;
 }
 
 
@@ -471,6 +477,218 @@ sakura_tab_start_process(SakuraTab *tab, const gchar *cwd, gchar **env,
 	return FALSE;
 }
 
+
+static gboolean
+sakura_tab_agent_input_cb(gint fd, GIOCondition condition, gpointer data)
+{
+	SakuraTab *tab = data;
+	guint8 buffer[4096];
+	ssize_t length;
+	GError *error = NULL;
+
+	if (tab == NULL || !tab->agent_backed || tab->agent_terminal_exited)
+		return G_SOURCE_REMOVE;
+	if (condition & (G_IO_HUP | G_IO_ERR | G_IO_NVAL))
+		return G_SOURCE_REMOVE;
+	length = read(fd, buffer, sizeof(buffer));
+	if (length > 0) {
+		if (!sakura_agent_terminal_input(&sakura, tab->terminal_id, buffer,
+		                                  length, &error)) {
+			g_warning("Could not forward terminal input: %s",
+			          error != NULL ? error->message : "unknown error");
+			g_clear_error(&error);
+			tab->agent_terminal_exited = TRUE;
+			sakura_tab_set_status(tab, SAKURA_TAB_STATUS_ERROR, TRUE);
+			return G_SOURCE_REMOVE;
+		}
+	} else if (length < 0 && errno != EINTR && errno != EAGAIN &&
+	           errno != EWOULDBLOCK) {
+		g_warning("Could not read terminal input proxy: %s", g_strerror(errno));
+		return G_SOURCE_REMOVE;
+	}
+	return G_SOURCE_CONTINUE;
+}
+
+
+gboolean
+sakura_tab_start_agent_terminal(SakuraTab *tab, const gchar *cwd)
+{
+	const gchar *group_id = "root";
+	const gchar *task_id = "root";
+	guint cols, rows;
+	gchar *created_terminal_id = NULL;
+	GError *error = NULL;
+	VtePty *proxy_pty = NULL;
+	struct termios termios = { 0 };
+	int master_fd = -1;
+	int slave_fd = -1;
+
+	if (tab == NULL || tab->vte == NULL || sakura.agent_socket_path == NULL)
+		return FALSE;
+	if (tab->page != NULL && tab->page->group != NULL &&
+	    tab->page->group->id != NULL)
+		group_id = tab->page->group->id;
+	if (tab->page != NULL && tab->page->task != NULL &&
+	    tab->page->task->id != NULL)
+		task_id = tab->page->task->id;
+	cols = vte_terminal_get_column_count(VTE_TERMINAL(tab->vte));
+	rows = vte_terminal_get_row_count(VTE_TERMINAL(tab->vte));
+	if (cols == 0)
+		cols = sakura.columns > 0 ? sakura.columns : 80;
+	if (rows == 0)
+		rows = sakura.rows > 0 ? sakura.rows : 24;
+	if (!sakura_agent_create_terminal(&sakura, tab->terminal_id, group_id,
+	                                  task_id, cwd, cols, rows,
+	                                  &created_terminal_id, &error)) {
+		g_clear_error(&error);
+		return FALSE;
+	}
+	if (created_terminal_id != NULL &&
+	    g_strcmp0(created_terminal_id, tab->terminal_id) != 0) {
+		g_free(tab->terminal_id);
+		tab->terminal_id = g_steal_pointer(&created_terminal_id);
+	}
+	g_free(created_terminal_id);
+
+	if (openpty(&master_fd, &slave_fd, NULL, NULL, NULL) != 0) {
+		g_set_error(&error, G_IO_ERROR, g_io_error_from_errno(errno),
+		            "could not create terminal proxy: %s", g_strerror(errno));
+		goto fail;
+	}
+	if (tcgetattr(slave_fd, &termios) != 0) {
+		g_set_error(&error, G_IO_ERROR, g_io_error_from_errno(errno),
+		            "could not configure terminal proxy: %s", g_strerror(errno));
+		goto fail;
+	}
+	cfmakeraw(&termios);
+	if (tcsetattr(slave_fd, TCSANOW, &termios) != 0 ||
+	    fcntl(slave_fd, F_SETFL, O_NONBLOCK) != 0) {
+		g_set_error(&error, G_IO_ERROR, g_io_error_from_errno(errno),
+		            "could not configure terminal proxy: %s", g_strerror(errno));
+		goto fail;
+	}
+	proxy_pty = vte_pty_new_foreign_sync(master_fd, NULL, &error);
+	if (proxy_pty == NULL)
+		goto fail;
+	master_fd = -1; /* VtePty owns the master from here. */
+	vte_terminal_set_pty(VTE_TERMINAL(tab->vte), proxy_pty);
+	tab->agent_pty = g_object_ref(proxy_pty);
+	g_object_unref(proxy_pty);
+	proxy_pty = NULL;
+	tab->agent_proxy_slave_fd = slave_fd;
+	slave_fd = -1;
+	tab->agent_proxy_input_source_id = g_unix_fd_add(
+		tab->agent_proxy_slave_fd, G_IO_IN | G_IO_HUP | G_IO_ERR | G_IO_NVAL,
+		sakura_tab_agent_input_cb, tab);
+	tab->agent_cols = cols;
+	tab->agent_rows = rows;
+	tab->agent_backed = TRUE;
+	tab->agent_terminal_exited = FALSE;
+	return TRUE;
+
+fail:
+	if (proxy_pty != NULL)
+		g_object_unref(proxy_pty);
+	if (master_fd >= 0)
+		close(master_fd);
+	if (slave_fd >= 0)
+		close(slave_fd);
+	if (tab->terminal_id != NULL && sakura.agent_socket_path != NULL &&
+	    !sakura_agent_close_terminal(&sakura, tab->terminal_id, NULL)) {
+		g_warning("Could not roll back agent terminal %s", tab->terminal_id);
+	}
+	if (error != NULL) {
+		g_warning("Could not attach terminal proxy: %s", error->message);
+		g_clear_error(&error);
+	}
+	return FALSE;
+}
+
+
+void
+sakura_tab_agent_feed_output(SakuraTab *tab, const guint8 *data,
+                             gsize data_length)
+{
+	if (tab == NULL || !tab->agent_backed || tab->vte == NULL ||
+	    data == NULL || data_length == 0)
+		return;
+	vte_terminal_feed(VTE_TERMINAL(tab->vte), (const gchar *)data, data_length);
+}
+
+
+void
+sakura_tab_agent_status(SakuraTab *tab, guint status, const gchar *message)
+{
+	if (tab == NULL || !tab->agent_backed)
+		return;
+	if (status == SAKURA_TERMINAL_EXITED || status == SAKURA_TERMINAL_CLOSED) {
+		tab->agent_terminal_exited = TRUE;
+		if (tab->agent_proxy_input_source_id != 0) {
+			g_source_remove(tab->agent_proxy_input_source_id);
+			tab->agent_proxy_input_source_id = 0;
+		}
+		tab->pid = 0;
+		sakura_tab_set_status(tab, SAKURA_TAB_STATUS_READY, TRUE);
+	} else if (status == SAKURA_TERMINAL_ERROR) {
+		g_warning("Agent terminal %s failed: %s", tab->terminal_id,
+		          message != NULL ? message : "unknown error");
+		sakura_tab_set_status(tab, SAKURA_TAB_STATUS_ERROR, TRUE);
+	}
+}
+
+
+void
+sakura_tab_sync_agent_size(SakuraTab *tab)
+{
+	guint cols, rows;
+	GError *error = NULL;
+
+	if (tab == NULL || !tab->agent_backed || tab->agent_terminal_exited ||
+	    tab->vte == NULL)
+		return;
+	cols = vte_terminal_get_column_count(VTE_TERMINAL(tab->vte));
+	rows = vte_terminal_get_row_count(VTE_TERMINAL(tab->vte));
+	if (cols == 0 || rows == 0 || (cols == tab->agent_cols && rows == tab->agent_rows))
+		return;
+	if (!sakura_agent_terminal_resize(&sakura, tab->terminal_id, cols, rows,
+	                                  &error)) {
+		g_warning("Could not resize agent terminal %s: %s", tab->terminal_id,
+		          error != NULL ? error->message : "unknown error");
+		g_clear_error(&error);
+		return;
+	}
+	tab->agent_cols = cols;
+	tab->agent_rows = rows;
+}
+
+
+void
+sakura_tab_close_agent_terminal(SakuraTab *tab)
+{
+	GError *error = NULL;
+
+	if (tab == NULL)
+		return;
+	if (tab->agent_proxy_input_source_id != 0) {
+		g_source_remove(tab->agent_proxy_input_source_id);
+		tab->agent_proxy_input_source_id = 0;
+	}
+	if (tab->agent_backed && !sakura.session_shutting_down &&
+	    sakura.agent_socket_path != NULL && tab->terminal_id != NULL &&
+	    !sakura_agent_close_terminal(&sakura, tab->terminal_id, &error)) {
+		g_warning("Could not close agent terminal %s: %s", tab->terminal_id,
+		          error != NULL ? error->message : "unknown error");
+		g_clear_error(&error);
+	}
+	if (tab->agent_proxy_slave_fd >= 0) {
+		close(tab->agent_proxy_slave_fd);
+		tab->agent_proxy_slave_fd = -1;
+	}
+	g_clear_object(&tab->agent_pty);
+	tab->agent_backed = FALSE;
+	tab->agent_terminal_exited = FALSE;
+}
+
 void
 sakura_tab_add_with_options (const gchar *restore_cwd,
                               struct sakura_sidebar_node *restore_parent,
@@ -727,9 +945,16 @@ sakura_tab_add_with_options (const gchar *restore_cwd,
 		}
 #endif
 
-		gboolean child_started = sakura_tab_start_process(
-			sk_tab, cwd, command_env, restore_kind, restore_tool,
-			config->execute_command, config->xterm_args, TRUE);
+		gboolean child_started;
+
+		if (restore_kind == SAKURA_TAB_SHELL && !config->login_shell &&
+		    !hold_option && config->execute_command == NULL &&
+		    config->xterm_args == NULL)
+			child_started = sakura_tab_start_agent_terminal(sk_tab, cwd);
+		else
+			child_started = sakura_tab_start_process(
+				sk_tab, cwd, command_env, restore_kind, restore_tool,
+				config->execute_command, config->xterm_args, TRUE);
 
 		/* Fork shell if there is no execute option or if the command is not valid */
 		if (restore_kind != SAKURA_TAB_CODEX && restore_kind != SAKURA_TAB_TOOL &&
@@ -767,9 +992,17 @@ sakura_tab_add_with_options (const gchar *restore_cwd,
 			tab_page->active_tab = sk_tab;
 		}
 
-		gboolean child_started = sakura_tab_start_process(
-			sk_tab, cwd, command_env, restore_kind, restore_tool,
-			config->execute_command, config->xterm_args, config->execute_on_existing_tabs);
+		gboolean child_started;
+
+		if (restore_kind == SAKURA_TAB_SHELL && !config->login_shell &&
+		    !hold_option && config->execute_command == NULL &&
+		    config->xterm_args == NULL)
+			child_started = sakura_tab_start_agent_terminal(sk_tab, cwd);
+		else
+			child_started = sakura_tab_start_process(
+				sk_tab, cwd, command_env, restore_kind, restore_tool,
+				config->execute_command, config->xterm_args,
+				config->execute_on_existing_tabs);
 
 		/* Fork shell if there is no execute option or if the command is not valid */
 		if (restore_kind != SAKURA_TAB_CODEX && restore_kind != SAKURA_TAB_TOOL &&
@@ -1747,6 +1980,8 @@ sakura_child_exited_cb (GtkWidget *widget, void *data)
 	pages = gtk_notebook_get_n_pages(GTK_NOTEBOOK(sakura.notebook));
 	if (tab == NULL || page < 0)
 		return;
+	if (tab->agent_backed)
+		return;
 
 	/* Only write configuration to disk if this was the last tab. */
 	if (pages == 1)
@@ -1860,6 +2095,7 @@ sakura_tab_free(SakuraTab *tab)
 {
 	if (tab == NULL)
 		return;
+	sakura_tab_close_agent_terminal(tab);
 	if (tab->codex_name_retry_source_id != 0) {
 		g_source_remove(tab->codex_name_retry_source_id);
 		tab->codex_name_retry_source_id = 0;

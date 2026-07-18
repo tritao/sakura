@@ -114,6 +114,7 @@ message CreateTerminalRequest {
   string cwd = 3;
   uint32 cols = 4;
   uint32 rows = 5;
+  string terminal_id = 6;
 }
 
 message TerminalInput {

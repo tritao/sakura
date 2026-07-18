@@ -185,13 +185,14 @@ test_mutation_request_roundtrip(void)
 	g_byte_array_set_size(encoded, 0);
 
 	g_assert_true(sakura_control_encode_create_terminal_request(
-		"create-terminal", "group-1", "task-1", "/tmp", 100, 40,
+		"create-terminal", "terminal-1", "group-1", "task-1", "/tmp", 100, 40,
 		encoded));
 	g_assert_true(sakura_control_decode_request(encoded->data, encoded->len,
 	                                           &request, &error));
 	g_assert_no_error(error);
 	g_assert_cmpint(request.kind, ==,
 	               SAKURA_CONTROL_REQUEST_CREATE_TERMINAL);
+	g_assert_cmpstr(request.terminal_id, ==, "terminal-1");
 	g_assert_cmpstr(request.group_id, ==, "group-1");
 	g_assert_cmpstr(request.task_id, ==, "task-1");
 	g_assert_cmpstr(request.cwd, ==, "/tmp");
@@ -816,11 +817,13 @@ test_agent_terminal_lifecycle(void)
 
 	g_byte_array_set_size(request, 0);
 	g_assert_true(sakura_control_encode_create_terminal_request(
-		"create-terminal", "root", "root", "/tmp", 100, 40, request));
+		"create-terminal", "terminal-agent-1", "root", "root", "/tmp", 100, 40,
+		request));
 	test_agent_call(socket_path, "create-terminal", request, &response);
 	g_assert_true(response.accepted);
 	g_assert_cmpstr(response.accepted_kind, ==, "terminal");
 	g_assert_nonnull(response.accepted_id);
+	g_assert_cmpstr(response.accepted_id, ==, "terminal-agent-1");
 	terminal_id = g_strdup(response.accepted_id);
 	sakura_control_response_clear(&response);
 	g_assert_true(test_agent_read_workspace_until(subscriber_input, 1,

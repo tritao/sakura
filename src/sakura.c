@@ -3459,6 +3459,11 @@ sakura_set_size (void)
 
 	if (sakura.sidebar_visible)
 		sakura.width += sakura.sidebar_width;
+	if (current_page != NULL && current_page->panes != NULL) {
+		for (guint index = 0; index < current_page->panes->len; index++)
+			sakura_tab_sync_agent_size(g_ptr_array_index(current_page->panes,
+			                                             index));
+	}
 
 	gtk_window_resize(GTK_WINDOW(sakura.main_window), sakura.width, sakura.height);
 }

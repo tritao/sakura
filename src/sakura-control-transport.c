@@ -353,6 +353,7 @@ sakura_control_encode_delete_task_request(const gchar *request_id,
 
 gboolean
 sakura_control_encode_create_terminal_request(const gchar *request_id,
+	                                             const gchar *terminal_id,
 	                                             const gchar *group_id,
 	                                             const gchar *task_id,
 	                                             const gchar *cwd,
@@ -366,6 +367,7 @@ sakura_control_encode_create_terminal_request(const gchar *request_id,
 
 	if (payload == NULL || request_id == NULL || request_id[0] == '\0')
 		return FALSE;
+	create_terminal.terminal_id = (gchar *)sakura_control_string(terminal_id);
 	create_terminal.group_id = (gchar *)sakura_control_string(group_id);
 	create_terminal.task_id = (gchar *)sakura_control_string(task_id);
 	create_terminal.cwd = (gchar *)sakura_control_string(cwd);
@@ -554,6 +556,7 @@ sakura_control_decode_request(const guint8 *payload,
 	case SAKURA__CONTROL__V1__REQUEST__BODY_CREATE_TERMINAL:
 		if (decoded->create_terminal != NULL) {
 			request->kind = SAKURA_CONTROL_REQUEST_CREATE_TERMINAL;
+			request->terminal_id = g_strdup(decoded->create_terminal->terminal_id);
 			request->group_id = g_strdup(decoded->create_terminal->group_id);
 			request->task_id = g_strdup(decoded->create_terminal->task_id);
 			request->cwd = g_strdup(decoded->create_terminal->cwd);

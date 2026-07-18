@@ -96,8 +96,9 @@ gboolean sakura_control_encode_set_task_archived_request(
 gboolean sakura_control_encode_delete_task_request(
 	const gchar *request_id, const gchar *task_id, GByteArray *payload);
 gboolean sakura_control_encode_create_terminal_request(
-	const gchar *request_id, const gchar *group_id, const gchar *task_id,
-	const gchar *cwd, guint cols, guint rows, GByteArray *payload);
+	const gchar *request_id, const gchar *terminal_id, const gchar *group_id,
+	const gchar *task_id, const gchar *cwd, guint cols, guint rows,
+	GByteArray *payload);
 gboolean sakura_control_encode_terminal_input_request(
 	const gchar *request_id, const gchar *terminal_id, const guint8 *data,
 	gsize data_length, GByteArray *payload);

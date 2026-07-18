@@ -41,6 +41,16 @@ typedef struct {
 	SakuraSessionSnapshot *snapshot;
 } SakuraAgentEvent;
 
+typedef struct {
+	SakuraApp *app;
+	gchar *terminal_id;
+	guint8 *data;
+	gsize data_length;
+	guint status;
+	gchar *message;
+	gboolean output;
+} SakuraAgentTerminalEvent;
+
 
 static gboolean
 sakura_agent_apply_event_cb(gpointer data)
@@ -79,6 +89,29 @@ sakura_agent_apply_event_cb(gpointer data)
 		sakura_workspace_end_mutation();
 	}
 	sakura_session_snapshot_free(event->snapshot);
+	g_free(event);
+	return G_SOURCE_REMOVE;
+}
+
+
+static gboolean
+sakura_agent_apply_terminal_event_cb(gpointer data)
+{
+	SakuraAgentTerminalEvent *event = data;
+	SakuraTab *tab = NULL;
+
+	if (event->app != NULL && !event->app->session_shutting_down &&
+	    event->app->workspace != NULL)
+		tab = sakura_find_pane_by_terminal_id(event->terminal_id);
+	if (tab != NULL) {
+		if (event->output)
+			sakura_tab_agent_feed_output(tab, event->data, event->data_length);
+		else
+			sakura_tab_agent_status(tab, event->status, event->message);
+	}
+	g_free(event->terminal_id);
+	g_free(event->data);
+	g_free(event->message);
 	g_free(event);
 	return G_SOURCE_REMOVE;
 }
@@ -123,11 +156,48 @@ sakura_agent_event_thread(gpointer data)
 	g_clear_pointer(&payload, g_byte_array_unref);
 	while (sakura_control_frame_read(input, &payload, NULL, &error)) {
 		SakuraAgentEvent *event = g_new0(SakuraAgentEvent, 1);
+		SakuraAgentTerminalEvent *terminal_event;
+		guint64 terminal_sequence;
+		gboolean final_chunk;
 
 		if (!sakura_control_decode_workspace_changed_event(
 			payload->data, payload->len, &event->sequence, &event->snapshot,
 			&error)) {
 			g_free(event);
+			g_clear_error(&error);
+			terminal_event = g_new0(SakuraAgentTerminalEvent, 1);
+			terminal_event->app = app;
+			if (sakura_control_decode_terminal_output_event(
+				payload->data, payload->len, &terminal_sequence,
+				&terminal_event->terminal_id,
+				&terminal_event->data, &terminal_event->data_length, &final_chunk,
+				&error)) {
+				terminal_event->output = TRUE;
+				(void)terminal_sequence;
+				(void)final_chunk;
+				g_main_context_invoke(NULL,
+				                     sakura_agent_apply_terminal_event_cb,
+				                     terminal_event);
+				g_clear_pointer(&payload, g_byte_array_unref);
+				continue;
+			}
+			g_clear_error(&error);
+			g_free(terminal_event);
+			terminal_event = g_new0(SakuraAgentTerminalEvent, 1);
+			terminal_event->app = app;
+			if (sakura_control_decode_terminal_status_event(
+				payload->data, payload->len, &terminal_sequence,
+				&terminal_event->terminal_id,
+				&terminal_event->status, &terminal_event->message, &error)) {
+				g_main_context_invoke(NULL,
+				                     sakura_agent_apply_terminal_event_cb,
+				                     terminal_event);
+				g_clear_pointer(&payload, g_byte_array_unref);
+				continue;
+			}
+			g_free(terminal_event->terminal_id);
+			g_free(terminal_event->message);
+			g_free(terminal_event);
 			g_clear_pointer(&payload, g_byte_array_unref);
 			break;
 		}
@@ -512,29 +582,31 @@ sakura_agent_delete_task(SakuraApp *app, const gchar *task_id,
 
 
 gboolean
-sakura_agent_create_terminal(SakuraApp *app, const gchar *group_id,
-	                           const gchar *task_id, const gchar *cwd,
-	                           guint cols, guint rows, gchar **terminal_id,
+sakura_agent_create_terminal(SakuraApp *app, const gchar *requested_terminal_id,
+	                           const gchar *group_id, const gchar *task_id,
+	                           const gchar *cwd, guint cols, guint rows,
+	                           gchar **created_terminal_id,
 	                           GError **error)
 {
 	GByteArray *request;
 	gchar *request_id;
 	gboolean result;
 
-	if (terminal_id != NULL)
-		*terminal_id = NULL;
+	if (created_terminal_id != NULL)
+		*created_terminal_id = NULL;
 	if (app == NULL || app->agent_socket_path == NULL)
 		return FALSE;
 	request_id = g_uuid_string_random();
 	request = g_byte_array_new();
 	if (!sakura_control_encode_create_terminal_request(
-			request_id, group_id, task_id, cwd, cols, rows, request)) {
+			request_id, requested_terminal_id, group_id, task_id, cwd, cols, rows,
+			request)) {
 		g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT,
 		                    "could not encode create terminal request");
 		result = FALSE;
 	} else {
 		result = sakura_agent_request_accepted(app, request_id, request,
-		                                      terminal_id, error);
+		                                      created_terminal_id, error);
 	}
 	g_byte_array_unref(request);
 	g_free(request_id);
