@@ -587,6 +587,68 @@ sakura_agent_subscribe_start(SakuraApp *app)
 }
 
 
+static void
+sakura_agent_command_stop(SakuraApp *app)
+{
+	if (app == NULL || !app->agent_command_mutex_initialized)
+		return;
+	GSocketConnection *connection = NULL;
+
+	g_mutex_lock(&app->agent_command_mutex);
+	app->agent_command_stopping = TRUE;
+	if (app->agent_command_connection != NULL)
+		connection = g_object_ref(app->agent_command_connection);
+	g_cond_broadcast(&app->agent_command_cond);
+	g_mutex_unlock(&app->agent_command_mutex);
+	if (connection != NULL) {
+		g_io_stream_close(G_IO_STREAM(connection), NULL, NULL);
+		g_object_unref(connection);
+	}
+	if (app->agent_command_thread != NULL) {
+		g_thread_join(app->agent_command_thread);
+		app->agent_command_thread = NULL;
+	}
+	g_mutex_lock(&app->agent_command_mutex);
+	g_clear_object(&app->agent_command_connection);
+	while (app->agent_command_queue != NULL &&
+	       !g_queue_is_empty(app->agent_command_queue))
+		sakura_agent_command_free(g_queue_pop_head(app->agent_command_queue));
+	g_mutex_unlock(&app->agent_command_mutex);
+	g_clear_pointer(&app->agent_command_queue, g_queue_free);
+	g_cond_clear(&app->agent_command_cond);
+	g_mutex_clear(&app->agent_command_mutex);
+	app->agent_command_mutex_initialized = FALSE;
+}
+
+
+static void
+sakura_agent_event_stop(SakuraApp *app)
+{
+	if (app == NULL || !app->agent_event_mutex_initialized)
+		return;
+	GSocketConnection *connection = NULL;
+
+	g_mutex_lock(&app->agent_event_mutex);
+	app->agent_event_stopping = TRUE;
+	if (app->agent_event_connection != NULL)
+		connection = g_object_ref(app->agent_event_connection);
+	g_mutex_unlock(&app->agent_event_mutex);
+	if (connection != NULL) {
+		g_io_stream_close(G_IO_STREAM(connection), NULL, NULL);
+		g_object_unref(connection);
+	}
+	if (app->agent_event_thread != NULL) {
+		g_thread_join(app->agent_event_thread);
+		app->agent_event_thread = NULL;
+	}
+	g_mutex_lock(&app->agent_event_mutex);
+	g_clear_object(&app->agent_event_connection);
+	g_mutex_unlock(&app->agent_event_mutex);
+	g_mutex_clear(&app->agent_event_mutex);
+	app->agent_event_mutex_initialized = FALSE;
+}
+
+
 static gboolean
 sakura_agent_request_snapshot(const gchar *socket_path, GError **error)
 {
@@ -1175,16 +1237,133 @@ sakura_agent_binary_path(void)
 }
 
 
+static gboolean sakura_agent_restart_cb(gpointer data);
+
+
+static GSubprocess *
+sakura_agent_spawn_process(SakuraApp *app, const gchar *socket_path,
+	                         GError **error)
+{
+	GSubprocess *process;
+	gchar *binary;
+
+	binary = sakura_agent_binary_path();
+	if (binary == NULL) {
+		g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_NOT_FOUND,
+		                    "sakura-agent was not found");
+		return NULL;
+	}
+	if (app->sessionfile != NULL && app->sessionfile[0] != '\0')
+		process = g_subprocess_new(
+			G_SUBPROCESS_FLAGS_STDOUT_SILENCE |
+			G_SUBPROCESS_FLAGS_STDERR_SILENCE,
+			error, binary, "--socket", socket_path, "--session",
+			app->sessionfile, NULL);
+	else
+		process = g_subprocess_new(
+			G_SUBPROCESS_FLAGS_STDOUT_SILENCE |
+			G_SUBPROCESS_FLAGS_STDERR_SILENCE,
+			error, binary, "--socket", socket_path, NULL);
+	g_free(binary);
+	return process;
+}
+
+
+static gboolean
+sakura_agent_wait_ready(const gchar *socket_path, GError **error)
+{
+	for (guint attempt = 0; attempt < 50; attempt++) {
+		if (sakura_agent_request_snapshot(socket_path, error))
+			return TRUE;
+		g_clear_error(error);
+		g_usleep(10 * 1000);
+	}
+	g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_TIMED_OUT,
+	                    "sakura-agent did not become ready");
+	return FALSE;
+}
+
+
+static void
+sakura_agent_process_wait_done(GObject *source_object, GAsyncResult *result,
+	                              gpointer data)
+{
+	SakuraApp *app = data;
+	GSubprocess *process = G_SUBPROCESS(source_object);
+	GError *error = NULL;
+
+	if (!g_subprocess_wait_finish(process, result, &error))
+		g_clear_error(&error);
+	if (app == NULL || app->agent_process != process ||
+	    app->agent_supervisor_stopping || app->session_shutting_down)
+		return;
+	g_clear_object(&app->agent_process);
+	g_warning("Embedded sakura-agent exited; restarting it");
+	sakura_agent_command_stop(app);
+	sakura_agent_event_stop(app);
+	if (app->agent_restart_source_id == 0)
+		app->agent_restart_source_id = g_timeout_add(
+			250, sakura_agent_restart_cb, app);
+}
+
+
+static gboolean
+sakura_agent_launch_owned(SakuraApp *app, const gchar *socket_path,
+	                         GError **error)
+{
+	GSubprocess *process;
+
+	process = sakura_agent_spawn_process(app, socket_path, error);
+	if (process == NULL)
+		return FALSE;
+	if (!sakura_agent_wait_ready(socket_path, error)) {
+		g_subprocess_force_exit(process);
+		g_subprocess_wait(process, NULL, NULL);
+		g_object_unref(process);
+		return FALSE;
+	}
+	app->agent_process = process;
+	g_subprocess_wait_async(process, NULL, sakura_agent_process_wait_done, app);
+	return TRUE;
+}
+
+
+static gboolean
+sakura_agent_restart_cb(gpointer data)
+{
+	SakuraApp *app = data;
+	GError *error = NULL;
+
+	if (app == NULL || app->session_shutting_down ||
+	    app->agent_supervisor_stopping || app->agent_socket_path == NULL) {
+		if (app != NULL)
+			app->agent_restart_source_id = 0;
+		return G_SOURCE_REMOVE;
+	}
+	app->agent_restart_source_id = 0;
+	if (!sakura_agent_launch_owned(app, app->agent_socket_path, &error)) {
+		g_warning("Could not restart embedded sakura-agent: %s",
+		          error != NULL ? error->message : "unknown error");
+		g_clear_error(&error);
+		app->agent_restart_source_id = g_timeout_add(
+			1000, sakura_agent_restart_cb, app);
+		return G_SOURCE_REMOVE;
+	}
+	sakura_agent_subscribe_start(app);
+	sakura_agent_command_start(app);
+	return G_SOURCE_REMOVE;
+}
+
+
 gboolean
 sakura_agent_start(SakuraApp *app)
 {
 	GError *error = NULL;
 	gchar *socket_path;
-	gchar *binary;
-	GSubprocess *process;
 
 	if (app == NULL)
 		return FALSE;
+	app->agent_supervisor_stopping = FALSE;
 	if (app->agent_socket_path != NULL) {
 		sakura_agent_command_start(app);
 		return TRUE;
@@ -1198,51 +1377,17 @@ sakura_agent_start(SakuraApp *app)
 	}
 	g_clear_error(&error);
 
-	binary = sakura_agent_binary_path();
-	if (binary == NULL) {
-		g_warning("Could not find sakura-agent; continuing without the local agent");
-		g_free(socket_path);
-		return FALSE;
-	}
-	if (app->sessionfile != NULL && app->sessionfile[0] != '\0')
-		process = g_subprocess_new(
-			G_SUBPROCESS_FLAGS_STDOUT_SILENCE |
-			G_SUBPROCESS_FLAGS_STDERR_SILENCE,
-			&error, binary, "--socket", socket_path, "--session",
-			app->sessionfile, NULL);
-	else
-		process = g_subprocess_new(
-			G_SUBPROCESS_FLAGS_STDOUT_SILENCE |
-			G_SUBPROCESS_FLAGS_STDERR_SILENCE,
-			&error, binary, "--socket", socket_path, NULL);
-	g_free(binary);
-	if (process == NULL) {
+	if (!sakura_agent_launch_owned(app, socket_path, &error)) {
 		g_warning("Could not start sakura-agent: %s",
 		          error != NULL ? error->message : "unknown error");
 		g_clear_error(&error);
 		g_free(socket_path);
 		return FALSE;
 	}
-
-	/* Startup is intentionally synchronous and short: the UI must not restore
-	 * a workspace until the agent endpoint has completed its handshake. */
-	for (guint attempt = 0; attempt < 50; attempt++) {
-		if (sakura_agent_request_snapshot(socket_path, &error)) {
-			app->agent_process = process;
-			app->agent_socket_path = socket_path;
-			sakura_agent_subscribe_start(app);
-			sakura_agent_command_start(app);
-			return TRUE;
-		}
-		g_clear_error(&error);
-		g_usleep(10 * 1000);
-	}
-	g_warning("sakura-agent did not become ready");
-	g_subprocess_force_exit(process);
-	g_subprocess_wait(process, NULL, NULL);
-	g_object_unref(process);
-	g_free(socket_path);
-	return FALSE;
+	app->agent_socket_path = socket_path;
+	sakura_agent_subscribe_start(app);
+	sakura_agent_command_start(app);
+	return TRUE;
 }
 
 
@@ -1251,59 +1396,16 @@ sakura_agent_stop(SakuraApp *app)
 {
 	if (app == NULL)
 		return;
-	if (app->agent_command_mutex_initialized) {
-		GSocketConnection *connection = NULL;
-
-		g_mutex_lock(&app->agent_command_mutex);
-		app->agent_command_stopping = TRUE;
-		if (app->agent_command_connection != NULL)
-			connection = g_object_ref(app->agent_command_connection);
-		g_cond_broadcast(&app->agent_command_cond);
-		g_mutex_unlock(&app->agent_command_mutex);
-		if (connection != NULL) {
-			g_io_stream_close(G_IO_STREAM(connection), NULL, NULL);
-			g_object_unref(connection);
-		}
-		if (app->agent_command_thread != NULL) {
-			g_thread_join(app->agent_command_thread);
-			app->agent_command_thread = NULL;
-		}
-		g_mutex_lock(&app->agent_command_mutex);
-		g_clear_object(&app->agent_command_connection);
-		while (app->agent_command_queue != NULL &&
-		       !g_queue_is_empty(app->agent_command_queue))
-			sakura_agent_command_free(g_queue_pop_head(app->agent_command_queue));
-		g_mutex_unlock(&app->agent_command_mutex);
-		g_clear_pointer(&app->agent_command_queue, g_queue_free);
-		g_cond_clear(&app->agent_command_cond);
-		g_mutex_clear(&app->agent_command_mutex);
-		app->agent_command_mutex_initialized = FALSE;
+	app->agent_supervisor_stopping = TRUE;
+	if (app->agent_restart_source_id != 0) {
+		g_source_remove(app->agent_restart_source_id);
+		app->agent_restart_source_id = 0;
 	}
-	if (app->agent_event_mutex_initialized) {
-		GSocketConnection *connection = NULL;
-
-		g_mutex_lock(&app->agent_event_mutex);
-		app->agent_event_stopping = TRUE;
-		if (app->agent_event_connection != NULL)
-			connection = g_object_ref(app->agent_event_connection);
-		g_mutex_unlock(&app->agent_event_mutex);
-		if (connection != NULL) {
-			g_io_stream_close(G_IO_STREAM(connection), NULL, NULL);
-			g_object_unref(connection);
-		}
-		if (app->agent_event_thread != NULL) {
-			g_thread_join(app->agent_event_thread);
-			app->agent_event_thread = NULL;
-		}
-		g_mutex_lock(&app->agent_event_mutex);
-		g_clear_object(&app->agent_event_connection);
-		g_mutex_unlock(&app->agent_event_mutex);
-		g_mutex_clear(&app->agent_event_mutex);
-		app->agent_event_mutex_initialized = FALSE;
+	sakura_agent_command_stop(app);
+	sakura_agent_event_stop(app);
+	if (app->agent_process != NULL) {
+		g_subprocess_force_exit(app->agent_process);
+		g_clear_object(&app->agent_process);
 	}
-	/* Desktop mode currently supervises the child through GSubprocess. A future
-	 * systemd user-service mode can omit this cleanup and let the same endpoint
-	 * outlive the GTK process. */
-	g_clear_object(&app->agent_process);
 	g_clear_pointer(&app->agent_socket_path, g_free);
 }
