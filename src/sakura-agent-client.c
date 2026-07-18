@@ -10,10 +10,35 @@ static gchar *
 sakura_agent_socket_path_new(SakuraApp *app)
 {
 	const gchar *runtime_dir = g_get_user_runtime_dir();
+	gchar *session_hash;
+	gchar *socket_name;
+	gchar *socket_path;
 
 	if (app != NULL && app->agent_socket_path_override != NULL &&
 	    app->agent_socket_path_override[0] != '\0')
 		return g_strdup(app->agent_socket_path_override);
+
+	/* A persistent session owns its workspace agent. Keep all windows that
+	 * share one session on the same socket, but do not let a second persistent
+	 * session attach to the first session's agent. Hashing also keeps the Unix
+	 * socket path short when the config file lives in a deep directory. */
+	if (app != NULL && app->sessionfile != NULL &&
+	    app->sessionfile[0] != '\0') {
+		session_hash = g_compute_checksum_for_string(
+			G_CHECKSUM_SHA256, app->sessionfile, -1);
+		socket_name = g_strdup_printf("sakura-agent-%.*s.sock", 16,
+		                              session_hash);
+		g_free(session_hash);
+		if (runtime_dir != NULL && runtime_dir[0] != '\0') {
+			socket_path = g_build_filename(runtime_dir, socket_name, NULL);
+		} else {
+			socket_path = g_build_filename(g_get_user_cache_dir(), "sakura",
+			                               socket_name, NULL);
+		}
+		g_free(socket_name);
+		return socket_path;
+	}
+
 	if (runtime_dir != NULL && runtime_dir[0] != '\0')
 		return g_build_filename(runtime_dir, "sakura-agent.sock", NULL);
 	return g_build_filename(g_get_user_cache_dir(), "sakura", "agent.sock",
@@ -1707,7 +1732,11 @@ sakura_agent_stop(SakuraApp *app)
 	sakura_agent_command_stop(app);
 	sakura_agent_event_stop(app);
 	if (app->agent_process != NULL) {
+		GError *error = NULL;
+
 		g_subprocess_force_exit(app->agent_process);
+		if (!g_subprocess_wait(app->agent_process, NULL, &error))
+			g_clear_error(&error);
 		g_clear_object(&app->agent_process);
 	}
 	g_clear_pointer(&app->agent_socket_path, g_free);

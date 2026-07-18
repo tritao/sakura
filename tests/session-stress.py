@@ -49,6 +49,7 @@ TERMINAL_TITLES = [f"Stress terminal {index:02d}"
 CODEX_TERMINAL_INDEX = 3
 CODEX_SESSION_ID = "stress-codex-session"
 SELECTED_TERMINAL_INDEX = 3
+CURRENT_SESSION_VERSION = 9
 
 
 def run(command, env, timeout=5, check=True):
@@ -339,7 +340,8 @@ def read_session(session_file):
     parser.read(session_file, encoding="utf-8")
     if not parser.has_section("Session"):
         raise AssertionError("session has no [Session] section")
-    if parser.getint("Session", "version") not in (3, 4, 5, 6, 7, 8, 9):
+    if parser.getint("Session", "version") not in (3, 4, 5, 6, 7, 8,
+                                                       CURRENT_SESSION_VERSION):
         raise AssertionError("unexpected session version")
 
     group_count = parser.getint("Session", "group_count")
@@ -634,6 +636,14 @@ def wait_for_session(session_file, predicate=None, timeout=10):
     raise AssertionError(f"session did not reach the expected state; last value: {last_value}")
 
 
+def wait_for_session_ready(session_file, predicate=None, timeout=10):
+    def ready(value):
+        return session_has_current_version(session_file) and \
+            (predicate is None or predicate(value))
+
+    return wait_for_session(session_file, ready, timeout)
+
+
 def wait_for_task_state(session_file, predicate, timeout=10):
     deadline = time.monotonic() + timeout
     last_error = None
@@ -651,6 +661,14 @@ def wait_for_task_state(session_file, predicate, timeout=10):
         raise AssertionError(f"task state did not become valid: {last_error}")
     raise AssertionError(
         f"task state did not reach the expected state; last value: {last_value}"
+    )
+
+
+def wait_for_task_state_ready(session_file, predicate, timeout=10):
+    return wait_for_task_state(
+        session_file,
+        lambda value: session_has_current_version(session_file) and predicate(value),
+        timeout,
     )
 
 
@@ -708,6 +726,12 @@ def session_has_terminal_ids(session_file):
     return all(parser.has_option(f"Terminal{index}", "terminal_id")
                and parser.get(f"Terminal{index}", "terminal_id")
                for index in range(count))
+
+
+def session_has_current_version(session_file):
+    parser = configparser.ConfigParser(interpolation=None)
+    parser.read(session_file, encoding="utf-8")
+    return parser.getint("Session", "version", fallback=0) == CURRENT_SESSION_VERSION
 
 
 def drag_sidebar_row(window, rows, source_row, target_row, env, row_top,
@@ -821,7 +845,7 @@ def run_drag_regression_case(binary, config_file, session_file, env, log_file):
         ("group-c", "group-b"),
     ]
     try:
-        current = wait_for_session(
+        current = wait_for_session_ready(
             session_file,
             lambda value: terminal_parent(value, source_id) == "group-b",
         )
@@ -888,7 +912,7 @@ def run_drag_regression_case(binary, config_file, session_file, env, log_file):
         # A second launch proves the persisted parent survives restore, not just
         # the in-memory projection.
         process, window = launch_sakura(binary, config_file, env, log_file)
-        restored = wait_for_session(
+        restored = wait_for_session_ready(
             session_file,
             lambda value: terminal_parent(value, source_id) == "group-b",
         )
@@ -921,7 +945,7 @@ def run_task_drag_reorder_case(binary, config_file, session_file, env, log_file)
         ("page", "task-page-b"),
     ]
     try:
-        wait_for_task_state(
+        wait_for_task_state_ready(
             session_file,
             lambda value: value[0]["task-a"]["parent"] == "group-a",
         )
@@ -942,7 +966,7 @@ def run_task_drag_reorder_case(binary, config_file, session_file, env, log_file)
         process = None
         final_orders = read_task_orders(session_file)
         process, window = launch_sakura(binary, config_file, env, log_file)
-        wait_for_task_state(
+        wait_for_task_state_ready(
             session_file,
             lambda value: value[0]["task-a"]["parent"] == "group-a" and
             read_task_orders(session_file) == final_orders,
@@ -1060,7 +1084,7 @@ def run_pane_switch_case(binary, config_file, session_file, env, log_file):
     write_fixture(config_file, session_file)
     process, window = launch_sakura(binary, config_file, env, log_file)
     try:
-        wait_for_session(session_file,
+        wait_for_session_ready(session_file,
                          lambda value: len(value[2]) == len(TERMINAL_PARENTS))
 
         run(["xdotool", "windowfocus", "--sync", window], env)
@@ -1102,7 +1126,7 @@ def run_create_delete_case(binary, config_file, session_file, env, log_file):
     write_pane_switch_fixture(config_file, session_file)
     process, window = launch_sakura(binary, config_file, env, log_file)
     try:
-        wait_for_session(session_file, lambda value: len(value[2]) == 3)
+        wait_for_session_ready(session_file, lambda value: len(value[2]) == 3)
         run(["xdotool", "windowfocus", "--sync", window], env)
 
         # Use a standalone page before the split/close sequence. This exercises
@@ -1150,7 +1174,7 @@ def run_group_close_selection_case(binary, config_file, session_file, env, log_f
     write_group_close_fixture(config_file, session_file)
     process, window = launch_sakura(binary, config_file, env, log_file)
     try:
-        wait_for_session(
+        wait_for_session_ready(
             session_file,
             lambda value: value[1] == ["group-a", "group-a", "group-b"] and
             value[2] == ["close-terminal-a", "close-terminal-c", "close-terminal-b"],
@@ -1195,7 +1219,7 @@ def run_task_workflow_case(binary, config_file, session_file, env, log_file):
         ("page", "task-page-b"),
     ]
     try:
-        wait_for_task_state(
+        wait_for_task_state_ready(
             session_file,
             lambda value: value[1] == "task-a" and value[2] == "group-a" and
             value[0]["task-b"]["status"] == 0,
@@ -1263,14 +1287,10 @@ def run_task_workflow_case(binary, config_file, session_file, env, log_file):
             )
 
         # Let the authoritative post-archive sidebar selection and tab refresh
-        # finish before asking X11 to destroy the window.
+        # finish before asking X11 to close the window.
         run(["xdotool", "key", "Escape"], env, check=False)
         time.sleep(1.0)
-        # The other smoke cases cover WM-driven clean shutdown. Terminate this
-        # process directly after the task assertions to avoid a GTK menu/X11
-        # grab race masking the workflow result and poisoning the shared Xvfb.
-        process.terminate()
-        process.wait(timeout=5)
+        close_window(process, window, env)
         process = None
     except Exception:
         if process.poll() is None:
@@ -1286,7 +1306,7 @@ def run_visible_terminal_case(binary, config_file, session_file, env, log_file):
         handle.write("new_tab_after_current=true\n")
     process, window = launch_sakura(binary, config_file, env, log_file)
     try:
-        groups, terminals, _ = wait_for_session(
+        groups, terminals, _ = wait_for_session_ready(
             session_file,
             lambda value: len(value[2]) == len(TERMINAL_PARENTS),
         )
@@ -1471,7 +1491,8 @@ def main():
                          args.screenshot], env, timeout=5)
                 current = wait_for_session(
                     session_file,
-                    lambda value: session_has_terminal_ids(session_file),
+                    lambda value: session_has_terminal_ids(session_file) and
+                    session_has_current_version(session_file),
                 )
                 assert_metadata(session_file, metadata_expected, expected_selected_id)
                 if (current[0] != fixture_groups or
