@@ -1305,6 +1305,44 @@ test_sidebar_collapses_split_session_panes(void)
 
 
 static void
+test_sidebar_collapses_all_groups(void)
+{
+	SakuraSidebarNode *group, *nested_group;
+	GtkTreeIter root_iter, group_iter;
+	GtkTreePath *root_path, *group_path;
+
+	setup_workspace();
+	setup_sidebar_fixture();
+	group = test_sidebar_add_group("group-collapse", "Group", sakura.sidebar_root);
+	nested_group = test_sidebar_add_group("nested-collapse", "Nested group", group);
+	sakura_sidebar_apply_default_expansion();
+
+	g_assert_true(sakura_sidebar_get_iter(sakura.sidebar_root, &root_iter));
+	g_assert_true(sakura_sidebar_get_iter(group, &group_iter));
+	root_path = gtk_tree_model_get_path(GTK_TREE_MODEL(sakura.sidebar_model),
+	                                   &root_iter);
+	group_path = gtk_tree_model_get_path(GTK_TREE_MODEL(sakura.sidebar_model),
+	                                    &group_iter);
+	g_assert_true(gtk_tree_view_row_expanded(GTK_TREE_VIEW(sakura.sidebar_tree),
+	                                        root_path));
+	g_assert_true(gtk_tree_view_row_expanded(GTK_TREE_VIEW(sakura.sidebar_tree),
+	                                        group_path));
+
+	sakura_sidebar_collapse_all();
+	g_assert_false(gtk_tree_view_row_expanded(GTK_TREE_VIEW(sakura.sidebar_tree),
+	                                         root_path));
+	g_assert_false(gtk_tree_view_row_expanded(GTK_TREE_VIEW(sakura.sidebar_tree),
+	                                         group_path));
+
+	gtk_tree_path_free(root_path);
+	gtk_tree_path_free(group_path);
+	test_sidebar_remove_group(nested_group);
+	test_sidebar_remove_group(group);
+	teardown_workspace();
+}
+
+
+static void
 test_sidebar_task_owns_page(void)
 {
 	SakuraTask *task;
@@ -2646,6 +2684,8 @@ main(int argc, char **argv)
 	                test_selecting_terminal_switches_group_scope);
 	g_test_add_func("/workspace/sidebar-collapses-split-session-panes",
 	                test_sidebar_collapses_split_session_panes);
+	g_test_add_func("/workspace/sidebar-collapses-all-groups",
+	                test_sidebar_collapses_all_groups);
 	g_test_add_func("/workspace/sidebar-task-owns-page",
 	                test_sidebar_task_owns_page);
 	g_test_add_func("/workspace/task-model-survives-sidebar-projection",
