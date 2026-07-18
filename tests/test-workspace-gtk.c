@@ -113,6 +113,32 @@ test_restored_attention_survives_codex_session_start(void)
 }
 
 
+static void
+test_terminal_bell_does_not_create_codex_ready_state(void)
+{
+	SakuraTab *codex_tab;
+	SakuraTab *shell_tab;
+
+	setup_workspace();
+	setup_sidebar_fixture();
+	codex_tab = sakura_page_at_page(1)->active_tab;
+	shell_tab = sakura_page_at_page(2)->active_tab;
+	codex_tab->kind = SAKURA_TAB_CODEX;
+	codex_tab->status = SAKURA_TAB_STATUS_IDLE;
+	shell_tab->status = SAKURA_TAB_STATUS_IDLE;
+
+	sakura_tab_handle_bell(codex_tab);
+	g_assert_cmpint(codex_tab->status, ==, SAKURA_TAB_STATUS_IDLE);
+	g_assert_false(codex_tab->attention);
+
+	sakura_tab_handle_bell(shell_tab);
+	g_assert_cmpint(shell_tab->status, ==, SAKURA_TAB_STATUS_IDLE);
+	g_assert_true(shell_tab->attention);
+
+	teardown_workspace();
+}
+
+
 static SakuraPage *
 test_page_new(const gchar *page_id, const gchar *terminal_id)
 {
@@ -2741,6 +2767,8 @@ main(int argc, char **argv)
 	                test_codex_interrupt_event_matching);
 	g_test_add_func("/workspace/restored-attention-survives-codex-session-start",
 	                test_restored_attention_survives_codex_session_start);
+	g_test_add_func("/workspace/terminal-bell-does-not-create-codex-ready-state",
+	                test_terminal_bell_does_not_create_codex_ready_state);
 	g_test_add_func("/workspace/leaf-widget-split", test_leaf_widget_can_split);
 	g_test_add_func("/workspace/generated-page-id-avoids-existing",
 	                test_generated_page_id_avoids_existing_page);

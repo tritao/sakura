@@ -646,6 +646,8 @@ void sakura_paste(void);
 void sakura_paste_primary(void);
 void sakura_tab_set_status(SakuraTab *tab, SakuraTabStatus status,
                            gboolean attention);
+void sakura_tab_mark_attention(SakuraTab *tab);
+void sakura_tab_handle_bell(SakuraTab *tab);
 void sakura_tab_clear_attention(SakuraTab *tab);
 void sakura_tab_restore_state(SakuraTab *tab, SakuraTabStatus status,
                               gboolean attention, gint64 attention_timestamp);

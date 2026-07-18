@@ -2209,8 +2209,9 @@ sakura_beep_cb (GtkWidget *widget, void *data)
 	(void)data;
 	if (sakura.session_shutting_down)
 		return;
-	if (tab != NULL)
-		sakura_tab_set_status(tab, SAKURA_TAB_STATUS_READY, TRUE);
+	sakura_tab_handle_bell(tab);
+	if (sakura.main_window == NULL)
+		return;
 	gtk_window_set_urgency_hint(GTK_WINDOW(sakura.main_window), FALSE);
 	if (!gtk_window_is_active(GTK_WINDOW(sakura.main_window)) && sakura.urgent_bell)
 		gtk_window_set_urgency_hint(GTK_WINDOW(sakura.main_window), TRUE);
@@ -2501,6 +2502,39 @@ sakura_tab_set_status(SakuraTab *tab, SakuraTabStatus status, gboolean attention
 	    !gtk_window_is_active(GTK_WINDOW(sakura.main_window)) && sakura.urgent_bell)
 		gtk_window_set_urgency_hint(GTK_WINDOW(sakura.main_window), TRUE);
 }
+
+void
+sakura_tab_mark_attention(SakuraTab *tab)
+{
+	if (tab == NULL)
+		return;
+	tab->attention_restore_pending = FALSE;
+	if (tab->attention)
+		return;
+	if (sakura.main_window != NULL && sakura_tab_is_current(tab) &&
+	    gtk_window_is_active(GTK_WINDOW(sakura.main_window)))
+		return;
+
+	tab->attention = TRUE;
+	tab->attention_timestamp = g_get_real_time();
+	sakura_sidebar_update_tab(tab);
+	sakura_sidebar_update_attention_count();
+	if (sakura.main_window != NULL &&
+	    !gtk_window_is_active(GTK_WINDOW(sakura.main_window)) && sakura.urgent_bell)
+		gtk_window_set_urgency_hint(GTK_WINDOW(sakura.main_window), TRUE);
+}
+
+
+void
+sakura_tab_handle_bell(SakuraTab *tab)
+{
+	/* Codex status is authoritative from the session hooks. A terminal bell is
+	 * only a generic notification and must not manufacture a READY state while
+	 * a saved session is being resumed. Shell/tool tabs retain bell attention. */
+	if (tab != NULL && tab->kind != SAKURA_TAB_CODEX)
+		sakura_tab_mark_attention(tab);
+}
+
 
 void
 sakura_tab_clear_attention(SakuraTab *tab)
