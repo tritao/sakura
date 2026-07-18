@@ -4,7 +4,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: ja\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-07-18 00:01+0100\n"
+"POT-Creation-Date: 2026-07-18 10:40+0100\n"
 "PO-Revision-Date: 2019-08-12 16:55+0000\n"
 "Last-Translator: David Gómez <david@pleyades.net>\n"
 "Language-Team: Japanese <ja@li.org>\n"
@@ -412,6 +412,14 @@ msgstr ""
 
 msgid "Rename Codex session..."
 msgstr ""
+
+#, fuzzy
+msgid "Restore session"
+msgstr "タブを閉じる"
+
+#, fuzzy
+msgid "Archive session"
+msgstr "新規タブ"
 
 #, fuzzy
 msgid "Close session"

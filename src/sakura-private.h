@@ -368,6 +368,7 @@ struct sakura_page {
 	gchar *id;
 	gchar *title;
 	gboolean title_set_by_user;
+	gboolean archived;
 	GtkWidget *container;
 	SakuraLayoutNode *layout_root;
 	SakuraTab *active_tab;

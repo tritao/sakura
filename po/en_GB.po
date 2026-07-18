@@ -7,7 +7,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: sakura\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-07-18 00:01+0100\n"
+"POT-Creation-Date: 2026-07-18 10:40+0100\n"
 "PO-Revision-Date: 2019-08-12 16:54+0000\n"
 "Last-Translator: David Gómez <david@pleyades.net>\n"
 "Language-Team: English (United Kingdom) <en_GB@li.org>\n"
@@ -416,6 +416,14 @@ msgstr "New tab after current tab"
 
 msgid "Rename Codex session..."
 msgstr ""
+
+#, fuzzy
+msgid "Restore session"
+msgstr "Close tab"
+
+#, fuzzy
+msgid "Archive session"
+msgstr "New tab"
 
 #, fuzzy
 msgid "Close session"

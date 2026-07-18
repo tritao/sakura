@@ -251,6 +251,7 @@ sakura_workspace_snapshot_page_record(const SakuraWorkspaceModel *model,
 	                        ? representative->user_title : "");
 	record->title_set_by_user = page->title_set_by_user ||
 	                            (representative != NULL && representative->label_set_byuser);
+	record->archived = page->archived;
 	record->root_layout_id = g_strdup(page->layout_root != NULL
 	                                ? page->layout_root->id : NULL);
 	if (page->active_tab != NULL)

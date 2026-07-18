@@ -654,6 +654,8 @@ sakura_session_snapshot_load_into(GKeyFile *key_file,
 		              ? g_key_file_get_string(key_file, section, "task_id", NULL) : NULL;
 		page->title_set_by_user = g_key_file_get_boolean(key_file, section,
 		                                               "title_set_by_user", NULL);
+		if (version >= 8 && g_key_file_has_key(key_file, section, "archived", NULL))
+			page->archived = g_key_file_get_boolean(key_file, section, "archived", NULL);
 		if (page->parent_id == NULL)
 			page->parent_id = g_strdup("root");
 		g_ptr_array_add(snapshot->pages, page);
@@ -841,6 +843,7 @@ sakura_session_snapshot_save(const SakuraSessionSnapshot *snapshot,
 		                      page->parent_id != NULL ? page->parent_id : "root");
 		g_key_file_set_string(key_file, section, "title", page->title != NULL ? page->title : "");
 		g_key_file_set_boolean(key_file, section, "title_set_by_user", page->title_set_by_user);
+		g_key_file_set_boolean(key_file, section, "archived", page->archived);
 		g_key_file_set_string(key_file, section, "root_layout",
 		                      page->root_layout_id != NULL ? page->root_layout_id : "");
 		if (page->active_terminal_id != NULL)

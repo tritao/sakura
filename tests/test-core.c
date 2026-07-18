@@ -297,6 +297,7 @@ test_session_layout_round_trip(void)
 	page->parent_id = g_strdup("root");
 	page->root_layout_id = g_strdup("layout-root");
 	page->active_terminal_id = g_strdup("terminal-b");
+	page->archived = TRUE;
 	g_ptr_array_add(source->pages, page);
 	split->id = g_strdup("layout-root");
 	split->page_id = g_strdup("page-1");
@@ -331,6 +332,7 @@ test_session_layout_round_trip(void)
 	g_assert_cmpuint(loaded->pages->len, ==, 1);
 	g_assert_cmpuint(loaded->layouts->len, ==, 3);
 	g_assert_cmpstr(loaded->selected_page_id, ==, "page-1");
+	g_assert_true(((SakuraSessionPageRecord *)g_ptr_array_index(loaded->pages, 0))->archived);
 	g_assert_cmpstr(((SakuraSessionPageRecord *)g_ptr_array_index(loaded->pages, 0))->active_terminal_id,
 	               ==, "terminal-b");
 	g_assert_cmpfloat(((SakuraSessionLayoutRecord *)g_ptr_array_index(loaded->layouts, 0))->ratio,

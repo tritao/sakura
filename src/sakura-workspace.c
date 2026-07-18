@@ -79,11 +79,13 @@ sakura_sidebar_node_is_archived(SakuraSidebarNode *node)
 	if (node->type == SAKURA_SIDEBAR_TASK)
 		return sakura_sidebar_task_is_archived(node->task);
 	if (node->type == SAKURA_SIDEBAR_PAGE && node->page != NULL)
-		return sakura_sidebar_task_is_archived(node->page->task) ||
+		return node->page->archived ||
+		       sakura_sidebar_task_is_archived(node->page->task) ||
 		       sakura_sidebar_group_is_archived(node->page->group);
 	if (node->type == SAKURA_SIDEBAR_TERMINAL && node->tab != NULL &&
 	    node->tab->page != NULL)
-		return sakura_sidebar_task_is_archived(node->tab->page->task) ||
+		return node->tab->page->archived ||
+		       sakura_sidebar_task_is_archived(node->tab->page->task) ||
 		       sakura_sidebar_group_is_archived(node->tab->page->group);
 	return FALSE;
 }
@@ -1037,6 +1039,8 @@ sakura_pane_is_in_active_scope (struct sakura_tab *sk_tab)
 	    (sk_tab->page == NULL ||
 	     !sakura_task_is_within(sk_tab->page->task, sakura.workspace->active_task)))
 		return FALSE;
+	if (!sakura.show_archived && sk_tab->page != NULL && sk_tab->page->archived)
+		return FALSE;
 	if (sakura_active_group_model() == NULL ||
 	    sakura_active_group_model() == sakura.workspace->root_group)
 		return TRUE;
@@ -1749,6 +1753,7 @@ sakura_sidebar_move_page_to_group(SakuraPage *page, SakuraSidebarNode *group)
 	sakura_sidebar_update_page(page);
 	sakura_workspace_mark_changed(SAKURA_WORKSPACE_CHANGE_STRUCTURE |
 	                              SAKURA_WORKSPACE_CHANGE_SCOPE);
+	sakura_session_mark_dirty();
 	sakura_workspace_end_mutation();
 	return TRUE;
 }
@@ -2093,6 +2098,14 @@ sakura_sidebar_context_menu_new (struct sakura_sidebar_node *node)
 			g_signal_connect(item, "activate",
 			                 G_CALLBACK(sakura_rename_codex_session_cb),
 			                 context_node->tab);
+			gtk_menu_shell_append(GTK_MENU_SHELL(menu), item);
+		}
+		if (context_node->tab != NULL && context_node->tab->page != NULL) {
+			item = gtk_menu_item_new_with_label(
+				context_node->tab->page->archived
+				? _("Restore session") : _("Archive session"));
+			g_signal_connect(item, "activate",
+			                 G_CALLBACK(sakura_sidebar_archive_cb), context_node);
 			gtk_menu_shell_append(GTK_MENU_SHELL(menu), item);
 		}
 		gtk_menu_shell_append(GTK_MENU_SHELL(menu), gtk_separator_menu_item_new());
@@ -2738,8 +2751,10 @@ sakura_sidebar_archive_cb(GtkWidget *widget, void *data)
 	gboolean archive;
 	SakuraTask *task = NULL;
 	SakuraGroup *group = NULL;
+	SakuraPage *page = NULL;
 	SakuraTask *active_task;
 	SakuraGroup *active_group;
+	gboolean was_active_page;
 
 	(void)widget;
 	if (sakura_sidebar_agent_archive_node(node))
@@ -2750,19 +2765,26 @@ sakura_sidebar_archive_cb(GtkWidget *widget, void *data)
 		task = node->task;
 	else if (node->type == SAKURA_SIDEBAR_GROUP)
 		group = node->group;
+	else if (node->type == SAKURA_SIDEBAR_PAGE)
+		page = node->page;
+	else if (node->type == SAKURA_SIDEBAR_TERMINAL && node->tab != NULL)
+		page = node->tab->page;
 	else
 		return;
 
-	archive = node->type == SAKURA_SIDEBAR_TASK
-	        ? !sakura_sidebar_task_is_archived(task)
-	        : !sakura_sidebar_group_is_archived(group);
+	archive = task != NULL ? !sakura_sidebar_task_is_archived(task) :
+	          group != NULL ? !sakura_sidebar_group_is_archived(group) :
+	          page != NULL ? !page->archived : FALSE;
 	active_task = sakura.workspace->active_task;
 	active_group = sakura.workspace->active_group;
+	was_active_page = page != NULL && sakura.workspace->active_page == page;
 	sakura_workspace_begin_mutation();
 	if (task != NULL)
 		sakura_workspace_model_set_task_archived(sakura.workspace, task, archive);
-	else
+	else if (group != NULL)
 		sakura_workspace_model_set_group_archived(sakura.workspace, group, archive);
+	else
+		page->archived = archive;
 
 	if (archive && task != NULL && sakura_task_is_within(active_task, task)) {
 		sakura.workspace->active_task = NULL;
@@ -2781,6 +2803,10 @@ sakura_sidebar_archive_cb(GtkWidget *widget, void *data)
 		sakura.workspace->active_group = sakura.workspace->root_group;
 		sakura.active_group_scope = sakura.sidebar_root;
 	}
+	if (archive && page != NULL && was_active_page) {
+		sakura.workspace->active_page = NULL;
+		sakura.workspace->active_tab = NULL;
+	}
 	sakura_sidebar_rebuild_projection();
 	sakura_workspace_mark_changed(SAKURA_WORKSPACE_CHANGE_STRUCTURE |
 	                              SAKURA_WORKSPACE_CHANGE_SCOPE |
@@ -2789,7 +2815,7 @@ sakura_sidebar_archive_cb(GtkWidget *widget, void *data)
 	sakura_session_mark_dirty();
 	sakura_sidebar_save_groups();
 	sakura_workspace_end_mutation();
-	if (archive)
+	if (page != NULL || archive)
 		sakura_select_scope_default();
 }
 
@@ -3327,6 +3353,8 @@ sakura_sidebar_save_groups (void)
 	sakura_session_accept_changes();
 	sakura_sidebar_refresh_group_rows();
 	sakura_sidebar_refresh_tab_rows();
+	if (sakura.cfg == NULL)
+		return;
 
 	ids = g_ptr_array_new_with_free_func(g_free);
 	parents = g_ptr_array_new_with_free_func(g_free);
@@ -3575,6 +3603,7 @@ sakura_workspace_restore_layout_snapshot(SakuraSessionSnapshot *snapshot)
 		tab->page->id = g_strdup(page_record->id);
 		tab->page->title = g_strdup(page_record->title);
 		tab->page->title_set_by_user = page_record->title_set_by_user;
+		tab->page->archived = page_record->archived;
 		if (tab->page->sidebar_node != NULL) {
 			g_free(tab->page->sidebar_node->id);
 			tab->page->sidebar_node->id = g_strdup(tab->page->id);
@@ -3669,6 +3698,11 @@ sakura_workspace_restore_snapshot (SakuraSessionSnapshot *snapshot)
 		restored_layout = sakura_workspace_restore_layout_snapshot(snapshot);
 		sakura.show_archived = previous_show_archived;
 		sakura_sidebar_rebuild_projection();
+		if (sakura.workspace->active_tab != NULL &&
+		    sakura_tab_is_in_active_scope(sakura.workspace->active_tab))
+			sakura_tab_bar_refresh();
+		else
+			sakura_select_scope_default();
 		return restored_layout;
 	}
 
@@ -4994,7 +5028,8 @@ sakura_sidebar_rebuild_projection(void)
 
 			if (page == NULL ||
 			    (!sakura.show_archived &&
-			     (sakura_sidebar_task_is_archived(page->task) ||
+			     (page->archived ||
+			      sakura_sidebar_task_is_archived(page->task) ||
 			      sakura_sidebar_group_is_archived(page->group))))
 				continue;
 			group = page->group != NULL ? page->group : sakura_workspace_model_group_for_session(sakura.workspace, page);

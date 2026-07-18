@@ -5,7 +5,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: sakura\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-07-18 00:01+0100\n"
+"POT-Creation-Date: 2026-07-18 10:40+0100\n"
 "PO-Revision-Date: 2019-08-12 16:53+0000\n"
 "Last-Translator: David Gómez <david@pleyades.net>\n"
 "Language-Team: <davidge@pleyades.net>\n"
@@ -414,6 +414,14 @@ msgstr "Nueva pestaña tras la pestaña actual"
 
 msgid "Rename Codex session..."
 msgstr ""
+
+#, fuzzy
+msgid "Restore session"
+msgstr "Cerrar pestaña"
+
+#, fuzzy
+msgid "Archive session"
+msgstr "Pestaña nueva"
 
 #, fuzzy
 msgid "Close session"

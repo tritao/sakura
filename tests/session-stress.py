@@ -339,7 +339,7 @@ def read_session(session_file):
     parser.read(session_file, encoding="utf-8")
     if not parser.has_section("Session"):
         raise AssertionError("session has no [Session] section")
-    if parser.getint("Session", "version") not in (3, 4, 5, 6, 7):
+    if parser.getint("Session", "version") not in (3, 4, 5, 6, 7, 8):
         raise AssertionError("unexpected session version")
 
     group_count = parser.getint("Session", "group_count")
@@ -655,13 +655,24 @@ def wait_for_task_state(session_file, predicate, timeout=10):
 
 
 def sidebar_row_center(window, env, rows, row_index, row_top=73,
-                       group_row_height=25, child_row_height=41):
+                       group_row_height=25, terminal_row_height=25,
+                       task_row_height=41):
     window_x, window_y, _, _ = window_geometry(window, env)
     y = row_top
     for row_kind, _ in rows[:row_index]:
-        y += group_row_height if row_kind == "group" else child_row_height
+        if row_kind == "group":
+            y += group_row_height
+        elif row_kind == "task":
+            y += task_row_height
+        else:
+            y += terminal_row_height
     row_kind = rows[row_index][0]
-    height = group_row_height if row_kind == "group" else child_row_height
+    if row_kind == "group":
+        height = group_row_height
+    elif row_kind == "task":
+        height = task_row_height
+    else:
+        height = terminal_row_height
     return window_x + 100, window_y + y + height // 2
 
 
@@ -827,7 +838,7 @@ def run_drag_regression_case(binary, config_file, session_file, env, log_file):
             source_row = ("page", visual_rows.index(("page", source_id)))
             target_row = ("group", visual_rows.index(("group", target_group)))
             drag_terminal_into_group(
-                window, visual_rows, source_row, target_row, env, 73, 25, 41, 300,
+                window, visual_rows, source_row, target_row, env, 73, 25, 25, 300,
             )
 
             current = wait_for_session(
@@ -856,7 +867,7 @@ def run_drag_regression_case(binary, config_file, session_file, env, log_file):
         target_row = ("group", visual_rows.index(("group", "group-e")))
         initial_group_orders = read_group_orders(session_file)
         drag_sidebar_row(
-            window, visual_rows, source_row, target_row, env, 73, 25, 41, 300,
+            window, visual_rows, source_row, target_row, env, 73, 25, 25, 300,
             target_edge="after",
         )
         current = wait_for_session(
@@ -1343,7 +1354,7 @@ def run_visible_terminal_case(binary, config_file, session_file, env, log_file):
             row_index = rows.index(("page", terminal_index))
             row_y = 73
             for row in rows[:row_index]:
-                row_y += 25 if row[0] == "group" else 41
+                row_y += 25 if row[0] == "group" else 25
             row_y -= 21
 
             run(["xdotool", "mousemove", "--sync", str(window_x + 80),
@@ -1383,7 +1394,7 @@ def main():
                         help="top of the first sidebar row in window coordinates")
     parser.add_argument("--group-row-height", type=int, default=25,
                         help="group row height used for xdotool drags")
-    parser.add_argument("--terminal-row-height", type=int, default=41,
+    parser.add_argument("--terminal-row-height", type=int, default=25,
                         help="terminal row height used for xdotool drags")
     parser.add_argument("--max-drag-row", type=int, default=5,
                         help="largest visible row index used for automated drags")

@@ -447,6 +447,7 @@ setup_workspace_from_snapshot(const SakuraSessionSnapshot *snapshot)
 
 		page->title = g_strdup(page_record->title);
 		page->title_set_by_user = page_record->title_set_by_user;
+		page->archived = page_record->archived;
 		g_ptr_array_add(sakura.workspace->pages, page);
 		g_ptr_array_add(sakura.workspace->tabs, tab);
 		gtk_notebook_append_page(GTK_NOTEBOOK(sakura.notebook), page->container, NULL);
@@ -1760,9 +1761,57 @@ test_sidebar_page_context_menu_names_page_close(void)
 
 	menu = sakura_sidebar_context_menu_new(page->sidebar_node);
 	g_assert_true(test_menu_has_label(menu, "Close session"));
+	g_assert_true(test_menu_has_label(menu, "Archive session"));
 	g_assert_false(test_menu_has_label(menu, "Close terminal"));
 	gtk_widget_destroy(menu);
 
+	teardown_workspace();
+}
+
+
+static void
+test_sidebar_archive_session_filters_projection(void)
+{
+	SakuraPage *page;
+	SakuraSessionSnapshot *snapshot;
+	SakuraSessionPageRecord *page_record;
+	GtkWidget *menu;
+	GtkWidget *item;
+
+	setup_workspace();
+	page = sakura_page_at_page(1);
+	page->active_tab->kind = SAKURA_TAB_CODEX;
+	setup_sidebar_fixture();
+
+	menu = sakura_sidebar_context_menu_new(page->sidebar_node);
+	item = test_menu_item_for_label(menu, "Archive session");
+	g_assert_nonnull(item);
+	g_signal_emit_by_name(item, "activate");
+	g_assert_true(page->archived);
+	g_assert_null(page->sidebar_node);
+	g_assert_null(page->active_tab->sidebar_node);
+	g_assert_true(sakura.workspace->active_page != page);
+	g_assert_true(sakura.workspace->active_page == sakura_page_at_page(0));
+	snapshot = test_workspace_snapshot_new();
+	page_record = test_snapshot_page_record(snapshot, page->id);
+	g_assert_nonnull(page_record);
+	g_assert_true(page_record->archived);
+	sakura_session_snapshot_free(snapshot);
+	gtk_widget_destroy(menu);
+
+	sakura.show_archived = TRUE;
+	sakura_sidebar_rebuild_projection();
+	g_assert_nonnull(page->sidebar_node);
+	g_assert_nonnull(page->active_tab->sidebar_node);
+	menu = sakura_sidebar_context_menu_new(page->sidebar_node);
+	item = test_menu_item_for_label(menu, "Restore session");
+	g_assert_nonnull(item);
+	g_signal_emit_by_name(item, "activate");
+	g_assert_false(page->archived);
+	g_assert_nonnull(page->sidebar_node);
+	gtk_widget_destroy(menu);
+
+	assert_workspace_consistent();
 	teardown_workspace();
 }
 
@@ -2510,6 +2559,8 @@ main(int argc, char **argv)
 	                test_sidebar_move_page_preserves_whole_page_parent);
 	g_test_add_func("/workspace/sidebar-page-context-menu-close-label",
 	                test_sidebar_page_context_menu_names_page_close);
+	g_test_add_func("/workspace/sidebar-archive-session-filters-projection",
+	                test_sidebar_archive_session_filters_projection);
 	g_test_add_func("/workspace/sidebar-terminal-context-menu-close-pane",
 	                test_sidebar_terminal_context_menu_closes_only_pane);
 	g_test_add_func("/workspace/restore-order-reconciliation",

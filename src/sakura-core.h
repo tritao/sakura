@@ -3,7 +3,7 @@
 
 #include <glib.h>
 
-#define SAKURA_SESSION_VERSION 7
+#define SAKURA_SESSION_VERSION 8
 #define NUM_COLORSETS 6
 
 /* The domain layer owns these bounds. GTK rendering and persistence must
@@ -105,6 +105,7 @@ typedef struct {
 	gchar *parent_id;
 	gchar *title;
 	gboolean title_set_by_user;
+	gboolean archived;
 	gchar *root_layout_id;
 	gchar *active_terminal_id;
 	gchar *task_id;
