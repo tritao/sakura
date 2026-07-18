@@ -44,6 +44,7 @@ sakura_control_request_clear(SakuraControlRequest *request)
 	g_clear_pointer(&request->title, g_free);
 	g_clear_pointer(&request->directory, g_free);
 	g_clear_pointer(&request->group_id, g_free);
+	g_clear_pointer(&request->task_id, g_free);
 	g_clear_pointer(&request->provider, g_free);
 	g_clear_pointer(&request->external_id, g_free);
 	g_clear_pointer(&request->url, g_free);
@@ -273,6 +274,74 @@ sakura_control_encode_delete_group_request(const gchar *request_id,
 
 
 gboolean
+sakura_control_encode_update_task_request(const gchar *request_id,
+	                                          const gchar *task_id,
+	                                          const gchar *title,
+	                                          GByteArray *payload)
+{
+	Sakura__Control__V1__UpdateTaskRequest update_task =
+		SAKURA__CONTROL__V1__UPDATE_TASK_REQUEST__INIT;
+	Sakura__Control__V1__Request request =
+		SAKURA__CONTROL__V1__REQUEST__INIT;
+
+	if (payload == NULL || request_id == NULL || request_id[0] == '\0' ||
+	    task_id == NULL || task_id[0] == '\0')
+		return FALSE;
+	update_task.task_id = (gchar *)task_id;
+	update_task.title = (gchar *)sakura_control_string(title);
+	request.request_id = (gchar *)request_id;
+	request.body_case = SAKURA__CONTROL__V1__REQUEST__BODY_UPDATE_TASK;
+	request.update_task = &update_task;
+	return sakura_control_pack_message(&request.base, payload);
+}
+
+
+gboolean
+sakura_control_encode_set_task_archived_request(const gchar *request_id,
+	                                               const gchar *task_id,
+	                                               gboolean archived,
+	                                               GByteArray *payload)
+{
+	Sakura__Control__V1__SetTaskArchivedRequest set_archived =
+		SAKURA__CONTROL__V1__SET_TASK_ARCHIVED_REQUEST__INIT;
+	Sakura__Control__V1__Request request =
+		SAKURA__CONTROL__V1__REQUEST__INIT;
+
+	if (payload == NULL || request_id == NULL || request_id[0] == '\0' ||
+	    task_id == NULL || task_id[0] == '\0')
+		return FALSE;
+	set_archived.task_id = (gchar *)task_id;
+	set_archived.archived = archived;
+	request.request_id = (gchar *)request_id;
+	request.body_case =
+		SAKURA__CONTROL__V1__REQUEST__BODY_SET_TASK_ARCHIVED;
+	request.set_task_archived = &set_archived;
+	return sakura_control_pack_message(&request.base, payload);
+}
+
+
+gboolean
+sakura_control_encode_delete_task_request(const gchar *request_id,
+	                                          const gchar *task_id,
+	                                          GByteArray *payload)
+{
+	Sakura__Control__V1__DeleteTaskRequest delete_task =
+		SAKURA__CONTROL__V1__DELETE_TASK_REQUEST__INIT;
+	Sakura__Control__V1__Request request =
+		SAKURA__CONTROL__V1__REQUEST__INIT;
+
+	if (payload == NULL || request_id == NULL || request_id[0] == '\0' ||
+	    task_id == NULL || task_id[0] == '\0')
+		return FALSE;
+	delete_task.task_id = (gchar *)task_id;
+	request.request_id = (gchar *)request_id;
+	request.body_case = SAKURA__CONTROL__V1__REQUEST__BODY_DELETE_TASK;
+	request.delete_task = &delete_task;
+	return sakura_control_pack_message(&request.base, payload);
+}
+
+
+gboolean
 sakura_control_encode_subscribe_events_request(const gchar *request_id,
 	                                             guint64 after_sequence,
 	                                             GByteArray *payload)
@@ -352,6 +421,26 @@ sakura_control_decode_request(const guint8 *payload,
 		if (decoded->delete_group != NULL) {
 			request->kind = SAKURA_CONTROL_REQUEST_DELETE_GROUP;
 			request->group_id = g_strdup(decoded->delete_group->group_id);
+		}
+		break;
+	case SAKURA__CONTROL__V1__REQUEST__BODY_UPDATE_TASK:
+		if (decoded->update_task != NULL) {
+			request->kind = SAKURA_CONTROL_REQUEST_UPDATE_TASK;
+			request->task_id = g_strdup(decoded->update_task->task_id);
+			request->title = g_strdup(decoded->update_task->title);
+		}
+		break;
+	case SAKURA__CONTROL__V1__REQUEST__BODY_SET_TASK_ARCHIVED:
+		if (decoded->set_task_archived != NULL) {
+			request->kind = SAKURA_CONTROL_REQUEST_SET_TASK_ARCHIVED;
+			request->task_id = g_strdup(decoded->set_task_archived->task_id);
+			request->archived = decoded->set_task_archived->archived;
+		}
+		break;
+	case SAKURA__CONTROL__V1__REQUEST__BODY_DELETE_TASK:
+		if (decoded->delete_task != NULL) {
+			request->kind = SAKURA_CONTROL_REQUEST_DELETE_TASK;
+			request->task_id = g_strdup(decoded->delete_task->task_id);
 		}
 		break;
 	case SAKURA__CONTROL__V1__REQUEST__BODY_SUBSCRIBE_EVENTS:

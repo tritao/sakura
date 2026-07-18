@@ -801,6 +801,26 @@ gboolean sakura_agent_start(SakuraApp *app);
 gboolean sakura_agent_create_group(SakuraApp *app, const gchar *parent_id,
                                    const gchar *title, const gchar *directory,
                                    GError **error);
+gboolean sakura_agent_update_group(SakuraApp *app, const gchar *group_id,
+                                   const gchar *title, const gchar *directory,
+                                   GError **error);
+gboolean sakura_agent_set_group_archived(SakuraApp *app,
+                                         const gchar *group_id,
+                                         gboolean archived, GError **error);
+gboolean sakura_agent_delete_group(SakuraApp *app, const gchar *group_id,
+                                   GError **error);
+gboolean sakura_agent_create_task(SakuraApp *app, const gchar *group_id,
+                                  const gchar *parent_id, const gchar *title,
+                                  const gchar *provider,
+                                  const gchar *external_id, const gchar *url,
+                                  GError **error);
+gboolean sakura_agent_update_task(SakuraApp *app, const gchar *task_id,
+                                  const gchar *title, GError **error);
+gboolean sakura_agent_set_task_archived(SakuraApp *app,
+                                        const gchar *task_id,
+                                        gboolean archived, GError **error);
+gboolean sakura_agent_delete_task(SakuraApp *app, const gchar *task_id,
+                                  GError **error);
 void sakura_agent_stop(SakuraApp *app);
 
 const gchar *sakura_tool_label(SakuraToolKind tool);

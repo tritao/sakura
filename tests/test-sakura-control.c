@@ -134,6 +134,39 @@ test_mutation_request_roundtrip(void)
 	sakura_control_request_clear(&request);
 	g_byte_array_set_size(encoded, 0);
 
+	g_assert_true(sakura_control_encode_update_task_request(
+		"update-task", "task-1", "Renamed task", encoded));
+	g_assert_true(sakura_control_decode_request(encoded->data, encoded->len,
+	                                           &request, &error));
+	g_assert_no_error(error);
+	g_assert_cmpint(request.kind, ==, SAKURA_CONTROL_REQUEST_UPDATE_TASK);
+	g_assert_cmpstr(request.task_id, ==, "task-1");
+	g_assert_cmpstr(request.title, ==, "Renamed task");
+	sakura_control_request_clear(&request);
+	g_byte_array_set_size(encoded, 0);
+
+	g_assert_true(sakura_control_encode_set_task_archived_request(
+		"archive-task", "task-1", TRUE, encoded));
+	g_assert_true(sakura_control_decode_request(encoded->data, encoded->len,
+	                                           &request, &error));
+	g_assert_no_error(error);
+	g_assert_cmpint(request.kind, ==,
+	               SAKURA_CONTROL_REQUEST_SET_TASK_ARCHIVED);
+	g_assert_cmpstr(request.task_id, ==, "task-1");
+	g_assert_true(request.archived);
+	sakura_control_request_clear(&request);
+	g_byte_array_set_size(encoded, 0);
+
+	g_assert_true(sakura_control_encode_delete_task_request(
+		"delete-task", "task-1", encoded));
+	g_assert_true(sakura_control_decode_request(encoded->data, encoded->len,
+	                                           &request, &error));
+	g_assert_no_error(error);
+	g_assert_cmpint(request.kind, ==, SAKURA_CONTROL_REQUEST_DELETE_TASK);
+	g_assert_cmpstr(request.task_id, ==, "task-1");
+	sakura_control_request_clear(&request);
+	g_byte_array_set_size(encoded, 0);
+
 	g_assert_true(sakura_control_encode_create_task_request(
 		"task-request", "group-1", "", "Build", "local", "42", "",
 		encoded));
@@ -298,6 +331,7 @@ test_agent_create_and_reload(void)
 	gchar *session_path;
 	gchar *group_id;
 	gchar *second_group_id = NULL;
+	gchar *task_id = NULL;
 
 	directory = g_dir_make_tmp("sakura-agent-test-XXXXXX", &error);
 	g_assert_no_error(error);
@@ -330,6 +364,7 @@ test_agent_create_and_reload(void)
 	task = g_ptr_array_index(snapshot->tasks, 0);
 	g_assert_cmpstr(task->title, ==, "Build");
 	g_assert_cmpstr(task->group_id, ==, group_id);
+	task_id = g_strdup(task->id);
 	sakura_session_snapshot_free(snapshot);
 	test_agent_stop(process);
 
@@ -463,6 +498,64 @@ test_agent_create_and_reload(void)
 	sakura_session_snapshot_free(event_snapshot);
 	event_snapshot = NULL;
 	g_clear_pointer(&event_payload, g_byte_array_unref);
+
+	g_byte_array_set_size(request, 0);
+	g_assert_true(sakura_control_encode_update_task_request(
+		"update-task", task_id, "Renamed build", request));
+	test_agent_call(socket_path, "update-task", request, &response);
+	sakura_control_response_clear(&response);
+	g_assert_true(sakura_control_frame_read(subscriber_input, &event_payload,
+	                                        NULL, &error));
+	g_assert_no_error(error);
+	g_assert_true(sakura_control_decode_workspace_changed_event(
+		event_payload->data, event_payload->len, &event_sequence,
+		&event_snapshot, &error));
+	g_assert_no_error(error);
+	g_assert_cmpuint(event_sequence, ==, 5);
+	g_assert_cmpuint(event_snapshot->tasks->len, ==, 1);
+	task = g_ptr_array_index(event_snapshot->tasks, 0);
+	g_assert_cmpstr(task->id, ==, task_id);
+	g_assert_cmpstr(task->title, ==, "Renamed build");
+	sakura_session_snapshot_free(event_snapshot);
+	event_snapshot = NULL;
+	g_clear_pointer(&event_payload, g_byte_array_unref);
+
+	g_byte_array_set_size(request, 0);
+	g_assert_true(sakura_control_encode_set_task_archived_request(
+		"archive-task", task_id, TRUE, request));
+	test_agent_call(socket_path, "archive-task", request, &response);
+	sakura_control_response_clear(&response);
+	g_assert_true(sakura_control_frame_read(subscriber_input, &event_payload,
+	                                        NULL, &error));
+	g_assert_no_error(error);
+	g_assert_true(sakura_control_decode_workspace_changed_event(
+		event_payload->data, event_payload->len, &event_sequence,
+		&event_snapshot, &error));
+	g_assert_no_error(error);
+	g_assert_cmpuint(event_sequence, ==, 6);
+	task = g_ptr_array_index(event_snapshot->tasks, 0);
+	g_assert_true(task->archived);
+	sakura_session_snapshot_free(event_snapshot);
+	event_snapshot = NULL;
+	g_clear_pointer(&event_payload, g_byte_array_unref);
+
+	g_byte_array_set_size(request, 0);
+	g_assert_true(sakura_control_encode_delete_task_request(
+		"delete-task", task_id, request));
+	test_agent_call(socket_path, "delete-task", request, &response);
+	sakura_control_response_clear(&response);
+	g_assert_true(sakura_control_frame_read(subscriber_input, &event_payload,
+	                                        NULL, &error));
+	g_assert_no_error(error);
+	g_assert_true(sakura_control_decode_workspace_changed_event(
+		event_payload->data, event_payload->len, &event_sequence,
+		&event_snapshot, &error));
+	g_assert_no_error(error);
+	g_assert_cmpuint(event_sequence, ==, 7);
+	g_assert_cmpuint(event_snapshot->tasks->len, ==, 0);
+	sakura_session_snapshot_free(event_snapshot);
+	event_snapshot = NULL;
+	g_clear_pointer(&event_payload, g_byte_array_unref);
 	g_io_stream_close(G_IO_STREAM(subscriber), NULL, NULL);
 	g_object_unref(subscriber);
 	test_agent_stop(process);
@@ -470,6 +563,7 @@ test_agent_create_and_reload(void)
 	g_byte_array_unref(request);
 	g_free(group_id);
 	g_free(second_group_id);
+	g_free(task_id);
 	g_remove(session_path);
 	g_remove(socket_path);
 	g_rmdir(directory);

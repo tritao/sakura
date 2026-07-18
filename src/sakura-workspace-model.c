@@ -402,9 +402,28 @@ sakura_workspace_model_restore_snapshot(SakuraWorkspaceModel *model,
 			SakuraTask *parent, *task;
 			SakuraGroup *group, *parent_group;
 
-			if (record == NULL || record->id == NULL ||
-			    sakura_workspace_model_find_task(model, record->id) != NULL)
+			if (record == NULL || record->id == NULL)
 				continue;
+			task = sakura_workspace_model_find_task(model, record->id);
+			if (task != NULL) {
+				g_free(task->title);
+				task->title = g_strdup(record->title != NULL ? record->title : "");
+				g_free(task->provider);
+				task->provider = g_strdup(record->provider != NULL
+				                             ? record->provider : "local");
+				g_free(task->external_id);
+				task->external_id = g_strdup(record->external_id);
+				g_free(task->url);
+				task->url = g_strdup(record->url);
+				task->status = record->status;
+				task->order = record->order;
+				task->archived = record->archived;
+				remaining--;
+				progress = TRUE;
+				if (remaining == 0)
+					break;
+				continue;
+			}
 			parent = record->parent_id != NULL &&
 			         g_strcmp0(record->parent_id, "root") != 0
 			       ? sakura_workspace_model_find_task(model, record->parent_id)
@@ -441,6 +460,8 @@ sakura_workspace_model_restore_snapshot(SakuraWorkspaceModel *model,
 			sakura_workspace_model_update_task_id(model, task);
 			remaining--;
 			progress = TRUE;
+			if (remaining == 0)
+				break;
 		}
 		if (!progress)
 			break;
@@ -475,6 +496,31 @@ sakura_workspace_model_restore_snapshot(SakuraWorkspaceModel *model,
 				continue;
 			}
 			sakura_workspace_model_update_task_id(model, task);
+		}
+	}
+	/* As with groups, delete only tasks that the desktop can safely release.
+	 * A task with a page or child task remains projected until that dependency
+	 * is handled by a later command. */
+	if (model->tasks != NULL) {
+		for (gint index = (gint)model->tasks->len - 1; index >= 0; index--) {
+			SakuraTask *task = g_ptr_array_index(model->tasks, index);
+			gboolean present = FALSE;
+
+			if (task == NULL)
+				continue;
+			for (guint record_index = 0; snapshot->tasks != NULL &&
+			                         record_index < snapshot->tasks->len;
+			     record_index++) {
+				SakuraSessionTaskRecord *record =
+					g_ptr_array_index(snapshot->tasks, record_index);
+
+				if (record != NULL && g_strcmp0(record->id, task->id) == 0) {
+					present = TRUE;
+					break;
+				}
+			}
+			if (!present)
+				sakura_workspace_model_remove_task(model, task);
 		}
 	}
 	return TRUE;

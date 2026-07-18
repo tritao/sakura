@@ -82,6 +82,20 @@ message CreateTaskRequest {
   string url = 6;
 }
 
+message UpdateTaskRequest {
+  string task_id = 1;
+  string title = 2;
+}
+
+message SetTaskArchivedRequest {
+  string task_id = 1;
+  bool archived = 2;
+}
+
+message DeleteTaskRequest {
+  string task_id = 1;
+}
+
 message CreateTerminalRequest {
   string group_id = 1;
   string task_id = 2;
@@ -123,6 +137,9 @@ message Request {
     UpdateGroupRequest update_group = 10;
     SetGroupArchivedRequest set_group_archived = 11;
     DeleteGroupRequest delete_group = 12;
+    UpdateTaskRequest update_task = 13;
+    SetTaskArchivedRequest set_task_archived = 14;
+    DeleteTaskRequest delete_task = 15;
   }
 }
 

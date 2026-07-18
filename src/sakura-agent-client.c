@@ -59,6 +59,21 @@ sakura_agent_apply_event_cb(gpointer data)
 				event->snapshot->root_directory);
 		}
 		sakura_sidebar_rebuild_projection();
+		if (event->app->workspace->active_task != NULL &&
+		    sakura_workspace_model_task_is_archived(
+				event->app->workspace,
+				event->app->workspace->active_task))
+			event->app->workspace->active_task = NULL;
+		if (event->app->workspace->active_group != NULL &&
+		    sakura_workspace_model_group_is_archived(
+				event->app->workspace,
+				event->app->workspace->active_group)) {
+			event->app->workspace->active_group =
+				event->app->workspace->root_group;
+			event->app->active_group_scope = event->app->sidebar_root;
+			if (event->app->sidebar_root != NULL)
+				sakura_sidebar_set_scope(event->app->sidebar_root);
+		}
 		sakura_workspace_mark_changed(SAKURA_WORKSPACE_CHANGE_STRUCTURE |
 		                              SAKURA_WORKSPACE_CHANGE_METADATA);
 		sakura_workspace_end_mutation();
@@ -244,6 +259,20 @@ out:
 }
 
 
+static gboolean
+sakura_agent_request_encoded_mutation(SakuraApp *app, const gchar *request_id,
+	                                   GByteArray *request, gboolean encoded,
+	                                   const gchar *description, GError **error)
+{
+	if (!encoded) {
+		g_set_error(error, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT,
+		            "could not encode %s request", description);
+		return FALSE;
+	}
+	return sakura_agent_request_mutation(app, request_id, request, error);
+}
+
+
 gboolean
 sakura_agent_create_group(SakuraApp *app, const gchar *parent_id,
 	                       const gchar *title, const gchar *directory,
@@ -257,14 +286,174 @@ sakura_agent_create_group(SakuraApp *app, const gchar *parent_id,
 		return FALSE;
 	request_id = g_uuid_string_random();
 	request = g_byte_array_new();
-	if (!sakura_control_encode_create_group_request(request_id, parent_id, title,
-	                                               directory, request)) {
-		g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT,
-		                    "could not encode create group request");
-		result = FALSE;
-	} else {
-		result = sakura_agent_request_mutation(app, request_id, request, error);
-	}
+	result = sakura_agent_request_encoded_mutation(
+		app, request_id, request,
+		sakura_control_encode_create_group_request(request_id, parent_id, title,
+		                                           directory, request),
+		"create group", error);
+	g_byte_array_unref(request);
+	g_free(request_id);
+	return result;
+}
+
+
+gboolean
+sakura_agent_update_group(SakuraApp *app, const gchar *group_id,
+	                       const gchar *title, const gchar *directory,
+	                       GError **error)
+{
+	GByteArray *request;
+	gchar *request_id;
+	gboolean result;
+
+	if (app == NULL || app->agent_socket_path == NULL)
+		return FALSE;
+	request_id = g_uuid_string_random();
+	request = g_byte_array_new();
+	result = sakura_agent_request_encoded_mutation(
+		app, request_id, request,
+		sakura_control_encode_update_group_request(request_id, group_id, title,
+		                                          directory, request),
+		"update group", error);
+	g_byte_array_unref(request);
+	g_free(request_id);
+	return result;
+}
+
+
+gboolean
+sakura_agent_set_group_archived(SakuraApp *app, const gchar *group_id,
+	                              gboolean archived, GError **error)
+{
+	GByteArray *request;
+	gchar *request_id;
+	gboolean result;
+
+	if (app == NULL || app->agent_socket_path == NULL)
+		return FALSE;
+	request_id = g_uuid_string_random();
+	request = g_byte_array_new();
+	result = sakura_agent_request_encoded_mutation(
+		app, request_id, request,
+		sakura_control_encode_set_group_archived_request(request_id, group_id,
+		                                               archived, request),
+		"set group archive state", error);
+	g_byte_array_unref(request);
+	g_free(request_id);
+	return result;
+}
+
+
+gboolean
+sakura_agent_delete_group(SakuraApp *app, const gchar *group_id,
+	                       GError **error)
+{
+	GByteArray *request;
+	gchar *request_id;
+	gboolean result;
+
+	if (app == NULL || app->agent_socket_path == NULL)
+		return FALSE;
+	request_id = g_uuid_string_random();
+	request = g_byte_array_new();
+	result = sakura_agent_request_encoded_mutation(
+		app, request_id, request,
+		sakura_control_encode_delete_group_request(request_id, group_id, request),
+		"delete group", error);
+	g_byte_array_unref(request);
+	g_free(request_id);
+	return result;
+}
+
+
+gboolean
+sakura_agent_create_task(SakuraApp *app, const gchar *group_id,
+	                      const gchar *parent_id, const gchar *title,
+	                      const gchar *provider, const gchar *external_id,
+	                      const gchar *url, GError **error)
+{
+	GByteArray *request;
+	gchar *request_id;
+	gboolean result;
+
+	if (app == NULL || app->agent_socket_path == NULL)
+		return FALSE;
+	request_id = g_uuid_string_random();
+	request = g_byte_array_new();
+	result = sakura_agent_request_encoded_mutation(
+		app, request_id, request,
+		sakura_control_encode_create_task_request(request_id, group_id, parent_id,
+		                                          title, provider, external_id,
+		                                          url, request),
+		"create task", error);
+	g_byte_array_unref(request);
+	g_free(request_id);
+	return result;
+}
+
+
+gboolean
+sakura_agent_update_task(SakuraApp *app, const gchar *task_id,
+	                       const gchar *title, GError **error)
+{
+	GByteArray *request;
+	gchar *request_id;
+	gboolean result;
+
+	if (app == NULL || app->agent_socket_path == NULL)
+		return FALSE;
+	request_id = g_uuid_string_random();
+	request = g_byte_array_new();
+	result = sakura_agent_request_encoded_mutation(
+		app, request_id, request,
+		sakura_control_encode_update_task_request(request_id, task_id, title,
+		                                         request),
+		"update task", error);
+	g_byte_array_unref(request);
+	g_free(request_id);
+	return result;
+}
+
+
+gboolean
+sakura_agent_set_task_archived(SakuraApp *app, const gchar *task_id,
+	                             gboolean archived, GError **error)
+{
+	GByteArray *request;
+	gchar *request_id;
+	gboolean result;
+
+	if (app == NULL || app->agent_socket_path == NULL)
+		return FALSE;
+	request_id = g_uuid_string_random();
+	request = g_byte_array_new();
+	result = sakura_agent_request_encoded_mutation(
+		app, request_id, request,
+		sakura_control_encode_set_task_archived_request(request_id, task_id,
+	                                                archived, request),
+		"set task archive state", error);
+	g_byte_array_unref(request);
+	g_free(request_id);
+	return result;
+}
+
+
+gboolean
+sakura_agent_delete_task(SakuraApp *app, const gchar *task_id,
+	                      GError **error)
+{
+	GByteArray *request;
+	gchar *request_id;
+	gboolean result;
+
+	if (app == NULL || app->agent_socket_path == NULL)
+		return FALSE;
+	request_id = g_uuid_string_random();
+	request = g_byte_array_new();
+	result = sakura_agent_request_encoded_mutation(
+		app, request_id, request,
+		sakura_control_encode_delete_task_request(request_id, task_id, request),
+		"delete task", error);
 	g_byte_array_unref(request);
 	g_free(request_id);
 	return result;

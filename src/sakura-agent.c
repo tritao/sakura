@@ -311,6 +311,76 @@ sakura_agent_create_task(SakuraAgent *agent,
 
 
 static gboolean
+sakura_agent_update_task(SakuraAgent *agent,
+	                      const SakuraControlRequest *request,
+	                      GError **error)
+{
+	SakuraCoreTask *task;
+
+	if (request->task_id == NULL || request->task_id[0] == '\0')
+		return sakura_agent_error(error, "task id is required");
+	task = sakura_core_workspace_find_task(agent->workspace, request->task_id);
+	if (task == NULL) {
+		g_set_error(error, G_IO_ERROR, G_IO_ERROR_NOT_FOUND,
+		            "task %s was not found", request->task_id);
+		return FALSE;
+	}
+	if (request->title == NULL || request->title[0] == '\0')
+		return sakura_agent_error(error, "task title is required");
+	g_free(task->title);
+	task->title = g_strdup(request->title);
+	return TRUE;
+}
+
+
+static gboolean
+sakura_agent_set_task_archived(SakuraAgent *agent,
+	                             const SakuraControlRequest *request,
+	                             GError **error)
+{
+	SakuraCoreTask *task;
+
+	if (request->task_id == NULL || request->task_id[0] == '\0')
+		return sakura_agent_error(error, "task id is required");
+	task = sakura_core_workspace_find_task(agent->workspace, request->task_id);
+	if (task == NULL) {
+		g_set_error(error, G_IO_ERROR, G_IO_ERROR_NOT_FOUND,
+		            "task %s was not found", request->task_id);
+		return FALSE;
+	}
+	sakura_core_workspace_set_task_archived(agent->workspace, task,
+	                                         request->archived);
+	return TRUE;
+}
+
+
+static gboolean
+sakura_agent_delete_task(SakuraAgent *agent,
+	                      const SakuraControlRequest *request,
+	                      GError **error)
+{
+	SakuraCoreTask *task;
+
+	if (request->task_id == NULL || request->task_id[0] == '\0')
+		return sakura_agent_error(error, "task id is required");
+	task = sakura_core_workspace_find_task(agent->workspace, request->task_id);
+	if (task == NULL) {
+		g_set_error(error, G_IO_ERROR, G_IO_ERROR_NOT_FOUND,
+		            "task %s was not found", request->task_id);
+		return FALSE;
+	}
+	if (!task->archived)
+		return sakura_agent_error(error, "only archived tasks can be deleted");
+	if (!sakura_core_workspace_can_remove_task(agent->workspace, task))
+		return sakura_agent_error(error,
+		                          "task must have no child tasks before deletion");
+	if (!sakura_core_workspace_remove_task(agent->workspace, task))
+		return sakura_agent_error(error, "could not delete task");
+	return TRUE;
+}
+
+
+static gboolean
 sakura_agent_apply_request(SakuraAgent *agent,
 	                         const SakuraControlRequest *request,
 	                         GError **error)
@@ -332,6 +402,15 @@ sakura_agent_apply_request(SakuraAgent *agent,
 		break;
 	case SAKURA_CONTROL_REQUEST_DELETE_GROUP:
 		changed = sakura_agent_delete_group(agent, request, error);
+		break;
+	case SAKURA_CONTROL_REQUEST_UPDATE_TASK:
+		changed = sakura_agent_update_task(agent, request, error);
+		break;
+	case SAKURA_CONTROL_REQUEST_SET_TASK_ARCHIVED:
+		changed = sakura_agent_set_task_archived(agent, request, error);
+		break;
+	case SAKURA_CONTROL_REQUEST_DELETE_TASK:
+		changed = sakura_agent_delete_task(agent, request, error);
 		break;
 	default:
 		return TRUE;

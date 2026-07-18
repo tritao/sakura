@@ -18,6 +18,9 @@ typedef enum {
 	SAKURA_CONTROL_REQUEST_UPDATE_GROUP,
 	SAKURA_CONTROL_REQUEST_SET_GROUP_ARCHIVED,
 	SAKURA_CONTROL_REQUEST_DELETE_GROUP,
+	SAKURA_CONTROL_REQUEST_UPDATE_TASK,
+	SAKURA_CONTROL_REQUEST_SET_TASK_ARCHIVED,
+	SAKURA_CONTROL_REQUEST_DELETE_TASK,
 	SAKURA_CONTROL_REQUEST_SUBSCRIBE_EVENTS
 } SakuraControlRequestKind;
 
@@ -28,6 +31,7 @@ typedef struct {
 	gchar *title;
 	gchar *directory;
 	gchar *group_id;
+	gchar *task_id;
 	gchar *provider;
 	gchar *external_id;
 	gchar *url;
@@ -71,6 +75,14 @@ gboolean sakura_control_encode_set_group_archived_request(
 	GByteArray *payload);
 gboolean sakura_control_encode_delete_group_request(
 	const gchar *request_id, const gchar *group_id, GByteArray *payload);
+gboolean sakura_control_encode_update_task_request(
+	const gchar *request_id, const gchar *task_id, const gchar *title,
+	GByteArray *payload);
+gboolean sakura_control_encode_set_task_archived_request(
+	const gchar *request_id, const gchar *task_id, gboolean archived,
+	GByteArray *payload);
+gboolean sakura_control_encode_delete_task_request(
+	const gchar *request_id, const gchar *task_id, GByteArray *payload);
 gboolean sakura_control_encode_subscribe_events_request(
 	const gchar *request_id, guint64 after_sequence, GByteArray *payload);
 gboolean sakura_control_decode_request(const guint8 *payload,

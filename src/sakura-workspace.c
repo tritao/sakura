@@ -2595,6 +2595,24 @@ sakura_sidebar_new_task_cb(GtkWidget *widget, void *data)
 	if (gtk_dialog_run(GTK_DIALOG(dialog)) == GTK_RESPONSE_ACCEPT) {
 		title = gtk_entry_get_text(GTK_ENTRY(entry));
 		if (title[0] != '\0') {
+			if (sakura.agent_socket_path != NULL) {
+				SakuraGroup *task_group = sakura_group_for_sidebar_node(parent);
+				SakuraTask *parent_task = parent->type == SAKURA_SIDEBAR_TASK
+				                       ? parent->task : NULL;
+				GError *error = NULL;
+
+				if (sakura_agent_create_task(
+						&sakura, task_group != NULL ? task_group->id : "root",
+						parent_task != NULL ? parent_task->id : "root", title,
+						"local", NULL, NULL, &error)) {
+					gtk_widget_destroy(dialog);
+					return;
+				}
+				if (error != NULL)
+					g_warning("Could not create task through sakura-agent: %s",
+					          error->message);
+				g_clear_error(&error);
+			}
 			sakura_workspace_begin_mutation();
 			task = g_new0(SakuraTask, 1);
 			task->id = g_strdup_printf("task-%u", sakura.workspace->next_task_id++);
@@ -2658,6 +2676,18 @@ sakura_sidebar_rename_task_cb(GtkWidget *widget, void *data)
 	if (gtk_dialog_run(GTK_DIALOG(dialog)) == GTK_RESPONSE_ACCEPT) {
 		title = gtk_entry_get_text(GTK_ENTRY(entry));
 		if (title[0] != '\0') {
+			if (sakura.agent_socket_path != NULL) {
+				GError *error = NULL;
+
+				if (sakura_agent_update_task(&sakura, task->id, title, &error)) {
+					gtk_widget_destroy(dialog);
+					return;
+				}
+				if (error != NULL)
+					g_warning("Could not rename task through sakura-agent: %s",
+					          error->message);
+				g_clear_error(&error);
+			}
 			sakura_workspace_begin_mutation();
 			g_free(task->title);
 			task->title = g_strdup(title);
@@ -2668,6 +2698,36 @@ sakura_sidebar_rename_task_cb(GtkWidget *widget, void *data)
 		}
 	}
 	gtk_widget_destroy(dialog);
+}
+
+
+static gboolean
+sakura_sidebar_agent_archive_node(SakuraSidebarNode *node)
+{
+	GError *error = NULL;
+	gboolean archived;
+	gboolean result;
+
+	if (node == NULL || sakura.agent_socket_path == NULL)
+		return FALSE;
+	if (node->type == SAKURA_SIDEBAR_TASK && node->task != NULL) {
+		archived = !sakura_sidebar_task_is_archived(node->task);
+		result = sakura_agent_set_task_archived(&sakura, node->task->id,
+		                                      archived, &error);
+	} else if (node->type == SAKURA_SIDEBAR_GROUP && node->group != NULL) {
+		archived = !sakura_sidebar_group_is_archived(node->group);
+		result = sakura_agent_set_group_archived(&sakura, node->group->id,
+	                                        archived, &error);
+	} else {
+		return FALSE;
+	}
+	if (result)
+		return TRUE;
+	if (error != NULL)
+		g_warning("Could not change archive state through sakura-agent: %s",
+		          error->message);
+	g_clear_error(&error);
+	return FALSE;
 }
 
 
@@ -2682,6 +2742,8 @@ sakura_sidebar_archive_cb(GtkWidget *widget, void *data)
 	SakuraGroup *active_group;
 
 	(void)widget;
+	if (sakura_sidebar_agent_archive_node(node))
+		return;
 	if (node == NULL)
 		return;
 	if (node->type == SAKURA_SIDEBAR_TASK)
@@ -2767,6 +2829,16 @@ sakura_sidebar_delete_task_cb(GtkWidget *widget, void *data)
 	gtk_widget_destroy(dialog);
 	if (response != GTK_RESPONSE_ACCEPT)
 		return;
+	if (sakura.agent_socket_path != NULL) {
+		GError *error = NULL;
+
+		if (sakura_agent_delete_task(&sakura, task->id, &error))
+			return;
+		if (error != NULL)
+			g_warning("Could not delete task through sakura-agent: %s",
+			          error->message);
+		g_clear_error(&error);
+	}
 	sakura_workspace_begin_mutation();
 	sakura_sidebar_cancel_pending_selection();
 	was_active_task = sakura.workspace->active_task == task;
@@ -2911,8 +2983,24 @@ sakura_sidebar_set_directory_cb(GtkWidget *widget, void *data)
 	if (gtk_dialog_run(GTK_DIALOG(dialog)) == GTK_RESPONSE_ACCEPT) {
 		directory = gtk_file_chooser_get_filename(GTK_FILE_CHOOSER(dialog));
 		if (directory != NULL && g_file_test(directory, G_FILE_TEST_IS_DIR)) {
-			sakura_workspace_begin_mutation();
 			canonical = g_canonicalize_filename(directory, NULL);
+			if (sakura.agent_socket_path != NULL) {
+				GError *error = NULL;
+
+				if (sakura_agent_update_group(
+						&sakura, node->group->id, node->group->title,
+						canonical, &error)) {
+					g_free(directory);
+					g_free(canonical);
+					gtk_widget_destroy(dialog);
+					return;
+				}
+				if (error != NULL)
+					g_warning("Could not set group directory through sakura-agent: %s",
+					          error->message);
+				g_clear_error(&error);
+			}
+			sakura_workspace_begin_mutation();
 			g_free(node->group->directory);
 			node->group->directory = canonical;
 			canonical = NULL;
@@ -2938,6 +3026,17 @@ sakura_sidebar_clear_directory_cb(GtkWidget *widget, void *data)
 	if (node == NULL || node->type != SAKURA_SIDEBAR_GROUP ||
 	    node->group == NULL || node->group->directory == NULL)
 		return;
+	if (sakura.agent_socket_path != NULL) {
+		GError *error = NULL;
+
+		if (sakura_agent_update_group(&sakura, node->group->id,
+		                              node->group->title, NULL, &error))
+			return;
+		if (error != NULL)
+			g_warning("Could not clear group directory through sakura-agent: %s",
+			          error->message);
+		g_clear_error(&error);
+	}
 	sakura_workspace_begin_mutation();
 	g_clear_pointer(&node->group->directory, g_free);
 	sakura_sidebar_refresh_group_rows();
@@ -2976,6 +3075,20 @@ sakura_sidebar_rename_group_cb (GtkWidget *widget, void *data)
 	if (gtk_dialog_run(GTK_DIALOG(dialog)) == GTK_RESPONSE_ACCEPT) {
 		title = gtk_entry_get_text(GTK_ENTRY(entry));
 		if (title[0] != '\0') {
+			if (sakura.agent_socket_path != NULL) {
+				GError *error = NULL;
+
+				if (sakura_agent_update_group(
+						&sakura, node->group->id, title,
+						node->group->directory, &error)) {
+					gtk_widget_destroy(dialog);
+					return;
+				}
+				if (error != NULL)
+					g_warning("Could not rename group through sakura-agent: %s",
+					          error->message);
+				g_clear_error(&error);
+			}
 			sakura_workspace_begin_mutation();
 			g_free(node->group->title);
 			node->group->title = g_strdup(title);
@@ -3030,6 +3143,16 @@ sakura_sidebar_delete_group_cb (GtkWidget *widget, void *data)
 	gtk_widget_destroy(dialog);
 	if (response != GTK_RESPONSE_ACCEPT)
 		return;
+	if (sakura.agent_socket_path != NULL) {
+		GError *error = NULL;
+
+		if (sakura_agent_delete_group(&sakura, node->group->id, &error))
+			return;
+		if (error != NULL)
+			g_warning("Could not delete group through sakura-agent: %s",
+			          error->message);
+		g_clear_error(&error);
+	}
 
 	model_group = node->group;
 	sakura_workspace_begin_mutation();
