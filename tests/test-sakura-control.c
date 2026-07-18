@@ -322,16 +322,16 @@ test_agent_stop(GSubprocess *process)
 
 
 static void
-test_agent_call(const gchar *socket_path, const gchar *request_id,
-	              GByteArray *request_payload, SakuraControlResponse *response)
+test_agent_call_on_connection(GSocketConnection *connection,
+	                            const gchar *request_id,
+	                            GByteArray *request_payload,
+	                            SakuraControlResponse *response)
 {
-	GSocketConnection *connection;
 	GInputStream *input;
 	GOutputStream *output;
 	GByteArray *response_payload = NULL;
 	GError *error = NULL;
 
-	connection = test_agent_connect_wait(socket_path);
 	input = g_io_stream_get_input_stream(G_IO_STREAM(connection));
 	output = g_io_stream_get_output_stream(G_IO_STREAM(connection));
 	g_assert_true(sakura_control_frame_write(output, request_payload->data,
@@ -348,6 +348,17 @@ test_agent_call(const gchar *socket_path, const gchar *request_id,
 	g_assert_cmpstr(response->request_id, ==, request_id);
 	g_assert_true(response->has_snapshot || response->accepted);
 	g_clear_pointer(&response_payload, g_byte_array_unref);
+}
+
+
+static void
+test_agent_call(const gchar *socket_path, const gchar *request_id,
+	              GByteArray *request_payload, SakuraControlResponse *response)
+{
+	GSocketConnection *connection = test_agent_connect_wait(socket_path);
+
+	test_agent_call_on_connection(connection, request_id, request_payload,
+	                              response);
 	g_io_stream_close(G_IO_STREAM(connection), NULL, NULL);
 	g_object_unref(connection);
 }
@@ -775,6 +786,7 @@ test_agent_terminal_lifecycle(void)
 	GSubprocess *process;
 	GByteArray *request = g_byte_array_new();
 	SakuraControlResponse response = { 0 };
+	GSocketConnection *command_connection;
 	GSocketConnection *subscriber;
 	GInputStream *subscriber_input;
 	GOutputStream *subscriber_output;
@@ -791,6 +803,7 @@ test_agent_terminal_lifecycle(void)
 	socket_path = g_build_filename(directory, "agent.sock", NULL);
 	session_path = g_build_filename(directory, "workspace.session", NULL);
 	process = test_agent_start(socket_path, session_path);
+	command_connection = test_agent_connect_wait(socket_path);
 
 	subscriber = test_agent_connect_wait(socket_path);
 	test_agent_set_event_timeout(subscriber);
@@ -819,7 +832,8 @@ test_agent_terminal_lifecycle(void)
 	g_assert_true(sakura_control_encode_create_terminal_request(
 		"create-terminal", "terminal-agent-1", "root", "root", "/tmp", 100, 40,
 		request));
-	test_agent_call(socket_path, "create-terminal", request, &response);
+	test_agent_call_on_connection(command_connection, "create-terminal", request,
+	                              &response);
 	g_assert_true(response.accepted);
 	g_assert_cmpstr(response.accepted_kind, ==, "terminal");
 	g_assert_nonnull(response.accepted_id);
@@ -837,7 +851,8 @@ test_agent_terminal_lifecycle(void)
 			"terminal-input", terminal_id, (const guint8 *)input,
 			sizeof(input) - 1, request));
 	}
-	test_agent_call(socket_path, "terminal-input", request, &response);
+	test_agent_call_on_connection(command_connection, "terminal-input", request,
+	                              &response);
 	g_assert_true(response.accepted);
 	g_assert_cmpstr(response.accepted_kind, ==, "terminal_input");
 	sakura_control_response_clear(&response);
@@ -847,7 +862,8 @@ test_agent_terminal_lifecycle(void)
 	g_byte_array_set_size(request, 0);
 	g_assert_true(sakura_control_encode_terminal_resize_request(
 		"terminal-resize", terminal_id, 120, 50, request));
-	test_agent_call(socket_path, "terminal-resize", request, &response);
+	test_agent_call_on_connection(command_connection, "terminal-resize", request,
+	                              &response);
 	g_assert_true(response.has_snapshot);
 	sakura_control_response_clear(&response);
 	g_assert_true(test_agent_read_workspace_until(subscriber_input, 1,
@@ -861,7 +877,8 @@ test_agent_terminal_lifecycle(void)
 			"terminal-exit", terminal_id, (const guint8 *)input,
 			sizeof(input) - 1, request));
 	}
-	test_agent_call(socket_path, "terminal-exit", request, &response);
+	test_agent_call_on_connection(command_connection, "terminal-exit", request,
+	                              &response);
 	g_assert_true(response.accepted);
 	sakura_control_response_clear(&response);
 	g_assert_true(test_agent_read_status_until(
@@ -870,7 +887,8 @@ test_agent_terminal_lifecycle(void)
 	g_byte_array_set_size(request, 0);
 	g_assert_true(sakura_control_encode_close_terminal_request(
 		"close-terminal", terminal_id, request));
-	test_agent_call(socket_path, "close-terminal", request, &response);
+	test_agent_call_on_connection(command_connection, "close-terminal", request,
+	                              &response);
 	g_assert_true(response.has_snapshot);
 	sakura_control_response_clear(&response);
 	g_assert_true(test_agent_read_workspace_until(subscriber_input, 0, NULL,
@@ -878,6 +896,8 @@ test_agent_terminal_lifecycle(void)
 
 	g_io_stream_close(G_IO_STREAM(subscriber), NULL, NULL);
 	g_object_unref(subscriber);
+	g_io_stream_close(G_IO_STREAM(command_connection), NULL, NULL);
+	g_object_unref(command_connection);
 	test_agent_stop(process);
 	g_byte_array_unref(request);
 	g_free(terminal_id);

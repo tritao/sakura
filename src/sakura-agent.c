@@ -842,10 +842,19 @@ sakura_agent_connection_thread(gpointer data)
 
 	input = g_io_stream_get_input_stream(G_IO_STREAM(request->connection));
 	output = g_io_stream_get_output_stream(G_IO_STREAM(request->connection));
-	response = g_byte_array_new();
-	g_mutex_lock(&request->agent->state_mutex);
-	if (sakura_control_frame_read(input, &payload, NULL, &error) &&
-	    sakura_control_decode_request(payload->data, payload->len, &decoded,
+	for (;;) {
+		payload = NULL;
+		response = g_byte_array_new();
+		initial_event = NULL;
+		decoded = (SakuraControlRequest){ 0 };
+		error = NULL;
+		request_id = "unknown";
+		accepted_id = NULL;
+		subscribed = FALSE;
+		if (!sakura_control_frame_read(input, &payload, NULL, &error))
+			break;
+		g_mutex_lock(&request->agent->state_mutex);
+		if (sakura_control_decode_request(payload->data, payload->len, &decoded,
 	                                   &error)) {
 		request_id = decoded.request_id != NULL ? decoded.request_id : "unknown";
 		if (decoded.kind == SAKURA_CONTROL_REQUEST_SUBSCRIBE_EVENTS) {
@@ -881,26 +890,39 @@ sakura_agent_connection_thread(gpointer data)
 			sakura_agent_broadcast_event(request->agent);
 		}
 	}
-	if (response->len == 0) {
+		if (response->len == 0) {
 		const gchar *message = error != NULL ? error->message : "invalid request";
 
 		sakura_control_encode_error_response(request_id, "invalid_request",
 		                                    message, response);
 	}
-	if (response != NULL && response->len != 0)
-		sakura_control_frame_write(output, response->data, response->len,
+		if (response != NULL && response->len != 0)
+			sakura_control_frame_write(output, response->data, response->len,
 		                           NULL, NULL);
-	if (subscribed && initial_event != NULL)
-		sakura_control_frame_write(output, initial_event->data, initial_event->len,
+		if (subscribed && initial_event != NULL)
+			sakura_control_frame_write(output, initial_event->data, initial_event->len,
 		                           NULL, NULL);
-	g_mutex_unlock(&request->agent->state_mutex);
-	if (subscribed) {
-		while (sakura_control_frame_read(input, &payload, NULL, &error))
-			g_clear_pointer(&payload, g_byte_array_unref);
-		g_clear_error(&error);
-		g_mutex_lock(&request->agent->state_mutex);
-		sakura_agent_remove_subscriber(request->agent, request->connection);
 		g_mutex_unlock(&request->agent->state_mutex);
+		if (subscribed) {
+			while (sakura_control_frame_read(input, &payload, NULL, &error))
+				g_clear_pointer(&payload, g_byte_array_unref);
+			g_clear_error(&error);
+			g_mutex_lock(&request->agent->state_mutex);
+			sakura_agent_remove_subscriber(request->agent, request->connection);
+			g_mutex_unlock(&request->agent->state_mutex);
+			g_clear_pointer(&payload, g_byte_array_unref);
+			g_clear_pointer(&response, g_byte_array_unref);
+			g_clear_pointer(&initial_event, g_byte_array_unref);
+			sakura_control_request_clear(&decoded);
+			g_free(accepted_id);
+			break;
+		}
+		g_clear_error(&error);
+		g_clear_pointer(&payload, g_byte_array_unref);
+		g_clear_pointer(&response, g_byte_array_unref);
+		g_clear_pointer(&initial_event, g_byte_array_unref);
+		sakura_control_request_clear(&decoded);
+		g_free(accepted_id);
 	}
 	g_clear_error(&error);
 	g_clear_pointer(&payload, g_byte_array_unref);

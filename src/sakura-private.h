@@ -234,6 +234,13 @@ struct sakura_app {
 	GMutex agent_event_mutex;
 	gboolean agent_event_mutex_initialized;
 	gboolean agent_event_stopping;
+	GThread *agent_command_thread;
+	GSocketConnection *agent_command_connection;
+	GMutex agent_command_mutex;
+	GCond agent_command_cond;
+	GQueue *agent_command_queue;
+	gboolean agent_command_mutex_initialized;
+	gboolean agent_command_stopping;
 	GDataInputStream *codex_name_helper_output;
 	GOutputStream *codex_name_helper_input;
 	GQueue *codex_name_query_queue;
