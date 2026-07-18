@@ -27,11 +27,15 @@ typedef struct {
 	SakuraAgent *agent;
 	SakuraCoreTerminal *core;
 	gchar *id;
+	GByteArray *output_buffer;
+	guint attached_clients;
 	int master_fd;
 	GPid pid;
 	GThread *reader_thread;
 	gboolean stopping;
 } SakuraAgentTerminal;
+
+#define SAKURA_AGENT_OUTPUT_BUFFER_SIZE (64 * 1024)
 
 struct _SakuraAgent {
 	GMainLoop *loop;
@@ -250,7 +254,25 @@ sakura_agent_terminal_free(SakuraAgentTerminal *terminal)
 		terminal->pid = 0;
 	}
 	g_free(terminal->id);
+	g_clear_pointer(&terminal->output_buffer, g_byte_array_unref);
 	g_free(terminal);
+}
+
+
+static void
+sakura_agent_terminal_buffer_output(SakuraAgentTerminal *terminal,
+	                                  const guint8 *data, gsize data_length)
+{
+	gsize excess;
+
+	if (terminal == NULL || terminal->output_buffer == NULL ||
+	    data == NULL || data_length == 0)
+		return;
+	g_byte_array_append(terminal->output_buffer, data, data_length);
+	if (terminal->output_buffer->len > SAKURA_AGENT_OUTPUT_BUFFER_SIZE) {
+		excess = terminal->output_buffer->len - SAKURA_AGENT_OUTPUT_BUFFER_SIZE;
+		g_byte_array_remove_range(terminal->output_buffer, 0, excess);
+	}
 }
 
 
@@ -268,6 +290,8 @@ sakura_agent_terminal_reader(gpointer data)
 			GByteArray *event = g_byte_array_new();
 
 			g_mutex_lock(&agent->state_mutex);
+			if (!terminal->stopping)
+				sakura_agent_terminal_buffer_output(terminal, buffer, count);
 			if (!terminal->stopping &&
 			    sakura_control_encode_terminal_output_event(
 				    ++agent->sequence, terminal->id, buffer, count, FALSE,
@@ -616,6 +640,7 @@ sakura_agent_create_terminal(SakuraAgent *agent,
 	terminal->agent = agent;
 	terminal->core = core;
 	terminal->id = g_strdup(id);
+	terminal->output_buffer = g_byte_array_new();
 	terminal->master_fd = master_fd;
 	terminal->pid = pid;
 	g_ptr_array_add(agent->terminals, terminal);
@@ -690,6 +715,82 @@ sakura_agent_terminal_resize(SakuraAgent *agent,
 	}
 	if (terminal->pid > 0)
 		kill(terminal->pid, SIGWINCH);
+	return TRUE;
+}
+
+
+static gboolean
+sakura_agent_attach_terminal(SakuraAgent *agent,
+	                           const SakuraControlRequest *request,
+	                           const gchar *request_id,
+	                           GByteArray *response, gboolean *workspace_changed,
+	                           GError **error)
+{
+	SakuraAgentTerminal *terminal;
+	struct winsize size = { 0 };
+	gboolean changed = FALSE;
+
+	if (workspace_changed != NULL)
+		*workspace_changed = FALSE;
+
+	terminal = sakura_agent_find_terminal(agent, request->terminal_id, error);
+	if (terminal == NULL)
+		return FALSE;
+	if (terminal->core == NULL)
+		return sakura_agent_error(error, "terminal is closed");
+	if (request->cols != 0 && request->rows != 0) {
+		changed = terminal->core->cols != request->cols ||
+		          terminal->core->rows != request->rows;
+		size.ws_col = request->cols;
+		size.ws_row = request->rows;
+		if (terminal->master_fd >= 0 &&
+		    ioctl(terminal->master_fd, TIOCSWINSZ, &size) != 0) {
+			g_set_error(error, G_IO_ERROR, g_io_error_from_errno(errno),
+			            "could not resize attached terminal: %s",
+			            g_strerror(errno));
+			return FALSE;
+		}
+		terminal->core->cols = request->cols;
+		terminal->core->rows = request->rows;
+		if (terminal->pid > 0)
+			kill(terminal->pid, SIGWINCH);
+	}
+	if (changed) {
+		if (!sakura_core_workspace_sync_snapshot(agent->workspace,
+		                                         agent->session_snapshot))
+			return sakura_agent_error(error, "could not update session snapshot");
+		if (!sakura_agent_save_session(agent, error))
+			return FALSE;
+	}
+	terminal->attached_clients++;
+	if (!sakura_control_encode_terminal_attachment_response(
+			request_id, terminal->core,
+			terminal->output_buffer != NULL ? terminal->output_buffer->data : NULL,
+			terminal->output_buffer != NULL ? terminal->output_buffer->len : 0,
+			response)) {
+		terminal->attached_clients--;
+		return sakura_agent_error(error, "could not encode terminal attachment");
+	}
+	if (workspace_changed != NULL)
+		*workspace_changed = changed;
+	return TRUE;
+}
+
+
+static gboolean
+sakura_agent_detach_terminal(SakuraAgent *agent,
+	                           const SakuraControlRequest *request,
+	                           GError **error)
+{
+	SakuraAgentTerminal *terminal;
+
+	terminal = sakura_agent_find_terminal(agent, request->terminal_id, error);
+	if (terminal == NULL)
+		return FALSE;
+	if (terminal->core == NULL)
+		return sakura_agent_error(error, "terminal is closed");
+	if (terminal->attached_clients > 0)
+		terminal->attached_clients--;
 	return TRUE;
 }
 
@@ -871,9 +972,23 @@ sakura_agent_connection_thread(gpointer data)
 			subscribed = TRUE;
 		} else if (decoded.kind == SAKURA_CONTROL_REQUEST_GET_SNAPSHOT) {
 			sakura_control_encode_snapshot_response(request_id,
-			                                       request->agent->sequence,
-			                                       request->agent->workspace,
-			                                       response);
+		                                       request->agent->sequence,
+		                                       request->agent->workspace,
+		                                       response);
+		} else if (decoded.kind == SAKURA_CONTROL_REQUEST_ATTACH_TERMINAL) {
+			gboolean workspace_changed = FALSE;
+
+			if (sakura_agent_attach_terminal(
+					request->agent, &decoded, request_id, response,
+					&workspace_changed, &error) && workspace_changed) {
+				request->agent->sequence++;
+				sakura_agent_broadcast_event(request->agent);
+			}
+		} else if (decoded.kind == SAKURA_CONTROL_REQUEST_DETACH_TERMINAL) {
+			if (sakura_agent_detach_terminal(request->agent, &decoded, &error))
+				sakura_control_encode_accepted_response(
+					request_id, "terminal_detached", decoded.terminal_id,
+					response);
 		} else if (sakura_agent_apply_request(request->agent, &decoded,
 		                                      &accepted_id, &error)) {
 			request->agent->sequence++;

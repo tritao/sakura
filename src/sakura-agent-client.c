@@ -55,7 +55,8 @@ typedef struct {
 typedef enum {
 	SAKURA_AGENT_COMMAND_INPUT,
 	SAKURA_AGENT_COMMAND_RESIZE,
-	SAKURA_AGENT_COMMAND_CLOSE
+	SAKURA_AGENT_COMMAND_CLOSE,
+	SAKURA_AGENT_COMMAND_DETACH
 } SakuraAgentCommandKind;
 
 typedef struct {
@@ -99,6 +100,9 @@ sakura_agent_apply_command_failure_cb(gpointer data)
 		if (failure->kind == SAKURA_AGENT_COMMAND_CLOSE)
 			g_warning("Could not close agent terminal %s: %s",
 			          failure->terminal_id, failure->message);
+		else if (failure->kind == SAKURA_AGENT_COMMAND_DETACH)
+			g_warning("Could not detach agent terminal %s: %s",
+			          failure->terminal_id, failure->message);
 		else
 			sakura_tab_agent_status(tab, SAKURA_TERMINAL_ERROR,
 			                       failure->message);
@@ -122,6 +126,12 @@ sakura_agent_report_command_failure(SakuraApp *app,
 	failure->terminal_id = g_strdup(command->terminal_id);
 	failure->message = g_strdup(error != NULL ? error->message :
 	                            "agent command failed");
+	if (app->session_shutting_down) {
+		g_free(failure->terminal_id);
+		g_free(failure->message);
+		g_free(failure);
+		return;
+	}
 	g_main_context_invoke(NULL, sakura_agent_apply_command_failure_cb, failure);
 }
 
@@ -150,6 +160,10 @@ sakura_agent_send_command(GSocketConnection *connection,
 		break;
 	case SAKURA_AGENT_COMMAND_CLOSE:
 		encoded = sakura_control_encode_close_terminal_request(
+			request_id, command->terminal_id, request);
+		break;
+	case SAKURA_AGENT_COMMAND_DETACH:
+		encoded = sakura_control_encode_detach_terminal_request(
 			request_id, command->terminal_id, request);
 		break;
 	default:
@@ -204,10 +218,8 @@ sakura_agent_command_thread(gpointer data)
 		while (g_queue_is_empty(app->agent_command_queue) &&
 		       !app->agent_command_stopping)
 			g_cond_wait(&app->agent_command_cond, &app->agent_command_mutex);
-		if (app->agent_command_stopping) {
-			while (!g_queue_is_empty(app->agent_command_queue))
-				sakura_agent_command_free(g_queue_pop_head(
-					app->agent_command_queue));
+		if (app->agent_command_stopping &&
+		    g_queue_is_empty(app->agent_command_queue)) {
 			g_mutex_unlock(&app->agent_command_mutex);
 			break;
 		}
@@ -218,15 +230,8 @@ sakura_agent_command_thread(gpointer data)
 			connection = sakura_agent_connect(app->agent_socket_path, &error);
 			if (connection != NULL) {
 				g_mutex_lock(&app->agent_command_mutex);
-				if (app->agent_command_stopping) {
-					g_mutex_unlock(&app->agent_command_mutex);
-					g_io_stream_close(G_IO_STREAM(connection), NULL, NULL);
-					g_object_unref(connection);
-					connection = NULL;
-				} else {
-					app->agent_command_connection = g_object_ref(connection);
-					g_mutex_unlock(&app->agent_command_mutex);
-				}
+				app->agent_command_connection = g_object_ref(connection);
+				g_mutex_unlock(&app->agent_command_mutex);
 			}
 		}
 		if (connection == NULL) {
@@ -660,6 +665,76 @@ out:
 }
 
 
+static gboolean
+sakura_agent_request_attached(SakuraApp *app, const gchar *request_id,
+	                            GByteArray *request, guint8 **replay_data,
+	                            gsize *replay_length, guint *cols, guint *rows,
+	                            guint *status, GError **error)
+{
+	GSocketConnection *connection;
+	GInputStream *input;
+	GOutputStream *output;
+	GByteArray *response_payload = NULL;
+	SakuraControlResponse response = { 0 };
+	gboolean success = FALSE;
+
+	if (replay_data != NULL)
+		*replay_data = NULL;
+	if (replay_length != NULL)
+		*replay_length = 0;
+	if (cols != NULL)
+		*cols = 0;
+	if (rows != NULL)
+		*rows = 0;
+	if (status != NULL)
+		*status = 0;
+	if (app == NULL || app->agent_socket_path == NULL || request_id == NULL ||
+	    request == NULL)
+		return FALSE;
+	connection = sakura_agent_connect(app->agent_socket_path, error);
+	if (connection == NULL)
+		return FALSE;
+	input = g_io_stream_get_input_stream(G_IO_STREAM(connection));
+	output = g_io_stream_get_output_stream(G_IO_STREAM(connection));
+	if (!sakura_control_frame_write(output, request->data, request->len, NULL,
+	                               error) ||
+	    !sakura_control_frame_read(input, &response_payload, NULL, error) ||
+	    !sakura_control_decode_response(response_payload->data,
+	                                    response_payload->len, &response,
+	                                    error))
+		goto out;
+	if (g_strcmp0(response.request_id, request_id) != 0) {
+		g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_INVALID_DATA,
+	                    "agent response id did not match attach request");
+		goto out;
+	}
+	if (!response.attached) {
+		g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_INVALID_DATA,
+		                    "agent did not attach terminal");
+		goto out;
+	}
+	if (replay_data != NULL) {
+		*replay_data = response.attached_output;
+		response.attached_output = NULL;
+	}
+	if (replay_length != NULL)
+		*replay_length = response.attached_output_length;
+	if (cols != NULL)
+		*cols = response.attached_cols;
+	if (rows != NULL)
+		*rows = response.attached_rows;
+	if (status != NULL)
+		*status = response.attached_status;
+	success = TRUE;
+out:
+	g_clear_pointer(&response_payload, g_byte_array_unref);
+	sakura_control_response_clear(&response);
+	g_io_stream_close(G_IO_STREAM(connection), NULL, NULL);
+	g_object_unref(connection);
+	return success;
+}
+
+
 gboolean
 sakura_agent_create_group(SakuraApp *app, const gchar *parent_id,
 	                       const gchar *title, const gchar *directory,
@@ -881,6 +956,37 @@ sakura_agent_create_terminal(SakuraApp *app, const gchar *requested_terminal_id,
 
 
 gboolean
+sakura_agent_attach_terminal(SakuraApp *app, const gchar *terminal_id,
+	                           guint cols, guint rows, guint8 **replay_data,
+	                           gsize *replay_length, guint *attached_cols,
+	                           guint *attached_rows, guint *status,
+	                           GError **error)
+{
+	GByteArray *request;
+	gchar *request_id;
+	gboolean encoded;
+	gboolean result;
+
+	request_id = g_uuid_string_random();
+	request = g_byte_array_new();
+	encoded = sakura_control_encode_attach_terminal_request(
+		request_id, terminal_id, cols, rows, request);
+	if (!encoded) {
+		g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT,
+		                    "could not encode attach terminal request");
+		result = FALSE;
+	} else {
+		result = sakura_agent_request_attached(
+			app, request_id, request, replay_data, replay_length,
+			attached_cols, attached_rows, status, error);
+	}
+	g_byte_array_unref(request);
+	g_free(request_id);
+	return result;
+}
+
+
+gboolean
 sakura_agent_terminal_input(SakuraApp *app, const gchar *terminal_id,
 	                          const guint8 *data, gsize data_length,
 	                          GError **error)
@@ -938,6 +1044,24 @@ sakura_agent_close_terminal(SakuraApp *app, const gchar *terminal_id,
 	}
 	command = g_new0(SakuraAgentCommand, 1);
 	command->kind = SAKURA_AGENT_COMMAND_CLOSE;
+	command->terminal_id = g_strdup(terminal_id);
+	return sakura_agent_enqueue_command(app, command, error);
+}
+
+
+gboolean
+sakura_agent_detach_terminal(SakuraApp *app, const gchar *terminal_id,
+	                           GError **error)
+{
+	SakuraAgentCommand *command;
+
+	if (terminal_id == NULL || terminal_id[0] == '\0') {
+		g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT,
+		                    "invalid terminal detach command");
+		return FALSE;
+	}
+	command = g_new0(SakuraAgentCommand, 1);
+	command->kind = SAKURA_AGENT_COMMAND_DETACH;
 	command->terminal_id = g_strdup(terminal_id);
 	return sakura_agent_enqueue_command(app, command, error);
 }

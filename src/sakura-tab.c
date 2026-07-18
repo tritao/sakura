@@ -517,6 +517,12 @@ sakura_tab_start_agent_terminal(SakuraTab *tab, const gchar *cwd)
 	const gchar *task_id = "root";
 	guint cols, rows;
 	gchar *created_terminal_id = NULL;
+	guint8 *replay_data = NULL;
+	gsize replay_length = 0;
+	guint attached_cols = 0;
+	guint attached_rows = 0;
+	guint attached_status = 0;
+	gboolean attached = FALSE;
 	GError *error = NULL;
 	VtePty *proxy_pty = NULL;
 	struct termios termios = { 0 };
@@ -537,11 +543,18 @@ sakura_tab_start_agent_terminal(SakuraTab *tab, const gchar *cwd)
 		cols = sakura.columns > 0 ? sakura.columns : 80;
 	if (rows == 0)
 		rows = sakura.rows > 0 ? sakura.rows : 24;
-	if (!sakura_agent_create_terminal(&sakura, tab->terminal_id, group_id,
-	                                  task_id, cwd, cols, rows,
-	                                  &created_terminal_id, &error)) {
+	attached = sakura_agent_attach_terminal(
+		&sakura, tab->terminal_id, cols, rows, &replay_data, &replay_length,
+		&attached_cols, &attached_rows, &attached_status, &error);
+	if (!attached) {
 		g_clear_error(&error);
-		return FALSE;
+		if (!sakura_agent_create_terminal(&sakura, tab->terminal_id, group_id,
+		                                  task_id, cwd, cols, rows,
+		                                  &created_terminal_id, &error)) {
+			g_clear_error(&error);
+			g_free(replay_data);
+			return FALSE;
+		}
 	}
 	if (created_terminal_id != NULL &&
 	    g_strcmp0(created_terminal_id, tab->terminal_id) != 0) {
@@ -584,6 +597,16 @@ sakura_tab_start_agent_terminal(SakuraTab *tab, const gchar *cwd)
 	tab->agent_rows = rows;
 	tab->agent_backed = TRUE;
 	tab->agent_terminal_exited = FALSE;
+	if (attached) {
+		if (attached_cols != 0)
+			tab->agent_cols = attached_cols;
+		if (attached_rows != 0)
+			tab->agent_rows = attached_rows;
+		sakura_tab_agent_feed_output(tab, replay_data, replay_length);
+		if (attached_status != 0)
+			sakura_tab_agent_status(tab, attached_status, "terminal attached");
+	}
+	g_free(replay_data);
 	return TRUE;
 
 fail:
@@ -593,8 +616,10 @@ fail:
 		close(master_fd);
 	if (slave_fd >= 0)
 		close(slave_fd);
+	g_free(replay_data);
 	if (tab->terminal_id != NULL && sakura.agent_socket_path != NULL &&
-	    !sakura_agent_close_terminal(&sakura, tab->terminal_id, NULL)) {
+	    (attached ? !sakura_agent_detach_terminal(&sakura, tab->terminal_id, NULL) :
+                 !sakura_agent_close_terminal(&sakura, tab->terminal_id, NULL))) {
 		g_warning("Could not roll back agent terminal %s", tab->terminal_id);
 	}
 	if (error != NULL) {
@@ -673,9 +698,11 @@ sakura_tab_close_agent_terminal(SakuraTab *tab)
 		g_source_remove(tab->agent_proxy_input_source_id);
 		tab->agent_proxy_input_source_id = 0;
 	}
-	if (tab->agent_backed && !sakura.session_shutting_down &&
-	    sakura.agent_socket_path != NULL && tab->terminal_id != NULL &&
-	    !sakura_agent_close_terminal(&sakura, tab->terminal_id, &error)) {
+	if (tab->agent_backed && sakura.agent_socket_path != NULL &&
+	    tab->terminal_id != NULL &&
+	    !(sakura.session_shutting_down
+	      ? sakura_agent_detach_terminal(&sakura, tab->terminal_id, &error)
+	      : sakura_agent_close_terminal(&sakura, tab->terminal_id, &error))) {
 		g_warning("Could not close agent terminal %s: %s", tab->terminal_id,
 		          error != NULL ? error->message : "unknown error");
 		g_clear_error(&error);

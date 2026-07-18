@@ -70,8 +70,15 @@ sakura_control_response_clear(SakuraControlResponse *response)
 	g_clear_pointer(&response->request_id, g_free);
 	g_clear_pointer(&response->accepted_kind, g_free);
 	g_clear_pointer(&response->accepted_id, g_free);
+	g_clear_pointer(&response->attached_terminal_id, g_free);
+	g_clear_pointer(&response->attached_output, g_free);
 	response->has_snapshot = FALSE;
 	response->accepted = FALSE;
+	response->attached = FALSE;
+	response->attached_cols = 0;
+	response->attached_rows = 0;
+	response->attached_status = 0;
+	response->attached_output_length = 0;
 }
 
 
@@ -452,6 +459,51 @@ sakura_control_encode_close_terminal_request(const gchar *request_id,
 
 
 gboolean
+sakura_control_encode_attach_terminal_request(const gchar *request_id,
+	                                             const gchar *terminal_id,
+	                                             guint cols, guint rows,
+	                                             GByteArray *payload)
+{
+	Sakura__Control__V1__AttachTerminalRequest attach =
+		SAKURA__CONTROL__V1__ATTACH_TERMINAL_REQUEST__INIT;
+	Sakura__Control__V1__Request request =
+		SAKURA__CONTROL__V1__REQUEST__INIT;
+
+	if (payload == NULL || request_id == NULL || request_id[0] == '\0' ||
+	    terminal_id == NULL || terminal_id[0] == '\0')
+		return FALSE;
+	attach.terminal_id = (gchar *)terminal_id;
+	attach.cols = cols;
+	attach.rows = rows;
+	request.request_id = (gchar *)request_id;
+	request.body_case = SAKURA__CONTROL__V1__REQUEST__BODY_ATTACH_TERMINAL;
+	request.attach_terminal = &attach;
+	return sakura_control_pack_message(&request.base, payload);
+}
+
+
+gboolean
+sakura_control_encode_detach_terminal_request(const gchar *request_id,
+	                                             const gchar *terminal_id,
+	                                             GByteArray *payload)
+{
+	Sakura__Control__V1__DetachTerminalRequest detach =
+		SAKURA__CONTROL__V1__DETACH_TERMINAL_REQUEST__INIT;
+	Sakura__Control__V1__Request request =
+		SAKURA__CONTROL__V1__REQUEST__INIT;
+
+	if (payload == NULL || request_id == NULL || request_id[0] == '\0' ||
+	    terminal_id == NULL || terminal_id[0] == '\0')
+		return FALSE;
+	detach.terminal_id = (gchar *)terminal_id;
+	request.request_id = (gchar *)request_id;
+	request.body_case = SAKURA__CONTROL__V1__REQUEST__BODY_DETACH_TERMINAL;
+	request.detach_terminal = &detach;
+	return sakura_control_pack_message(&request.base, payload);
+}
+
+
+gboolean
 sakura_control_encode_subscribe_events_request(const gchar *request_id,
 	                                             guint64 after_sequence,
 	                                             GByteArray *payload)
@@ -588,6 +640,22 @@ sakura_control_decode_request(const guint8 *payload,
 		if (decoded->close_session != NULL) {
 			request->kind = SAKURA_CONTROL_REQUEST_CLOSE_TERMINAL;
 			request->terminal_id = g_strdup(decoded->close_session->terminal_id);
+		}
+		break;
+	case SAKURA__CONTROL__V1__REQUEST__BODY_ATTACH_TERMINAL:
+		if (decoded->attach_terminal != NULL) {
+			request->kind = SAKURA_CONTROL_REQUEST_ATTACH_TERMINAL;
+			request->terminal_id = g_strdup(
+				decoded->attach_terminal->terminal_id);
+			request->cols = decoded->attach_terminal->cols;
+			request->rows = decoded->attach_terminal->rows;
+		}
+		break;
+	case SAKURA__CONTROL__V1__REQUEST__BODY_DETACH_TERMINAL:
+		if (decoded->detach_terminal != NULL) {
+			request->kind = SAKURA_CONTROL_REQUEST_DETACH_TERMINAL;
+			request->terminal_id = g_strdup(
+				decoded->detach_terminal->terminal_id);
 		}
 		break;
 	case SAKURA__CONTROL__V1__REQUEST__BODY_SUBSCRIBE_EVENTS:
@@ -818,6 +886,33 @@ sakura_control_encode_accepted_response(const gchar *request_id,
 
 
 gboolean
+sakura_control_encode_terminal_attachment_response(
+	const gchar *request_id, const SakuraCoreTerminal *terminal,
+	const guint8 *replay_data, gsize replay_data_length, GByteArray *payload)
+{
+	Sakura__Control__V1__TerminalAttachment attachment =
+		SAKURA__CONTROL__V1__TERMINAL_ATTACHMENT__INIT;
+	Sakura__Control__V1__Response response =
+		SAKURA__CONTROL__V1__RESPONSE__INIT;
+
+	if (request_id == NULL || terminal == NULL || payload == NULL ||
+	    (replay_data == NULL && replay_data_length != 0))
+		return FALSE;
+	attachment.terminal_id = (gchar *)sakura_control_string(terminal->id);
+	attachment.cols = terminal->cols;
+	attachment.rows = terminal->rows;
+	attachment.status = terminal->status;
+	attachment.replay_data.data = (guint8 *)replay_data;
+	attachment.replay_data.len = replay_data_length;
+	response.request_id = (gchar *)request_id;
+	response.body_case =
+		SAKURA__CONTROL__V1__RESPONSE__BODY_TERMINAL_ATTACHMENT;
+	response.terminal_attachment = &attachment;
+	return sakura_control_pack_message(&response.base, payload);
+}
+
+
+gboolean
 sakura_control_encode_workspace_changed_event(
 	guint64 sequence, const SakuraCoreWorkspace *workspace, GByteArray *payload)
 {
@@ -903,6 +998,7 @@ sakura_control_decode_response(const guint8 *payload,
 	Sakura__Control__V1__Response *decoded;
 	gboolean has_snapshot;
 	gboolean accepted;
+	gboolean attached;
 
 	if (payload == NULL || response == NULL)
 		return sakura_control_error(error, "invalid control response");
@@ -927,15 +1023,36 @@ sakura_control_decode_response(const guint8 *payload,
 	accepted =
 		decoded->body_case == SAKURA__CONTROL__V1__RESPONSE__BODY_ACCEPTED &&
 		decoded->accepted != NULL;
+	attached =
+		decoded->body_case ==
+			SAKURA__CONTROL__V1__RESPONSE__BODY_TERMINAL_ATTACHMENT &&
+		decoded->terminal_attachment != NULL;
 	if (accepted) {
 		response->accepted_kind = g_strdup(decoded->accepted->kind);
 		response->accepted_id = g_strdup(decoded->accepted->id);
 	}
+	if (attached) {
+		Sakura__Control__V1__TerminalAttachment *attachment =
+			decoded->terminal_attachment;
+
+		response->attached_terminal_id = g_strdup(attachment->terminal_id);
+		response->attached_cols = attachment->cols;
+		response->attached_rows = attachment->rows;
+		response->attached_status = attachment->status;
+		response->attached_output_length = attachment->replay_data.len;
+		if (response->attached_output_length != 0) {
+			response->attached_output = g_malloc(
+				response->attached_output_length);
+			memcpy(response->attached_output, attachment->replay_data.data,
+			       response->attached_output_length);
+		}
+	}
 	sakura__control__v1__response__free_unpacked(decoded, NULL);
 	response->has_snapshot = has_snapshot;
 	response->accepted = accepted;
+	response->attached = attached;
 	if (response->request_id == NULL ||
-	    (!response->has_snapshot && !response->accepted))
+	    (!response->has_snapshot && !response->accepted && !response->attached))
 		return sakura_control_error(error, "unsupported control response");
 	return TRUE;
 }

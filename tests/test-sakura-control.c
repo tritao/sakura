@@ -346,7 +346,8 @@ test_agent_call_on_connection(GSocketConnection *connection,
 	                                             &error));
 	g_assert_no_error(error);
 	g_assert_cmpstr(response->request_id, ==, request_id);
-	g_assert_true(response->has_snapshot || response->accepted);
+	g_assert_true(response->has_snapshot || response->accepted ||
+	              response->attached);
 	g_clear_pointer(&response_payload, g_byte_array_unref);
 }
 
@@ -858,6 +859,33 @@ test_agent_terminal_lifecycle(void)
 	sakura_control_response_clear(&response);
 	g_assert_true(test_agent_read_output_until(
 		subscriber_input, terminal_id, "sakura-terminal-test"));
+
+	g_byte_array_set_size(request, 0);
+	g_assert_true(sakura_control_encode_detach_terminal_request(
+		"terminal-detach", terminal_id, request));
+	test_agent_call_on_connection(command_connection, "terminal-detach", request,
+	                              &response);
+	g_assert_true(response.accepted);
+	g_assert_cmpstr(response.accepted_kind, ==, "terminal_detached");
+	g_assert_cmpstr(response.accepted_id, ==, terminal_id);
+	sakura_control_response_clear(&response);
+
+	g_byte_array_set_size(request, 0);
+	g_assert_true(sakura_control_encode_attach_terminal_request(
+		"terminal-attach", terminal_id, 120, 50, request));
+	test_agent_call_on_connection(command_connection, "terminal-attach", request,
+	                              &response);
+	g_assert_true(response.attached);
+	g_assert_cmpstr(response.attached_terminal_id, ==, terminal_id);
+	g_assert_cmpuint(response.attached_cols, ==, 120);
+	g_assert_cmpuint(response.attached_rows, ==, 50);
+	g_assert_cmpuint(response.attached_status, ==, SAKURA_TERMINAL_RUNNING);
+	g_assert_nonnull(response.attached_output);
+	g_assert_cmpuint(response.attached_output_length, >, 0);
+	g_assert_nonnull(g_strstr_len(
+		(const gchar *)response.attached_output,
+		response.attached_output_length, "sakura-terminal-test"));
+	sakura_control_response_clear(&response);
 
 	g_byte_array_set_size(request, 0);
 	g_assert_true(sakura_control_encode_terminal_resize_request(

@@ -25,7 +25,9 @@ typedef enum {
 	SAKURA_CONTROL_REQUEST_TERMINAL_INPUT,
 	SAKURA_CONTROL_REQUEST_TERMINAL_RESIZE,
 	SAKURA_CONTROL_REQUEST_CLOSE_TERMINAL,
-	SAKURA_CONTROL_REQUEST_SUBSCRIBE_EVENTS
+	SAKURA_CONTROL_REQUEST_SUBSCRIBE_EVENTS,
+	SAKURA_CONTROL_REQUEST_ATTACH_TERMINAL,
+	SAKURA_CONTROL_REQUEST_DETACH_TERMINAL
 } SakuraControlRequestKind;
 
 typedef struct {
@@ -55,6 +57,13 @@ typedef struct {
 	gboolean accepted;
 	gchar *accepted_kind;
 	gchar *accepted_id;
+	gboolean attached;
+	gchar *attached_terminal_id;
+	guint attached_cols;
+	guint attached_rows;
+	guint attached_status;
+	guint8 *attached_output;
+	gsize attached_output_length;
 } SakuraControlResponse;
 
 void sakura_control_request_clear(SakuraControlRequest *request);
@@ -107,6 +116,11 @@ gboolean sakura_control_encode_terminal_resize_request(
 	GByteArray *payload);
 gboolean sakura_control_encode_close_terminal_request(
 	const gchar *request_id, const gchar *terminal_id, GByteArray *payload);
+gboolean sakura_control_encode_attach_terminal_request(
+	const gchar *request_id, const gchar *terminal_id, guint cols, guint rows,
+	GByteArray *payload);
+gboolean sakura_control_encode_detach_terminal_request(
+	const gchar *request_id, const gchar *terminal_id, GByteArray *payload);
 gboolean sakura_control_encode_subscribe_events_request(
 	const gchar *request_id, guint64 after_sequence, GByteArray *payload);
 gboolean sakura_control_decode_request(const guint8 *payload,
@@ -125,6 +139,9 @@ gboolean sakura_control_encode_accepted_response(const gchar *request_id,
 	                                               const gchar *kind,
 	                                               const gchar *id,
 	                                               GByteArray *payload);
+gboolean sakura_control_encode_terminal_attachment_response(
+	const gchar *request_id, const SakuraCoreTerminal *terminal,
+	const guint8 *replay_data, gsize replay_data_length, GByteArray *payload);
 gboolean sakura_control_encode_workspace_changed_event(
 	guint64 sequence, const SakuraCoreWorkspace *workspace, GByteArray *payload);
 gboolean sakura_control_encode_terminal_output_event(

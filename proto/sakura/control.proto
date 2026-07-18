@@ -132,6 +132,16 @@ message CloseSessionRequest {
   string terminal_id = 1;
 }
 
+message AttachTerminalRequest {
+  string terminal_id = 1;
+  uint32 cols = 2;
+  uint32 rows = 3;
+}
+
+message DetachTerminalRequest {
+  string terminal_id = 1;
+}
+
 message SubscribeEventsRequest {
   uint64 after_sequence = 1;
 }
@@ -153,6 +163,8 @@ message Request {
     UpdateTaskRequest update_task = 13;
     SetTaskArchivedRequest set_task_archived = 14;
     DeleteTaskRequest delete_task = 15;
+    AttachTerminalRequest attach_terminal = 16;
+    DetachTerminalRequest detach_terminal = 17;
   }
 }
 
@@ -162,7 +174,16 @@ message Response {
     WorkspaceSnapshot snapshot = 2;
     EntityRef accepted = 3;
     Error error = 4;
+    TerminalAttachment terminal_attachment = 5;
   }
+}
+
+message TerminalAttachment {
+  string terminal_id = 1;
+  uint32 cols = 2;
+  uint32 rows = 3;
+  uint32 status = 4;
+  bytes replay_data = 5;
 }
 
 message WorkspaceChanged {

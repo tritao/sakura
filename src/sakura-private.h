@@ -847,6 +847,10 @@ gboolean sakura_agent_create_terminal(
 	SakuraApp *app, const gchar *requested_terminal_id,
 	const gchar *group_id, const gchar *task_id, const gchar *cwd,
 	guint cols, guint rows, gchar **created_terminal_id, GError **error);
+gboolean sakura_agent_attach_terminal(
+	SakuraApp *app, const gchar *terminal_id, guint cols, guint rows,
+	guint8 **replay_data, gsize *replay_length, guint *attached_cols,
+	guint *attached_rows, guint *status, GError **error);
 gboolean sakura_agent_terminal_input(SakuraApp *app, const gchar *terminal_id,
                                      const guint8 *data, gsize data_length,
                                      GError **error);
@@ -855,6 +859,8 @@ gboolean sakura_agent_terminal_resize(SakuraApp *app,
                                       guint cols, guint rows, GError **error);
 gboolean sakura_agent_close_terminal(SakuraApp *app, const gchar *terminal_id,
                                      GError **error);
+gboolean sakura_agent_detach_terminal(SakuraApp *app, const gchar *terminal_id,
+                                       GError **error);
 void sakura_agent_stop(SakuraApp *app);
 
 const gchar *sakura_tool_label(SakuraToolKind tool);
