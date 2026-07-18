@@ -19,6 +19,7 @@
 
 typedef struct sakura_app SakuraApp;
 typedef struct sakura_workspace_model SakuraWorkspaceModel;
+typedef struct sakura_agent_terminal_start_result SakuraAgentTerminalStartResult;
 typedef struct sakura_page SakuraPage;
 /* Semantic vocabulary: a page is the user-facing session container, while a
  * tab is one terminal surface/pane inside that session. Keep the historical
@@ -88,7 +89,11 @@ typedef enum {
 	SAKURA_WORKSPACE_CHANGE_STRUCTURE = 1 << 0,
 	SAKURA_WORKSPACE_CHANGE_SCOPE = 1 << 1,
 	SAKURA_WORKSPACE_CHANGE_SELECTION = 1 << 2,
-	SAKURA_WORKSPACE_CHANGE_METADATA = 1 << 3
+	SAKURA_WORKSPACE_CHANGE_METADATA = 1 << 3,
+	/* The sidebar/tab projection changed, but terminal geometry did not. */
+	SAKURA_WORKSPACE_CHANGE_PROJECTION = 1 << 4,
+	/* A visible terminal/layout chrome change requires window sizing. */
+	SAKURA_WORKSPACE_CHANGE_GEOMETRY = 1 << 5
 } SakuraWorkspaceChange;
 
 typedef struct {
@@ -141,6 +146,9 @@ struct sakura_workspace_model {
 
 struct sakura_app {
 	GtkWidget *main_window;
+	GtkWidget *startup_overlay;
+	GtkWidget *startup_spinner;
+	GtkWidget *startup_status_label;
 	GtkWidget *header_bar;
 	GtkWidget *sidebar_paned;
 	GtkWidget *sidebar;
@@ -216,6 +224,10 @@ struct sakura_app {
 	bool session_ready;
 	bool session_shutting_down;
 	bool session_restore_failed;
+	bool startup_preserve_failed_session;
+	bool startup_workspace_ready;
+	guint startup_pending_terminal_starts;
+	guint startup_restore_source_id;
 	guint workspace_mutation_depth;
 	guint workspace_pending_changes;
 	gboolean workspace_reconciling;
@@ -228,6 +240,8 @@ struct sakura_app {
 	guint sidebar_spinner_pulse;
 	GSubprocess *codex_name_helper_process;
 	GSubprocess *agent_process;
+	GThreadPool *agent_terminal_start_pool;
+	gboolean agent_terminal_start_stopping;
 	gchar *agent_socket_path;
 	gchar *agent_socket_path_override;
 	guint agent_restart_source_id;
@@ -268,6 +282,7 @@ struct sakura_app {
 	GKeyFile *cfg;
 	GKeyFile *session_cfg;
 	SakuraSessionSnapshot *session_snapshot;
+	SakuraSessionSnapshot *agent_pending_snapshot;
 	char *configfile;
 	char *sessionfile;
 	char *session_lock_path;
@@ -433,6 +448,7 @@ struct sakura_tab {
 	guint agent_cols;
 	guint agent_rows;
 	gboolean agent_backed;
+	gboolean agent_start_pending;
 	gboolean agent_terminal_exited;
 	gboolean agent_terminal_lost;
 #ifdef HAVE_WEBKITGTK
@@ -457,6 +473,7 @@ struct sakura_tab {
 	gchar *codex_session_name;
 	gchar *codex_reasoning_effort;
 	gchar *codex_tracking_token;
+	gboolean codex_start_pending;
 	gboolean codex_name_query_active;
 	guint codex_name_retry_source_id;
 	guint codex_name_retry_count;
@@ -656,6 +673,11 @@ gboolean sakura_sidebar_can_reorder_node_to_group(SakuraSidebarNode *source,
                                                     SakuraSidebarNode *target);
 void sakura_sidebar_sync_projection_links(void);
 gboolean sakura_workspace_restore_snapshot(SakuraSessionSnapshot *snapshot);
+typedef void (*SakuraWorkspaceRestoreCallback)(gboolean success, gpointer data);
+gboolean sakura_workspace_restore_snapshot_async(
+	SakuraSessionSnapshot *snapshot, SakuraWorkspaceRestoreCallback callback,
+	gpointer data);
+void sakura_workspace_restore_snapshot_async_cancel(void);
 void sakura_workspace_finish_restore(void);
 gboolean sakura_workspace_validate(GError **error);
 gboolean sakura_cwd_tracking_poll_cb(gpointer data);
@@ -824,7 +846,30 @@ gboolean sakura_session_write_snapshot(SakuraApp *app,
                                        const SakuraSessionSnapshot *snapshot);
 gboolean sakura_session_load_file(SakuraApp *app, gboolean restore_session);
 void sakura_session_prepare_bash_integration(SakuraApp *app);
+void sakura_startup_terminal_start_pending(SakuraApp *app, gboolean pending);
 gboolean sakura_agent_start(SakuraApp *app);
+void sakura_agent_apply_pending_snapshot(SakuraApp *app);
+struct sakura_agent_terminal_start_result {
+	SakuraApp *app;
+	gchar *requested_terminal_id;
+	gboolean attached;
+	gchar *created_terminal_id;
+	guint8 *replay_data;
+	gsize replay_length;
+	guint attached_cols;
+	guint attached_rows;
+	guint attached_status;
+	GError *error;
+};
+typedef void (*SakuraAgentTerminalStartCallback)(
+	SakuraAgentTerminalStartResult *result, gpointer data);
+gboolean sakura_agent_start_terminal_async(
+	SakuraApp *app, const gchar *terminal_id, const gchar *group_id,
+	const gchar *task_id, const gchar *cwd, guint cols, guint rows,
+	SakuraAgentTerminalStartCallback callback, gpointer data,
+	GError **error);
+void sakura_agent_terminal_start_result_free(
+	SakuraAgentTerminalStartResult *result);
 gboolean sakura_agent_create_group(SakuraApp *app, const gchar *parent_id,
                                    const gchar *title, const gchar *directory,
                                    GError **error);

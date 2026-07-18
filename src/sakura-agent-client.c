@@ -414,40 +414,74 @@ sakura_agent_enqueue_command(SakuraApp *app, SakuraAgentCommand *command,
 
 
 static gboolean
+sakura_agent_apply_workspace_snapshot(SakuraApp *app,
+                                       SakuraSessionSnapshot *snapshot)
+{
+	if (app == NULL || snapshot == NULL || app->workspace == NULL ||
+	    app->session_shutting_down)
+		return FALSE;
+
+	sakura_workspace_begin_mutation();
+	sakura_workspace_model_restore_snapshot(app->workspace, snapshot);
+	if (snapshot->root_directory != NULL &&
+	    snapshot->root_directory[0] != '\0') {
+		g_free(app->workspace->root_group->directory);
+		app->workspace->root_group->directory = g_strdup(
+			snapshot->root_directory);
+	}
+	sakura_sidebar_rebuild_projection();
+	if (app->workspace->active_task != NULL &&
+	    sakura_workspace_model_task_is_archived(
+			app->workspace, app->workspace->active_task))
+		app->workspace->active_task = NULL;
+	if (app->workspace->active_group != NULL &&
+	    sakura_workspace_model_group_is_archived(
+			app->workspace, app->workspace->active_group)) {
+		app->workspace->active_group = app->workspace->root_group;
+		app->active_group_scope = app->sidebar_root;
+		if (app->sidebar_root != NULL)
+			sakura_sidebar_set_scope(app->sidebar_root);
+	}
+	sakura_workspace_mark_changed(SAKURA_WORKSPACE_CHANGE_STRUCTURE |
+	                              SAKURA_WORKSPACE_CHANGE_METADATA);
+	sakura_workspace_end_mutation();
+	return TRUE;
+}
+
+
+void
+sakura_agent_apply_pending_snapshot(SakuraApp *app)
+{
+	SakuraSessionSnapshot *snapshot;
+
+	if (app == NULL || app->session_restoring ||
+	    app->agent_pending_snapshot == NULL)
+		return;
+	snapshot = app->agent_pending_snapshot;
+	app->agent_pending_snapshot = NULL;
+	if (!sakura_agent_apply_workspace_snapshot(app, snapshot))
+		g_warning("Could not apply pending sakura-agent workspace snapshot");
+	sakura_session_snapshot_free(snapshot);
+}
+
+
+static gboolean
 sakura_agent_apply_event_cb(gpointer data)
 {
 	SakuraAgentEvent *event = data;
 
-	if (event->app != NULL && event->app->workspace != NULL &&
+	if (event->app != NULL && event->app->session_restoring &&
+	    event->app->workspace != NULL &&
 	    !event->app->session_shutting_down) {
-		sakura_workspace_begin_mutation();
-		sakura_workspace_model_restore_snapshot(event->app->workspace,
-		                                         event->snapshot);
-		if (event->snapshot->root_directory != NULL &&
-		    event->snapshot->root_directory[0] != '\0') {
-			g_free(event->app->workspace->root_group->directory);
-			event->app->workspace->root_group->directory = g_strdup(
-				event->snapshot->root_directory);
-		}
-		sakura_sidebar_rebuild_projection();
-		if (event->app->workspace->active_task != NULL &&
-		    sakura_workspace_model_task_is_archived(
-				event->app->workspace,
-				event->app->workspace->active_task))
-			event->app->workspace->active_task = NULL;
-		if (event->app->workspace->active_group != NULL &&
-		    sakura_workspace_model_group_is_archived(
-				event->app->workspace,
-				event->app->workspace->active_group)) {
-			event->app->workspace->active_group =
-				event->app->workspace->root_group;
-			event->app->active_group_scope = event->app->sidebar_root;
-			if (event->app->sidebar_root != NULL)
-				sakura_sidebar_set_scope(event->app->sidebar_root);
-		}
-		sakura_workspace_mark_changed(SAKURA_WORKSPACE_CHANGE_STRUCTURE |
-		                              SAKURA_WORKSPACE_CHANGE_METADATA);
-		sakura_workspace_end_mutation();
+		/* Restoring passes sidebar node pointers through several GTK calls.
+		 * Rebuilding the projection here would invalidate a restore parent
+		 * halfway through the operation. Keep only the newest event and apply it
+		 * once restoration has completed. */
+		sakura_session_snapshot_free(event->app->agent_pending_snapshot);
+		event->app->agent_pending_snapshot = event->snapshot;
+		event->snapshot = NULL;
+	} else if (event->app != NULL) {
+		sakura_agent_apply_workspace_snapshot(event->app, event->snapshot);
 	}
 	sakura_session_snapshot_free(event->snapshot);
 	g_free(event);
@@ -1191,6 +1225,185 @@ sakura_agent_attach_terminal(SakuraApp *app, const gchar *terminal_id,
 }
 
 
+typedef struct {
+	SakuraApp *app;
+	gchar *terminal_id;
+	gchar *group_id;
+	gchar *task_id;
+	gchar *cwd;
+	guint cols;
+	guint rows;
+	SakuraAgentTerminalStartCallback callback;
+	gpointer callback_data;
+} SakuraAgentTerminalStartJob;
+
+typedef struct {
+	SakuraAgentTerminalStartResult *result;
+	SakuraAgentTerminalStartCallback callback;
+	gpointer callback_data;
+} SakuraAgentTerminalStartCompletion;
+
+
+void
+sakura_agent_terminal_start_result_free(SakuraAgentTerminalStartResult *result)
+{
+	if (result == NULL)
+		return;
+	g_free(result->requested_terminal_id);
+	g_free(result->created_terminal_id);
+	g_free(result->replay_data);
+	g_clear_error(&result->error);
+	g_free(result);
+}
+
+
+static void
+sakura_agent_terminal_start_job_free(SakuraAgentTerminalStartJob *job)
+{
+	if (job == NULL)
+		return;
+	g_free(job->terminal_id);
+	g_free(job->group_id);
+	g_free(job->task_id);
+	g_free(job->cwd);
+	g_free(job);
+}
+
+
+static void
+sakura_agent_terminal_start_cleanup_remote(
+	SakuraAgentTerminalStartResult *result)
+{
+	const gchar *terminal_id;
+
+	if (result == NULL || result->app == NULL || result->error != NULL)
+		return;
+	terminal_id = result->created_terminal_id != NULL
+	            ? result->created_terminal_id : result->requested_terminal_id;
+	if (terminal_id == NULL || terminal_id[0] == '\0')
+		return;
+	if (result->attached)
+		sakura_agent_detach_terminal(result->app, terminal_id, NULL);
+	else
+		sakura_agent_close_terminal(result->app, terminal_id, NULL);
+}
+
+
+static gboolean
+sakura_agent_terminal_start_deliver(gpointer data)
+{
+	SakuraAgentTerminalStartCompletion *completion = data;
+
+	if (completion != NULL && completion->callback != NULL &&
+	    completion->result != NULL && completion->result->app != NULL &&
+	    !completion->result->app->session_shutting_down)
+		completion->callback(completion->result, completion->callback_data);
+	else if (completion != NULL)
+		sakura_agent_terminal_start_cleanup_remote(completion->result);
+	return G_SOURCE_REMOVE;
+}
+
+
+static void
+sakura_agent_terminal_start_completion_free(
+	SakuraAgentTerminalStartCompletion *completion)
+{
+	if (completion == NULL)
+		return;
+	sakura_agent_terminal_start_result_free(completion->result);
+	g_free(completion);
+}
+
+
+static void
+sakura_agent_terminal_start_worker(gpointer data, gpointer user_data)
+{
+	SakuraAgentTerminalStartJob *job = data;
+	SakuraAgentTerminalStartResult *result;
+	GError *error = NULL;
+	SakuraAgentTerminalStartCompletion *completion;
+
+	(void)user_data;
+	result = g_new0(SakuraAgentTerminalStartResult, 1);
+	result->app = job->app;
+	result->requested_terminal_id = g_strdup(job->terminal_id);
+	result->attached = sakura_agent_attach_terminal(
+		job->app, job->terminal_id, job->cols, job->rows,
+		&result->replay_data, &result->replay_length,
+		&result->attached_cols, &result->attached_rows,
+		&result->attached_status, &error);
+	if (!result->attached) {
+		g_clear_error(&error);
+		if (!sakura_agent_create_terminal(
+				job->app, job->terminal_id, job->group_id, job->task_id,
+				job->cwd, job->cols, job->rows,
+				&result->created_terminal_id, &error))
+			result->error = g_steal_pointer(&error);
+	}
+	g_clear_error(&error);
+
+	if (job->app->session_shutting_down) {
+		sakura_agent_terminal_start_cleanup_remote(result);
+		sakura_agent_terminal_start_result_free(result);
+		sakura_agent_terminal_start_job_free(job);
+		return;
+	}
+	completion = g_new0(SakuraAgentTerminalStartCompletion, 1);
+	completion->result = result;
+	completion->callback = job->callback;
+	completion->callback_data = job->callback_data;
+	g_main_context_invoke_full(NULL, G_PRIORITY_DEFAULT,
+	                           sakura_agent_terminal_start_deliver,
+	                           completion,
+	                           (GDestroyNotify)sakura_agent_terminal_start_completion_free);
+	sakura_agent_terminal_start_job_free(job);
+}
+
+
+gboolean
+sakura_agent_start_terminal_async(
+	SakuraApp *app, const gchar *terminal_id, const gchar *group_id,
+	const gchar *task_id, const gchar *cwd, guint cols, guint rows,
+	SakuraAgentTerminalStartCallback callback, gpointer data, GError **error)
+{
+	SakuraAgentTerminalStartJob *job;
+
+	if (app == NULL || app->agent_socket_path == NULL ||
+	    terminal_id == NULL || terminal_id[0] == '\0' || callback == NULL) {
+		g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT,
+		                    "invalid asynchronous terminal start request");
+		return FALSE;
+	}
+	if (app->agent_terminal_start_pool == NULL) {
+		app->agent_terminal_start_stopping = FALSE;
+		app->agent_terminal_start_pool = g_thread_pool_new(
+			sakura_agent_terminal_start_worker, NULL, 4, FALSE, error);
+		if (app->agent_terminal_start_pool == NULL)
+			return FALSE;
+	}
+	if (app->agent_terminal_start_stopping) {
+		g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_CLOSED,
+		                    "agent terminal start pool is stopping");
+		return FALSE;
+	}
+	job = g_new0(SakuraAgentTerminalStartJob, 1);
+	job->app = app;
+	job->terminal_id = g_strdup(terminal_id);
+	job->group_id = g_strdup(group_id != NULL ? group_id : "root");
+	job->task_id = g_strdup(task_id != NULL ? task_id : "root");
+	job->cwd = g_strdup(cwd);
+	job->cols = cols;
+	job->rows = rows;
+	job->callback = callback;
+	job->callback_data = data;
+	if (!g_thread_pool_push(app->agent_terminal_start_pool, job, error)) {
+		sakura_agent_terminal_start_job_free(job);
+		return FALSE;
+	}
+	return TRUE;
+}
+
+
 gboolean
 sakura_agent_terminal_input(SakuraApp *app, const gchar *terminal_id,
 	                          const guint8 *data, gsize data_length,
@@ -1485,6 +1698,11 @@ sakura_agent_stop(SakuraApp *app)
 	if (app->agent_restart_source_id != 0) {
 		g_source_remove(app->agent_restart_source_id);
 		app->agent_restart_source_id = 0;
+	}
+	if (app->agent_terminal_start_pool != NULL) {
+		app->agent_terminal_start_stopping = TRUE;
+		g_thread_pool_free(app->agent_terminal_start_pool, FALSE, TRUE);
+		app->agent_terminal_start_pool = NULL;
 	}
 	sakura_agent_command_stop(app);
 	sakura_agent_event_stop(app);

@@ -511,6 +511,12 @@ static void     sakura_sanitize_working_directory (void);
 /* Functions */
 static void     sakura_init ();
 static void     sakura_init_popup ();
+static void     sakura_startup_set_status (const gchar *status);
+static gboolean sakura_startup_restore_cb (gpointer data);
+static gboolean sakura_startup_start_agent_cb (gpointer data);
+static gboolean sakura_startup_restore_workspace_cb (gpointer data);
+static void     sakura_startup_restore_complete (gboolean success,
+	                                               gpointer data);
 static void     sakura_add_tab ();
 void            sakura_add_tab_with_options (const gchar *, struct sakura_sidebar_node *,
                                              const gchar *, gboolean, SakuraTabKind,
@@ -2095,6 +2101,149 @@ sakura_load_gnome_terminal_colors (void)
 }
 
 static void
+sakura_startup_set_status(const gchar *status)
+{
+	if (sakura.startup_status_label == NULL)
+		return;
+	gtk_label_set_text(GTK_LABEL(sakura.startup_status_label),
+	                   status != NULL ? status : "");
+}
+
+
+static void
+sakura_startup_maybe_finish_loading(SakuraApp *app)
+{
+	if (app == NULL || !app->startup_workspace_ready ||
+	    app->startup_pending_terminal_starts != 0)
+		return;
+	if (app->startup_spinner != NULL) {
+		gtk_spinner_stop(GTK_SPINNER(app->startup_spinner));
+		gtk_widget_hide(app->startup_spinner);
+	}
+	if (app->startup_overlay != NULL)
+		gtk_widget_hide(app->startup_overlay);
+}
+
+
+void
+sakura_startup_terminal_start_pending(SakuraApp *app, gboolean pending)
+{
+	if (app == NULL)
+		return;
+	if (pending)
+		app->startup_pending_terminal_starts++;
+	else if (app->startup_pending_terminal_starts > 0)
+		app->startup_pending_terminal_starts--;
+	sakura_startup_maybe_finish_loading(app);
+}
+
+
+static void
+sakura_startup_finish(void)
+{
+	sakura.session_restoring = FALSE;
+	sakura_agent_apply_pending_snapshot(&sakura);
+	sakura.session_ready = TRUE;
+	if (!option_new_window && !sakura.startup_preserve_failed_session) {
+		sakura_session_mark_dirty();
+		sakura_session_flush();
+	}
+	if (!option_fullscreen)
+		gtk_window_maximize(GTK_WINDOW(sakura.main_window));
+	sakura.first_run = FALSE;
+	g_strfreev(option_xterm_args);
+	option_xterm_args = NULL;
+	sakura_sanitize_working_directory();
+	sakura.startup_workspace_ready = TRUE;
+	sakura_startup_maybe_finish_loading(&sakura);
+	sakura.startup_restore_source_id = 0;
+}
+
+
+static gboolean
+sakura_startup_restore_cb(gpointer data)
+{
+	(void)data;
+	if (sakura.session_shutting_down) {
+		sakura.startup_restore_source_id = 0;
+		return G_SOURCE_REMOVE;
+	}
+	sakura_startup_set_status(_("Starting workspace agent…"));
+	sakura.startup_restore_source_id = g_timeout_add(
+		50, sakura_startup_start_agent_cb, NULL);
+	return G_SOURCE_REMOVE;
+}
+
+
+static gboolean
+sakura_startup_start_agent_cb(gpointer data)
+{
+	(void)data;
+	if (sakura.session_shutting_down) {
+		sakura.startup_restore_source_id = 0;
+		return G_SOURCE_REMOVE;
+	}
+	sakura_startup_set_status(_("Starting workspace agent…"));
+	if (!sakura_agent_start(&sakura))
+		SAY("Local sakura-agent is unavailable; continuing with the desktop model");
+	sakura.startup_restore_source_id = g_timeout_add(
+		50, sakura_startup_restore_workspace_cb, NULL);
+	return G_SOURCE_REMOVE;
+}
+
+
+static gboolean
+sakura_startup_restore_workspace_cb(gpointer data)
+{
+	int i;
+
+	(void)data;
+	if (sakura.session_shutting_down) {
+		sakura.startup_restore_source_id = 0;
+		return G_SOURCE_REMOVE;
+	}
+
+	sakura_startup_set_status(_("Restoring saved workspace…"));
+	if (option_codex_session != NULL) {
+		sakura_add_tab_with_options(NULL, NULL, NULL, FALSE,
+		                            SAKURA_TAB_CODEX, SAKURA_TOOL_NONE,
+		                            option_codex_session, NULL, NULL, NULL, NULL, -1);
+		sakura_startup_restore_complete(TRUE, NULL);
+	} else if (option_new_session || option_new_window || option_ntabs > 1) {
+		for (i = 0; i < option_ntabs; i++)
+			sakura_add_tab();
+		sakura_startup_restore_complete(TRUE, NULL);
+		return G_SOURCE_REMOVE;
+	} else if (!sakura_workspace_restore_snapshot_async(
+				sakura.session_snapshot, sakura_startup_restore_complete, NULL)) {
+		sakura_startup_restore_complete(FALSE, NULL);
+	}
+	sakura.startup_restore_source_id = 0;
+	return G_SOURCE_REMOVE;
+}
+
+
+static void
+sakura_startup_restore_complete(gboolean success, gpointer data)
+{
+	(void)data;
+	if (!success) {
+		if (sakura.sessionfile != NULL &&
+		    g_file_test(sakura.sessionfile, G_FILE_TEST_IS_REGULAR)) {
+			sakura.startup_preserve_failed_session = TRUE;
+			sakura.session_restore_failed = TRUE;
+			SAY("Could not restore the saved session; preserving %s",
+			    sakura.sessionfile);
+		}
+		for (int i = 0; i < option_ntabs; i++)
+			sakura_add_tab();
+	}
+	sakura_startup_set_status(_("Starting saved terminal sessions…"));
+	sakura_startup_finish();
+}
+
+
+static void
 sakura_init()
 {
 	GError *gerror=NULL;
@@ -2755,7 +2904,33 @@ sakura_init()
 		g_error_free(gerror);
 	}
 
-	gtk_container_add(GTK_CONTAINER(sakura.main_window), sakura.sidebar_paned);
+	{
+		GtkWidget *window_overlay;
+		GtkWidget *status_frame;
+		GtkWidget *status_box;
+		GtkWidget *status_label;
+
+		window_overlay = gtk_overlay_new();
+		gtk_container_add(GTK_CONTAINER(window_overlay), sakura.sidebar_paned);
+		status_frame = gtk_frame_new(NULL);
+		gtk_frame_set_shadow_type(GTK_FRAME(status_frame), GTK_SHADOW_ETCHED_IN);
+		status_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 10);
+		gtk_container_set_border_width(GTK_CONTAINER(status_box), 14);
+		gtk_container_add(GTK_CONTAINER(status_frame), status_box);
+		gtk_widget_set_halign(status_frame, GTK_ALIGN_CENTER);
+		gtk_widget_set_valign(status_frame, GTK_ALIGN_CENTER);
+		gtk_overlay_add_overlay(GTK_OVERLAY(window_overlay), status_frame);
+		status_label = gtk_label_new(_("Preparing saved workspace…"));
+		gtk_box_pack_start(GTK_BOX(status_box), status_label, FALSE, FALSE, 0);
+		sakura.startup_spinner = gtk_spinner_new();
+		gtk_box_pack_start(GTK_BOX(status_box), sakura.startup_spinner,
+		                   FALSE, FALSE, 0);
+		sakura.startup_status_label = status_label;
+		sakura.startup_overlay = status_frame;
+		gtk_widget_show_all(window_overlay);
+		gtk_spinner_start(GTK_SPINNER(sakura.startup_spinner));
+		gtk_container_add(GTK_CONTAINER(sakura.main_window), window_overlay);
+	}
 	/* Restored pages are built before the workspace is mounted. Apply the
 	 * saved visible selection now that GTK can honor set_current_page(). */
 	sakura_workspace_finish_restore();
@@ -3227,6 +3402,8 @@ sakura_destroy_cleanup(void)
 	g_clear_pointer(&sakura.session_cfg, g_key_file_free);
 	sakura_session_snapshot_free(sakura.session_snapshot);
 	sakura.session_snapshot = NULL;
+	sakura_session_snapshot_free(sakura.agent_pending_snapshot);
+	sakura.agent_pending_snapshot = NULL;
 
 	g_clear_pointer(&sakura.font, pango_font_description_free);
 
@@ -3293,6 +3470,11 @@ sakura_destroy()
 		g_source_remove(sakura.sidebar_spinner_source_id);
 		sakura.sidebar_spinner_source_id = 0;
 	}
+	if (sakura.startup_restore_source_id != 0) {
+		g_source_remove(sakura.startup_restore_source_id);
+		sakura.startup_restore_source_id = 0;
+	}
+	sakura_workspace_restore_snapshot_async_cancel();
 	sakura_sidebar_cancel_pending_selection();
 	/* The window and its child widgets must finish their destroy dispatch before
 	 * model records are released. sakura_destroy_cleanup() runs after gtk_main
@@ -3940,7 +4122,6 @@ sakura_run(int argc, char **argv)
 	int i; int n;
 	char **nargv; int nargc;
 	gboolean have_e;
-	gboolean preserve_failed_session = FALSE;
 
 	/* Localization */
 	setlocale(LC_ALL, "");
@@ -4011,50 +4192,11 @@ sakura_run(int argc, char **argv)
 	/* Init stuff */
 	gtk_init(&nargc, &nargv); g_strfreev(nargv);
 	sakura_init();
-	if (!sakura_agent_start(&sakura))
-		SAY("Local sakura-agent is unavailable; continuing with the desktop model");
-
-	/* Restore the previous workspace for a normal launch. Explicit multi-tab
-	 * launches and --new-session remain useful for starting fresh instances. */
 	sakura.session_restoring = TRUE;
-	if (option_codex_session != NULL) {
-		sakura_add_tab_with_options(NULL, NULL, NULL, FALSE,
-		                            SAKURA_TAB_CODEX, SAKURA_TOOL_NONE,
-		                            option_codex_session, NULL, NULL, NULL, NULL, -1);
-	} else if (option_new_session || option_new_window || option_ntabs > 1) {
-		for (i=0; i<option_ntabs; i++)
-			sakura_add_tab();
-	} else if (!sakura_workspace_restore_snapshot(sakura.session_snapshot)) {
-		if (sakura.sessionfile != NULL &&
-		    g_file_test(sakura.sessionfile, G_FILE_TEST_IS_REGULAR)) {
-			preserve_failed_session = TRUE;
-			sakura.session_restore_failed = TRUE;
-			SAY("Could not restore the saved session; preserving %s",
-			    sakura.sessionfile);
-		}
-		for (i=0; i<option_ntabs; i++)
-			sakura_add_tab();
-	}
-	sakura.session_restoring = FALSE;
-	sakura.session_ready = TRUE;
-	/* The first restored tab intentionally keeps the window hidden. Publish
-	 * the fully-built workspace as one GTK-visible state. */
 	gtk_widget_show(sakura.main_window);
-	if (!option_new_window && !preserve_failed_session) {
-		sakura_session_mark_dirty();
-		sakura_session_flush();
-	}
-	/* Start maximized after session restoration and initial layout. This keeps
-	 * the default launch state consistent and prevents restored sizing from
-	 * overriding it. Fullscreen remains the stronger window state. */
-	if (!option_fullscreen)
-		gtk_window_maximize(GTK_WINDOW(sakura.main_window));
-
-	/* Post init stuff */
-	sakura.first_run=false;
-	g_strfreev(option_xterm_args);
-
-	sakura_sanitize_working_directory();
+	/* Let GTK paint the loading surface before starting agent/session work. */
+	sakura.startup_restore_source_id = g_timeout_add(
+		50, sakura_startup_restore_cb, NULL);
 
 	gtk_main();
 	sakura_destroy_cleanup();

@@ -194,6 +194,24 @@ sakura_agent_request_group(SakuraAgent *agent, const gchar *group_id,
 }
 
 
+static gboolean
+sakura_agent_session_has_terminal(const SakuraAgent *agent,
+                                  const gchar *terminal_id)
+{
+	if (agent == NULL || agent->session_snapshot == NULL ||
+	    agent->session_snapshot->tabs == NULL || terminal_id == NULL ||
+	    terminal_id[0] == '\0')
+		return FALSE;
+	for (guint index = 0; index < agent->session_snapshot->tabs->len; index++) {
+		SakuraSessionTabRecord *record =
+			g_ptr_array_index(agent->session_snapshot->tabs, index);
+		if (record != NULL && g_strcmp0(record->terminal_id, terminal_id) == 0)
+			return TRUE;
+	}
+	return FALSE;
+}
+
+
 static SakuraAgentTerminal *
 sakura_agent_find_terminal(SakuraAgent *agent, const gchar *terminal_id,
 	                         GError **error)
@@ -886,6 +904,9 @@ sakura_agent_apply_request(SakuraAgent *agent,
 	                         GError **error)
 {
 	gboolean changed = FALSE;
+	gboolean restoring_terminal =
+		request->kind == SAKURA_CONTROL_REQUEST_CREATE_TERMINAL &&
+		sakura_agent_session_has_terminal(agent, request->terminal_id);
 
 	switch (request->kind) {
 	case SAKURA_CONTROL_REQUEST_CREATE_GROUP:
@@ -937,6 +958,11 @@ sakura_agent_apply_request(SakuraAgent *agent,
 	if (!sakura_core_workspace_sync_snapshot(agent->workspace,
 	                                         agent->session_snapshot))
 		return sakura_agent_error(error, "could not update session snapshot");
+	/* Rehydrating a saved terminal updates the agent's runtime projection, but
+	 * must not race the application's incremental session restore by writing
+	 * the shared session file. New logical terminals still persist normally. */
+	if (restoring_terminal)
+		return TRUE;
 	return sakura_agent_save_session(agent, error);
 }
 

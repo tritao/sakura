@@ -248,11 +248,24 @@ sakura_spawn_callback(VteTerminal *vte, GPid pid, GError *error,
 	if (tab == NULL)
 		return;
 	if (pid == -1) {
+		if (tab->kind == SAKURA_TAB_CODEX && tab->codex_start_pending) {
+			tab->codex_start_pending = FALSE;
+			sakura_startup_terminal_start_pending(&sakura, FALSE);
+		}
 		g_warning("Could not spawn terminal child: %s",
 		          error != NULL ? error->message : "unknown error");
 		sakura_tab_set_status(tab, SAKURA_TAB_STATUS_ERROR, TRUE);
 	} else if (tab != NULL) {
 		tab->pid = pid;
+		if (tab->kind == SAKURA_TAB_CODEX && tab->codex_start_pending) {
+			tab->codex_start_pending = FALSE;
+			sakura_startup_terminal_start_pending(&sakura, FALSE);
+			if (tab->spinner != NULL) {
+				gtk_spinner_stop(GTK_SPINNER(tab->spinner));
+				gtk_widget_hide(tab->spinner);
+			}
+			sakura_sidebar_update_tab(tab);
+		}
 	}
 }
 
@@ -330,6 +343,14 @@ sakura_tab_spawn_codex(SakuraTab *tab, const gchar *cwd, gchar **env)
 		}
 	}
 	codex_env = g_environ_unsetenv(codex_env, "NO_COLOR");
+	if (sakura.session_restoring) {
+		tab->codex_start_pending = TRUE;
+		sakura_startup_terminal_start_pending(&sakura, TRUE);
+		if (tab->spinner != NULL) {
+			gtk_widget_show(tab->spinner);
+			gtk_spinner_start(GTK_SPINNER(tab->spinner));
+		}
+	}
 	vte_terminal_spawn_async(VTE_TERMINAL(tab->vte), VTE_PTY_NO_HELPER, cwd,
 	                         argv, codex_env, G_SPAWN_SEARCH_PATH, NULL, NULL, NULL,
 	                         -1, NULL, sakura_spawn_callback, NULL);
@@ -511,77 +532,53 @@ sakura_tab_agent_input_cb(gint fd, GIOCondition condition, gpointer data)
 }
 
 
-gboolean
-sakura_tab_start_agent_terminal(SakuraTab *tab, const gchar *cwd)
+static gboolean
+sakura_tab_finish_agent_terminal_start(
+	SakuraTab *tab, gboolean attached, const gchar *created_terminal_id,
+	guint8 *replay_data, gsize replay_length, guint attached_cols,
+	guint attached_rows, guint attached_status, GError **error)
 {
-	const gchar *group_id = "root";
-	const gchar *task_id = "root";
-	guint cols, rows;
-	gchar *created_terminal_id = NULL;
-	guint8 *replay_data = NULL;
-	gsize replay_length = 0;
-	guint attached_cols = 0;
-	guint attached_rows = 0;
-	guint attached_status = 0;
-	gboolean attached = FALSE;
-	GError *error = NULL;
 	VtePty *proxy_pty = NULL;
 	struct termios termios = { 0 };
 	int master_fd = -1;
 	int slave_fd = -1;
+	const gchar *remote_terminal_id;
+	guint cols, rows;
 
 	if (tab == NULL || tab->vte == NULL || sakura.agent_socket_path == NULL)
 		return FALSE;
-	if (tab->page != NULL && tab->page->group != NULL &&
-	    tab->page->group->id != NULL)
-		group_id = tab->page->group->id;
-	if (tab->page != NULL && tab->page->task != NULL &&
-	    tab->page->task->id != NULL)
-		task_id = tab->page->task->id;
 	cols = vte_terminal_get_column_count(VTE_TERMINAL(tab->vte));
 	rows = vte_terminal_get_row_count(VTE_TERMINAL(tab->vte));
 	if (cols == 0)
 		cols = sakura.columns > 0 ? sakura.columns : 80;
 	if (rows == 0)
 		rows = sakura.rows > 0 ? sakura.rows : 24;
-	attached = sakura_agent_attach_terminal(
-		&sakura, tab->terminal_id, cols, rows, &replay_data, &replay_length,
-		&attached_cols, &attached_rows, &attached_status, &error);
-	if (!attached) {
-		g_clear_error(&error);
-		if (!sakura_agent_create_terminal(&sakura, tab->terminal_id, group_id,
-		                                  task_id, cwd, cols, rows,
-		                                  &created_terminal_id, &error)) {
-			g_clear_error(&error);
-			g_free(replay_data);
-			return FALSE;
-		}
-	}
+	remote_terminal_id = created_terminal_id != NULL
+	                   ? created_terminal_id : tab->terminal_id;
 	if (created_terminal_id != NULL &&
 	    g_strcmp0(created_terminal_id, tab->terminal_id) != 0) {
 		g_free(tab->terminal_id);
-		tab->terminal_id = g_steal_pointer(&created_terminal_id);
+		tab->terminal_id = g_strdup(created_terminal_id);
 	}
-	g_free(created_terminal_id);
 
 	if (openpty(&master_fd, &slave_fd, NULL, NULL, NULL) != 0) {
-		g_set_error(&error, G_IO_ERROR, g_io_error_from_errno(errno),
+		g_set_error(error, G_IO_ERROR, g_io_error_from_errno(errno),
 		            "could not create terminal proxy: %s", g_strerror(errno));
 		goto fail;
 	}
 	if (tcgetattr(slave_fd, &termios) != 0) {
-		g_set_error(&error, G_IO_ERROR, g_io_error_from_errno(errno),
+		g_set_error(error, G_IO_ERROR, g_io_error_from_errno(errno),
 		            "could not configure terminal proxy: %s", g_strerror(errno));
 		goto fail;
 	}
 	cfmakeraw(&termios);
 	if (tcsetattr(slave_fd, TCSANOW, &termios) != 0 ||
 	    fcntl(slave_fd, F_SETFL, O_NONBLOCK) != 0) {
-		g_set_error(&error, G_IO_ERROR, g_io_error_from_errno(errno),
+		g_set_error(error, G_IO_ERROR, g_io_error_from_errno(errno),
 		            "could not configure terminal proxy: %s", g_strerror(errno));
 		goto fail;
 	}
-	proxy_pty = vte_pty_new_foreign_sync(master_fd, NULL, &error);
+	proxy_pty = vte_pty_new_foreign_sync(master_fd, NULL, error);
 	if (proxy_pty == NULL)
 		goto fail;
 	master_fd = -1; /* VtePty owns the master from here. */
@@ -608,7 +605,6 @@ sakura_tab_start_agent_terminal(SakuraTab *tab, const gchar *cwd)
 		if (attached_status != 0)
 			sakura_tab_agent_status(tab, attached_status, "terminal attached");
 	}
-	g_free(replay_data);
 	return TRUE;
 
 fail:
@@ -618,17 +614,153 @@ fail:
 		close(master_fd);
 	if (slave_fd >= 0)
 		close(slave_fd);
-	g_free(replay_data);
-	if (tab->terminal_id != NULL && sakura.agent_socket_path != NULL &&
-	    (attached ? !sakura_agent_detach_terminal(&sakura, tab->terminal_id, NULL) :
-                 !sakura_agent_close_terminal(&sakura, tab->terminal_id, NULL))) {
-		g_warning("Could not roll back agent terminal %s", tab->terminal_id);
-	}
-	if (error != NULL) {
-		g_warning("Could not attach terminal proxy: %s", error->message);
-		g_clear_error(&error);
+	if (remote_terminal_id != NULL && sakura.agent_socket_path != NULL &&
+	    (attached ? !sakura_agent_detach_terminal(&sakura, remote_terminal_id, NULL) :
+                 !sakura_agent_close_terminal(&sakura, remote_terminal_id, NULL))) {
+		g_warning("Could not roll back agent terminal %s", remote_terminal_id);
 	}
 	return FALSE;
+}
+
+
+static void
+sakura_tab_set_agent_start_pending(SakuraTab *tab, gboolean pending)
+{
+	if (tab == NULL)
+		return;
+	tab->agent_start_pending = pending;
+	if (tab->spinner != NULL) {
+		if (pending) {
+			gtk_widget_show(tab->spinner);
+			gtk_spinner_start(GTK_SPINNER(tab->spinner));
+		} else {
+			gtk_spinner_stop(GTK_SPINNER(tab->spinner));
+			gtk_widget_hide(tab->spinner);
+		}
+	}
+	sakura_sidebar_update_tab(tab);
+}
+
+
+static void
+sakura_tab_agent_start_async_done(SakuraAgentTerminalStartResult *result,
+                                  gpointer data)
+{
+	SakuraTab *tab;
+	GError *error = NULL;
+
+	(void)data;
+	if (result == NULL || result->app == NULL ||
+	    result->app->session_shutting_down)
+		return;
+	sakura_startup_terminal_start_pending(result->app, FALSE);
+	tab = sakura_find_pane_by_terminal_id(result->requested_terminal_id);
+	if (tab == NULL) {
+		if (result->error == NULL) {
+			if (result->attached)
+				sakura_agent_detach_terminal(result->app,
+				                             result->created_terminal_id != NULL
+				                             ? result->created_terminal_id
+				                             : result->requested_terminal_id, NULL);
+			else
+				sakura_agent_close_terminal(result->app,
+				                            result->created_terminal_id != NULL
+				                            ? result->created_terminal_id
+				                            : result->requested_terminal_id, NULL);
+		}
+		return;
+	}
+	sakura_tab_set_agent_start_pending(tab, FALSE);
+	if (result->error == NULL &&
+	    sakura_tab_finish_agent_terminal_start(
+			tab, result->attached, result->created_terminal_id,
+			result->replay_data, result->replay_length,
+			result->attached_cols, result->attached_rows,
+			result->attached_status, &error)) {
+		result->replay_data = NULL;
+		return;
+	}
+	if (error != NULL)
+		g_warning("Could not attach restored terminal %s: %s",
+		          tab->terminal_id, error->message);
+	else if (result->error != NULL)
+		g_warning("Could not restore terminal %s: %s",
+		          tab->terminal_id, result->error->message);
+	g_clear_error(&error);
+	if (!sakura.session_shutting_down) {
+		gchar **env = sakura_tab_build_environment(tab, FALSE);
+		sakura_tab_spawn_shell(tab, tab->cwd, env, FALSE);
+		g_strfreev(env);
+	}
+	sakura_tab_set_status(tab, SAKURA_TAB_STATUS_ERROR, TRUE);
+}
+
+
+gboolean
+sakura_tab_start_agent_terminal(SakuraTab *tab, const gchar *cwd)
+{
+	const gchar *group_id = "root";
+	const gchar *task_id = "root";
+	guint cols, rows;
+	gchar *created_terminal_id = NULL;
+	guint8 *replay_data = NULL;
+	gsize replay_length = 0;
+	guint attached_cols = 0;
+	guint attached_rows = 0;
+	guint attached_status = 0;
+	gboolean attached = FALSE;
+	GError *error = NULL;
+
+	if (tab == NULL || tab->vte == NULL || sakura.agent_socket_path == NULL)
+		return FALSE;
+	if (tab->page != NULL && tab->page->group != NULL &&
+	    tab->page->group->id != NULL)
+		group_id = tab->page->group->id;
+	if (tab->page != NULL && tab->page->task != NULL &&
+	    tab->page->task->id != NULL)
+		task_id = tab->page->task->id;
+	cols = vte_terminal_get_column_count(VTE_TERMINAL(tab->vte));
+	rows = vte_terminal_get_row_count(VTE_TERMINAL(tab->vte));
+	if (cols == 0)
+		cols = sakura.columns > 0 ? sakura.columns : 80;
+	if (rows == 0)
+		rows = sakura.rows > 0 ? sakura.rows : 24;
+
+	if (sakura.session_restoring &&
+	    sakura_agent_start_terminal_async(
+			&sakura, tab->terminal_id, group_id, task_id, cwd, cols, rows,
+			sakura_tab_agent_start_async_done, NULL, &error)) {
+		sakura_tab_set_agent_start_pending(tab, TRUE);
+		sakura_startup_terminal_start_pending(&sakura, TRUE);
+		g_clear_error(&error);
+		return TRUE;
+	}
+	g_clear_error(&error);
+
+	attached = sakura_agent_attach_terminal(
+		&sakura, tab->terminal_id, cols, rows, &replay_data, &replay_length,
+		&attached_cols, &attached_rows, &attached_status, &error);
+	if (!attached) {
+		g_clear_error(&error);
+		if (!sakura_agent_create_terminal(&sakura, tab->terminal_id, group_id,
+		                                  task_id, cwd, cols, rows,
+		                                  &created_terminal_id, &error)) {
+			g_clear_error(&error);
+			g_free(replay_data);
+			return FALSE;
+		}
+	}
+	if (!sakura_tab_finish_agent_terminal_start(
+			tab, attached, created_terminal_id, replay_data, replay_length,
+			attached_cols, attached_rows, attached_status, &error)) {
+		g_clear_error(&error);
+		g_free(created_terminal_id);
+		g_free(replay_data);
+		return FALSE;
+	}
+	g_free(created_terminal_id);
+	g_free(replay_data);
+	return TRUE;
 }
 
 
@@ -2220,7 +2352,8 @@ sakura_tab_set_status(SakuraTab *tab, SakuraTabStatus status, gboolean attention
 	tab->status = status;
 	tab->attention = visible_attention;
 	if (tab->spinner != NULL) {
-		if (status == SAKURA_TAB_STATUS_RUNNING) {
+		if (status == SAKURA_TAB_STATUS_RUNNING ||
+		    tab->agent_start_pending || tab->codex_start_pending) {
 			gtk_widget_show(tab->spinner);
 			gtk_spinner_start(GTK_SPINNER(tab->spinner));
 		} else {
@@ -2262,7 +2395,8 @@ sakura_tab_restore_state(SakuraTab *tab, SakuraTabStatus status,
 	tab->attention = attention;
 	tab->attention_timestamp = attention_timestamp > 0 ? attention_timestamp : 0;
 	if (tab->spinner != NULL) {
-		if (status == SAKURA_TAB_STATUS_RUNNING) {
+		if (status == SAKURA_TAB_STATUS_RUNNING ||
+		    tab->agent_start_pending || tab->codex_start_pending) {
 			gtk_widget_show(tab->spinner);
 			gtk_spinner_start(GTK_SPINNER(tab->spinner));
 		} else {
@@ -2280,7 +2414,7 @@ sakura_tab_bar_refresh(void)
 {
 	guint visible_count, order = 0;
 	gint page, pages, current_page;
-	gboolean show_tabs;
+	gboolean show_tabs, old_shell_visible, new_shell_visible;
 	const gchar *scope_title;
 	gchar *scope_label;
 
@@ -2294,6 +2428,8 @@ sakura_tab_bar_refresh(void)
 	if (sakura.tab_bar_refreshing)
 		return;
 	sakura.tab_bar_refreshing = TRUE;
+	old_shell_visible = sakura.tab_bar_shell != NULL &&
+	                    gtk_widget_get_visible(sakura.tab_bar_shell);
 
 	visible_count = sakura_tab_bar_visible_count();
 	scope_title = sakura.workspace->active_task != NULL && sakura.workspace->active_task->title != NULL
@@ -2333,14 +2469,17 @@ sakura_tab_bar_refresh(void)
 	show_tabs = visible_count > 0 &&
 	            (sakura.show_tab_bar == SHOW_TAB_BAR_ALWAYS ||
 	             (sakura.show_tab_bar == SHOW_TAB_BAR_MULTIPLE && visible_count > 1));
+	new_shell_visible = show_tabs || visible_count == 0;
 	gtk_widget_set_visible(sakura.tab_bar_scrolled, show_tabs);
-	gtk_widget_set_visible(sakura.tab_bar_shell, show_tabs || visible_count == 0);
+	gtk_widget_set_visible(sakura.tab_bar_shell, new_shell_visible);
 	gtk_widget_set_visible(sakura.notebook, visible_count > 0);
 	gtk_widget_set_visible(sakura.tab_bar_empty, visible_count == 0);
 
 	if (sakura.tab_bar_new_button != NULL)
 		gtk_widget_set_visible(sakura.tab_bar_new_button, show_tabs);
 	sakura.tab_bar_refreshing = FALSE;
+	if (old_shell_visible != new_shell_visible)
+		sakura_workspace_mark_changed(SAKURA_WORKSPACE_CHANGE_GEOMETRY);
 }
 
 guint

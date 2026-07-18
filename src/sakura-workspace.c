@@ -1181,7 +1181,8 @@ sakura_workspace_reconcile(void)
 	const guint view_changes = SAKURA_WORKSPACE_CHANGE_STRUCTURE |
 	                           SAKURA_WORKSPACE_CHANGE_SCOPE |
 	                           SAKURA_WORKSPACE_CHANGE_SELECTION |
-	                           SAKURA_WORKSPACE_CHANGE_METADATA;
+	                           SAKURA_WORKSPACE_CHANGE_METADATA |
+	                           SAKURA_WORKSPACE_CHANGE_PROJECTION;
 
 	if (sakura_workspace_is_mutating() || sakura.workspace_reconciling)
 		return;
@@ -1194,7 +1195,8 @@ sakura_workspace_reconcile(void)
 		if ((changes & view_changes) != 0)
 			sakura_tab_bar_refresh();
 		if ((changes & (SAKURA_WORKSPACE_CHANGE_STRUCTURE |
-		                SAKURA_WORKSPACE_CHANGE_SCOPE)) != 0 &&
+		                SAKURA_WORKSPACE_CHANGE_SCOPE |
+		                SAKURA_WORKSPACE_CHANGE_GEOMETRY)) != 0 &&
 		    sakura.notebook != NULL &&
 		    gtk_notebook_get_n_pages(GTK_NOTEBOOK(sakura.notebook)) > 0)
 			sakura_set_size();
@@ -3781,6 +3783,324 @@ sakura_workspace_restore_snapshot (SakuraSessionSnapshot *snapshot)
 		                              SAKURA_WORKSPACE_CHANGE_SCOPE);
 	return restored > 0;
 }
+
+
+typedef struct {
+	SakuraSessionSnapshot *snapshot;
+	SakuraWorkspaceRestoreCallback callback;
+	gpointer callback_data;
+	GHashTable *layout_records;
+	GHashTable *tab_records;
+	gboolean restore_layout;
+	gboolean failed;
+	gboolean previous_show_archived;
+	guint index;
+	guint restored;
+	guint source_id;
+} SakuraWorkspaceRestoreJob;
+
+static SakuraWorkspaceRestoreJob *sakura_workspace_restore_job;
+
+
+static void
+sakura_workspace_restore_job_free(SakuraWorkspaceRestoreJob *job)
+{
+	if (job == NULL)
+		return;
+	if (job->source_id != 0) {
+		g_source_remove(job->source_id);
+		job->source_id = 0;
+	}
+	g_clear_pointer(&job->layout_records, g_hash_table_destroy);
+	g_clear_pointer(&job->tab_records, g_hash_table_destroy);
+	g_free(job);
+}
+
+
+static gboolean
+sakura_workspace_restore_layout_page(SakuraWorkspaceRestoreJob *job,
+                                      SakuraSessionPageRecord *page_record)
+{
+	SakuraSessionLayoutRecord *root;
+	SakuraSessionLayoutRecord *root_leaf;
+	SakuraSessionTabRecord *tab_record;
+	SakuraTab *tab;
+	SakuraSidebarNode *parent;
+
+	if (job == NULL || page_record == NULL)
+		return FALSE;
+	root = sakura_workspace_layout_record(job->layout_records,
+	                                      page_record->root_layout_id);
+	root_leaf = sakura_workspace_layout_leftmost(job->layout_records, root);
+	if (root_leaf == NULL || root_leaf->terminal_id == NULL)
+		return FALSE;
+	tab_record = sakura_workspace_tab_record(job->tab_records,
+	                                         root_leaf->terminal_id);
+	if (tab_record == NULL)
+		return FALSE;
+	parent = sakura_sidebar_find_container_by_id(
+		page_record->task_id != NULL && page_record->task_id[0] != '\0'
+		? page_record->task_id : tab_record->parent_id);
+	sakura_tab_add_with_options(tab_record->cwd, parent,
+	                            tab_record->title,
+	                            tab_record->title_set_by_user,
+	                            tab_record->kind,
+	                            sakura_tool_from_id(tab_record->tool_id),
+	                            tab_record->codex_session_id,
+	                            tab_record->codex_session_name,
+	                            tab_record->codex_reasoning_effort,
+	                            tab_record->tool_target,
+	                            tab_record->terminal_id,
+	                            tab_record->colorset, NULL);
+	tab = sakura_find_pane_by_terminal_id(tab_record->terminal_id);
+	if (tab == NULL || tab->page == NULL)
+		return FALSE;
+	sakura_workspace_restore_tab_state(tab, tab_record);
+	g_free(tab->page->id);
+	tab->page->id = g_strdup(page_record->id);
+	g_free(tab->page->title);
+	tab->page->title = g_strdup(page_record->title);
+	tab->page->title_set_by_user = page_record->title_set_by_user;
+	tab->page->archived = page_record->archived;
+	if (tab->page->sidebar_node != NULL) {
+		g_free(tab->page->sidebar_node->id);
+		tab->page->sidebar_node->id = g_strdup(tab->page->id);
+		sakura_sidebar_update_page(tab->page);
+	}
+	if (root != NULL && g_strcmp0(root->type, "split") == 0 &&
+	    sakura_workspace_restore_layout_subtree(
+			tab->page, job->layout_records, job->tab_records, root, tab, NULL) == NULL)
+		return FALSE;
+	return TRUE;
+}
+
+
+static gboolean
+sakura_workspace_restore_tab_record(SakuraWorkspaceRestoreJob *job,
+                                     SakuraSessionTabRecord *record)
+{
+	SakuraSidebarNode *parent;
+	SakuraTabKind tab_kind;
+	SakuraToolKind tool_kind = SAKURA_TOOL_NONE;
+	gchar *cwd;
+	gboolean title_set;
+	SakuraTab *restored_tab;
+
+	if (job == NULL || record == NULL)
+		return FALSE;
+	parent = sakura_sidebar_find_container_by_id(record->parent_id);
+	tab_kind = record->kind;
+	cwd = g_strdup(record->cwd);
+	title_set = record->title_set_by_user && record->title != NULL &&
+	            record->title[0] != '\0';
+	if (tab_kind == SAKURA_TAB_CODEX &&
+	    (record->codex_session_id == NULL || record->codex_session_id[0] == '\0'))
+		tab_kind = SAKURA_TAB_SHELL;
+	else if (tab_kind == SAKURA_TAB_TOOL) {
+		tool_kind = sakura_tool_from_id(record->tool_id);
+		if (!sakura_tool_is_available(tool_kind)) {
+			tab_kind = SAKURA_TAB_SHELL;
+			tool_kind = SAKURA_TOOL_NONE;
+		}
+	}
+	if (cwd != NULL && (cwd[0] == '\0' || !g_file_test(cwd, G_FILE_TEST_IS_DIR))) {
+		g_free(cwd);
+		cwd = NULL;
+	}
+	sakura_add_tab_with_options(cwd, parent, title_set ? record->title : NULL,
+	                            title_set, tab_kind, tool_kind,
+	                            tab_kind == SAKURA_TAB_CODEX
+	                            ? record->codex_session_id : NULL,
+	                            tab_kind == SAKURA_TAB_CODEX
+	                            ? record->codex_session_name : NULL,
+	                            tab_kind == SAKURA_TAB_CODEX
+	                            ? record->codex_reasoning_effort : NULL,
+	                            tab_kind == SAKURA_TAB_TOOL
+	                            ? record->tool_target : NULL,
+	                            sakura_terminal_id_is_valid(record->terminal_id)
+	                            ? record->terminal_id : NULL,
+	                            record->colorset);
+	restored_tab = sakura_find_pane_by_terminal_id(record->terminal_id);
+	if (restored_tab != NULL)
+		sakura_workspace_restore_tab_state(restored_tab, record);
+	g_free(cwd);
+	if (restored_tab == NULL)
+		return FALSE;
+	job->restored++;
+	return TRUE;
+}
+
+
+static void
+sakura_workspace_restore_job_finalize(SakuraWorkspaceRestoreJob *job,
+                                      gboolean success)
+{
+	SakuraSessionSnapshot *snapshot;
+	SakuraTab *selected_tab = NULL;
+	const gchar *selected_terminal_id = NULL;
+
+	if (job == NULL)
+		return;
+	snapshot = job->snapshot;
+	if (!success || job->failed)
+		sakura_workspace_discard_pages();
+	else if (job->restore_layout) {
+		sakura_notebook_sync_page_order();
+		sakura_sidebar_rebuild_projection();
+		for (guint index = 0; index < snapshot->pages->len; index++) {
+			SakuraSessionPageRecord *page_record =
+				g_ptr_array_index(snapshot->pages, index);
+			SakuraPage *page = NULL;
+			SakuraTab *active;
+
+			for (guint page_index = 0;
+			     sakura.workspace->pages != NULL &&
+			     page_index < sakura.workspace->pages->len; page_index++) {
+				SakuraPage *candidate = g_ptr_array_index(
+					sakura.workspace->pages, page_index);
+				if (candidate != NULL &&
+				    g_strcmp0(candidate->id, page_record->id) == 0) {
+					page = candidate;
+					break;
+				}
+			}
+			if (page == NULL || page_record->active_terminal_id == NULL)
+				continue;
+			active = sakura_find_pane_by_terminal_id(
+				page_record->active_terminal_id);
+			if (active == NULL || active->page != page)
+				continue;
+			page->active_tab = active;
+			g_free(page->last_active_terminal_id);
+			page->last_active_terminal_id = g_strdup(active->terminal_id);
+		}
+	} else {
+		sakura_sidebar_rebuild_projection();
+	}
+	if (success && !job->failed) {
+		selected_terminal_id = snapshot->selected_terminal_id;
+		if ((selected_terminal_id == NULL || selected_terminal_id[0] == '\0') &&
+		    snapshot->selected_terminal >= 0 &&
+		    snapshot->tabs != NULL &&
+		    (guint)snapshot->selected_terminal < snapshot->tabs->len) {
+			SakuraSessionTabRecord *selected_record = g_ptr_array_index(
+				snapshot->tabs, snapshot->selected_terminal);
+			selected_terminal_id = selected_record != NULL
+			                     ? selected_record->terminal_id : NULL;
+		}
+		selected_tab = sakura_find_pane_by_terminal_id(selected_terminal_id);
+	}
+	if (selected_tab != NULL) {
+		sakura_select_tab(selected_tab, FALSE);
+		g_free(sakura_pending_restore_terminal_id);
+		sakura_pending_restore_terminal_id = g_strdup(selected_tab->terminal_id);
+	} else if (success && !job->failed) {
+		if (sakura.workspace->active_tab != NULL &&
+		    sakura_tab_is_in_active_scope(sakura.workspace->active_tab))
+			sakura_tab_bar_refresh();
+		else
+			sakura_select_scope_default();
+	}
+	if (job->restored == 0)
+		sakura_workspace_mark_changed(SAKURA_WORKSPACE_CHANGE_STRUCTURE |
+		                              SAKURA_WORKSPACE_CHANGE_SCOPE);
+	sakura.show_archived = job->previous_show_archived;
+	sakura_sidebar_rebuild_projection();
+	if (job->callback != NULL)
+		job->callback(success && !job->failed && job->restored > 0,
+		              job->callback_data);
+	sakura_workspace_restore_job = NULL;
+	job->source_id = 0;
+	sakura_workspace_restore_job_free(job);
+}
+
+
+static gboolean
+sakura_workspace_restore_job_step(gpointer data)
+{
+	SakuraWorkspaceRestoreJob *job = data;
+	SakuraSessionSnapshot *snapshot;
+	gboolean step_success;
+
+	if (job == NULL || sakura.session_shutting_down)
+		return G_SOURCE_REMOVE;
+	snapshot = job->snapshot;
+	if (job->restore_layout) {
+		if (job->index >= snapshot->pages->len) {
+			sakura_workspace_restore_job_finalize(job, TRUE);
+			return G_SOURCE_REMOVE;
+		}
+		step_success = sakura_workspace_restore_layout_page(job,
+			g_ptr_array_index(snapshot->pages, job->index));
+	} else {
+		if (job->index >= snapshot->tabs->len) {
+			sakura_workspace_restore_job_finalize(job, TRUE);
+			return G_SOURCE_REMOVE;
+		}
+		step_success = sakura_workspace_restore_tab_record(job,
+			g_ptr_array_index(snapshot->tabs, job->index));
+	}
+	if (!step_success) {
+		job->failed = TRUE;
+		sakura_workspace_restore_job_finalize(job, FALSE);
+		return G_SOURCE_REMOVE;
+	}
+	if (job->restore_layout)
+		job->restored++;
+	job->index++;
+	return G_SOURCE_CONTINUE;
+}
+
+
+gboolean
+sakura_workspace_restore_snapshot_async(
+	SakuraSessionSnapshot *snapshot, SakuraWorkspaceRestoreCallback callback,
+	gpointer data)
+{
+	SakuraWorkspaceRestoreJob *job;
+
+	if (sakura_workspace_restore_job != NULL || snapshot == NULL ||
+	    snapshot->tabs == NULL || snapshot->tabs->len == 0)
+		return FALSE;
+	job = g_new0(SakuraWorkspaceRestoreJob, 1);
+	job->snapshot = snapshot;
+	job->callback = callback;
+	job->callback_data = data;
+	job->restore_layout = snapshot->pages != NULL && snapshot->pages->len > 0 &&
+	                     snapshot->layouts != NULL && snapshot->layouts->len > 0;
+	job->previous_show_archived = sakura.show_archived;
+	sakura.show_archived = TRUE;
+	job->layout_records = g_hash_table_new(g_str_hash, g_str_equal);
+	job->tab_records = g_hash_table_new(g_str_hash, g_str_equal);
+	if (snapshot->layouts != NULL) {
+		for (guint index = 0; index < snapshot->layouts->len; index++) {
+			SakuraSessionLayoutRecord *record =
+				g_ptr_array_index(snapshot->layouts, index);
+			g_hash_table_insert(job->layout_records, record->id, record);
+		}
+	}
+	for (guint index = 0; index < snapshot->tabs->len; index++) {
+		SakuraSessionTabRecord *record =
+			g_ptr_array_index(snapshot->tabs, index);
+		g_hash_table_insert(job->tab_records, record->terminal_id, record);
+	}
+	sakura_workspace_restore_job = job;
+	job->source_id = g_idle_add(sakura_workspace_restore_job_step, job);
+	return TRUE;
+}
+
+
+void
+sakura_workspace_restore_snapshot_async_cancel(void)
+{
+	SakuraWorkspaceRestoreJob *job = sakura_workspace_restore_job;
+
+	if (job == NULL)
+		return;
+	sakura_workspace_restore_job = NULL;
+	sakura.show_archived = job->previous_show_archived;
+	sakura_workspace_restore_job_free(job);
+}
 void
 sakura_sidebar_model_reordered_cb (GtkTreeModel *model, GtkTreePath *path,
                                    GtkTreeIter *iter, gint *new_order, void *data)
@@ -3838,8 +4158,7 @@ sakura_sidebar_show_archived_cb(GtkWidget *widget, void *data)
 			sakura.workspace->active_task = NULL;
 	}
 	sakura_sidebar_rebuild_projection();
-	sakura_workspace_mark_changed(SAKURA_WORKSPACE_CHANGE_STRUCTURE |
-	                              SAKURA_WORKSPACE_CHANGE_SCOPE |
+	sakura_workspace_mark_changed(SAKURA_WORKSPACE_CHANGE_PROJECTION |
 	                              SAKURA_WORKSPACE_CHANGE_SELECTION);
 	sakura_workspace_set_boolean("show_archived", show_archived);
 	sakura_session_mark_dirty();
@@ -4407,7 +4726,10 @@ sakura_sidebar_set_node_row(SakuraSidebarNode *node, GtkTreeIter *iter)
 		reasoning_effort = sakura_codex_reasoning_effort_label(
 			node->tab->codex_reasoning_effort);
 	status_running = task_row ? task_status == SAKURA_TASK_WORKING
-	                            : status == SAKURA_TAB_STATUS_RUNNING;
+	                            : status == SAKURA_TAB_STATUS_RUNNING ||
+	                              (node->tab != NULL &&
+	                               (node->tab->agent_start_pending ||
+	                                node->tab->codex_start_pending));
 	status_color = task_row ? sakura_task_status_color(task_status) :
 	              (status != SAKURA_TAB_STATUS_NONE ? sakura_tab_status_color(status) : NULL);
 	status_symbol = task_row ? sakura_task_status_symbol(task_status) :
