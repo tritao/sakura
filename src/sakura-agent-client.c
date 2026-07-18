@@ -7,10 +7,13 @@
 
 
 static gchar *
-sakura_agent_socket_path_new(void)
+sakura_agent_socket_path_new(SakuraApp *app)
 {
 	const gchar *runtime_dir = g_get_user_runtime_dir();
 
+	if (app != NULL && app->agent_socket_path_override != NULL &&
+	    app->agent_socket_path_override[0] != '\0')
+		return g_strdup(app->agent_socket_path_override);
 	if (runtime_dir != NULL && runtime_dir[0] != '\0')
 		return g_build_filename(runtime_dir, "sakura-agent.sock", NULL);
 	return g_build_filename(g_get_user_cache_dir(), "sakura", "agent.sock",
@@ -297,16 +300,27 @@ sakura_agent_command_thread(gpointer data)
 
 		if (connection == NULL) {
 			connection = sakura_agent_connect(app->agent_socket_path, &error);
+			if (connection != NULL) {
+				g_mutex_lock(&app->agent_command_mutex);
+				if (app->agent_command_stopping) {
+					g_mutex_unlock(&app->agent_command_mutex);
+					g_io_stream_close(G_IO_STREAM(connection), NULL, NULL);
+					g_object_unref(connection);
+					connection = NULL;
+				} else {
+					app->agent_command_connection = g_object_ref(connection);
+					g_mutex_unlock(&app->agent_command_mutex);
+				}
+			}
 			if (connection != NULL &&
 			    !sakura_agent_handshake(connection, &error)) {
+				g_mutex_lock(&app->agent_command_mutex);
+				if (app->agent_command_connection == connection)
+					g_clear_object(&app->agent_command_connection);
+				g_mutex_unlock(&app->agent_command_mutex);
 				g_io_stream_close(G_IO_STREAM(connection), NULL, NULL);
 				g_object_unref(connection);
 				connection = NULL;
-			}
-			if (connection != NULL) {
-				g_mutex_lock(&app->agent_command_mutex);
-				app->agent_command_connection = g_object_ref(connection);
-				g_mutex_unlock(&app->agent_command_mutex);
 			}
 		}
 		if (connection == NULL) {
@@ -479,8 +493,6 @@ sakura_agent_event_thread(gpointer data)
 	connection = sakura_agent_connect(app->agent_socket_path, &error);
 	if (connection == NULL)
 		goto out;
-	if (!sakura_agent_handshake(connection, &error))
-		goto out;
 	g_mutex_lock(&app->agent_event_mutex);
 	if (app->agent_event_stopping) {
 		g_mutex_unlock(&app->agent_event_mutex);
@@ -488,6 +500,8 @@ sakura_agent_event_thread(gpointer data)
 	}
 	app->agent_event_connection = g_object_ref(connection);
 	g_mutex_unlock(&app->agent_event_mutex);
+	if (!sakura_agent_handshake(connection, &error))
+		goto out;
 
 	request_id = g_uuid_string_random();
 	request = g_byte_array_new();
@@ -555,7 +569,7 @@ sakura_agent_event_thread(gpointer data)
 	}
 out:
 	if (error != NULL && !app->agent_event_stopping)
-		g_warning("Agent event subscription stopped: %s", error->message);
+		g_debug("Agent event subscription stopped: %s", error->message);
 	g_clear_error(&error);
 	g_clear_pointer(&request, g_byte_array_unref);
 	g_clear_pointer(&payload, g_byte_array_unref);
@@ -634,6 +648,8 @@ sakura_agent_event_stop(SakuraApp *app)
 		connection = g_object_ref(app->agent_event_connection);
 	g_mutex_unlock(&app->agent_event_mutex);
 	if (connection != NULL) {
+		g_socket_shutdown(g_socket_connection_get_socket(connection), TRUE, TRUE,
+		                  NULL);
 		g_io_stream_close(G_IO_STREAM(connection), NULL, NULL);
 		g_object_unref(connection);
 	}
@@ -1240,6 +1256,24 @@ sakura_agent_binary_path(void)
 static gboolean sakura_agent_restart_cb(gpointer data);
 
 
+static void
+sakura_agent_mark_terminals_lost(SakuraApp *app)
+{
+	if (app == NULL || app->workspace == NULL || app->workspace->panes == NULL)
+		return;
+	for (guint index = 0; index < app->workspace->panes->len; index++) {
+		SakuraTab *tab = g_ptr_array_index(app->workspace->panes, index);
+
+		if (tab == NULL || !tab->agent_backed)
+			continue;
+		sakura_tab_agent_status(tab, SAKURA_TERMINAL_EXITED,
+		                       "embedded agent exited");
+		tab->agent_backed = FALSE;
+		sakura_tab_set_status(tab, SAKURA_TAB_STATUS_ERROR, TRUE);
+	}
+}
+
+
 static GSubprocess *
 sakura_agent_spawn_process(SakuraApp *app, const gchar *socket_path,
 	                         GError **error)
@@ -1299,6 +1333,7 @@ sakura_agent_process_wait_done(GObject *source_object, GAsyncResult *result,
 		return;
 	g_clear_object(&app->agent_process);
 	g_warning("Embedded sakura-agent exited; restarting it");
+	sakura_agent_mark_terminals_lost(app);
 	sakura_agent_command_stop(app);
 	sakura_agent_event_stop(app);
 	if (app->agent_restart_source_id == 0)
@@ -1368,7 +1403,7 @@ sakura_agent_start(SakuraApp *app)
 		sakura_agent_command_start(app);
 		return TRUE;
 	}
-	socket_path = sakura_agent_socket_path_new();
+	socket_path = sakura_agent_socket_path_new(app);
 	if (sakura_agent_request_snapshot(socket_path, &error)) {
 		app->agent_socket_path = socket_path;
 		sakura_agent_subscribe_start(app);

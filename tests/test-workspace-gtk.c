@@ -1,5 +1,8 @@
 #include <gtk/gtk.h>
 
+#include <glib/gstdio.h>
+#include <string.h>
+
 #include "src/sakura-private.h"
 
 static SakuraSessionSnapshot *
@@ -2514,6 +2517,64 @@ test_seeded_workspace_operations(void)
 }
 
 
+static void
+test_embedded_agent_restarts(void)
+{
+	GError *error = NULL;
+	GSubprocess *first_process;
+	gchar *directory;
+	gchar *session_path;
+	gchar *socket_path;
+	gboolean restarted = FALSE;
+
+	directory = g_dir_make_tmp("sakura-agent-supervisor-XXXXXX", &error);
+	g_assert_no_error(error);
+	g_assert_nonnull(directory);
+	session_path = g_build_filename(directory, "workspace.session", NULL);
+	socket_path = g_build_filename(directory, "agent.sock", NULL);
+	memset(&sakura, 0, sizeof(sakura));
+	sakura.sessionfile = g_strdup(session_path);
+	sakura.agent_socket_path_override = g_strdup(socket_path);
+
+	g_assert_true(sakura_agent_start(&sakura));
+	g_assert_nonnull(sakura.agent_process);
+	first_process = g_object_ref(sakura.agent_process);
+	g_test_expect_message(NULL, G_LOG_LEVEL_WARNING,
+	                      "*Embedded sakura-agent exited; restarting it*");
+	g_subprocess_force_exit(first_process);
+	for (guint attempt = 0; attempt < 200; attempt++) {
+		while (g_main_context_pending(NULL))
+			g_main_context_iteration(NULL, FALSE);
+		if (sakura.agent_process != NULL &&
+		    sakura.agent_process != first_process &&
+		    sakura.agent_command_mutex_initialized &&
+		    sakura.agent_event_mutex_initialized) {
+			restarted = TRUE;
+			break;
+		}
+		g_usleep(10 * 1000);
+	}
+	g_assert_true(restarted);
+	g_test_assert_expected_messages();
+	g_assert_true(sakura_agent_create_group(
+		&sakura, "root", "After restart", "", &error));
+	g_assert_no_error(error);
+
+	sakura_agent_stop(&sakura);
+	g_object_unref(first_process);
+	g_free(sakura.sessionfile);
+	sakura.sessionfile = NULL;
+	g_free(sakura.agent_socket_path_override);
+	sakura.agent_socket_path_override = NULL;
+	g_remove(session_path);
+	g_remove(socket_path);
+	g_rmdir(directory);
+	g_free(session_path);
+	g_free(socket_path);
+	g_free(directory);
+}
+
+
 int
 main(int argc, char **argv)
 {
@@ -2583,5 +2644,7 @@ main(int argc, char **argv)
 	                test_workspace_model_restores_malformed_records);
 	g_test_add_func("/workspace/seeded-operations",
 	                test_seeded_workspace_operations);
+	g_test_add_func("/workspace/embedded-agent-restarts",
+	                test_embedded_agent_restarts);
 	return g_test_run();
 }
