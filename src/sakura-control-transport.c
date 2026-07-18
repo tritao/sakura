@@ -52,8 +52,10 @@ sakura_control_request_clear(SakuraControlRequest *request)
 	g_clear_pointer(&request->provider, g_free);
 	g_clear_pointer(&request->external_id, g_free);
 	g_clear_pointer(&request->url, g_free);
+	g_clear_pointer(&request->client_name, g_free);
 	request->kind = SAKURA_CONTROL_REQUEST_NONE;
 	request->archived = FALSE;
+	request->protocol_version = 0;
 	g_clear_pointer(&request->input_data, g_free);
 	request->input_length = 0;
 	request->cols = 0;
@@ -70,10 +72,14 @@ sakura_control_response_clear(SakuraControlResponse *response)
 	g_clear_pointer(&response->request_id, g_free);
 	g_clear_pointer(&response->accepted_kind, g_free);
 	g_clear_pointer(&response->accepted_id, g_free);
+	g_clear_pointer(&response->agent_version, g_free);
 	g_clear_pointer(&response->attached_terminal_id, g_free);
 	g_clear_pointer(&response->attached_output, g_free);
 	response->has_snapshot = FALSE;
 	response->accepted = FALSE;
+	response->hello = FALSE;
+	response->hello_protocol_version = 0;
+	response->capabilities = 0;
 	response->attached = FALSE;
 	response->attached_cols = 0;
 	response->attached_rows = 0;
@@ -162,6 +168,28 @@ sakura_control_encode_get_snapshot_request(const gchar *request_id,
 	request.request_id = (gchar *)request_id;
 	request.body_case = SAKURA__CONTROL__V1__REQUEST__BODY_GET_SNAPSHOT;
 	request.get_snapshot = &get_snapshot;
+	return sakura_control_pack_message(&request.base, payload);
+}
+
+
+gboolean
+sakura_control_encode_hello_request(const gchar *request_id,
+	                                   guint protocol_version,
+	                                   const gchar *client_name,
+	                                   GByteArray *payload)
+{
+	Sakura__Control__V1__HelloRequest hello =
+		SAKURA__CONTROL__V1__HELLO_REQUEST__INIT;
+	Sakura__Control__V1__Request request =
+		SAKURA__CONTROL__V1__REQUEST__INIT;
+
+	if (payload == NULL || request_id == NULL || request_id[0] == '\0')
+		return FALSE;
+	hello.protocol_version = protocol_version;
+	hello.client_name = (gchar *)sakura_control_string(client_name);
+	request.request_id = (gchar *)request_id;
+	request.body_case = SAKURA__CONTROL__V1__REQUEST__BODY_HELLO;
+	request.hello = &hello;
 	return sakura_control_pack_message(&request.base, payload);
 }
 
@@ -544,6 +572,13 @@ sakura_control_decode_request(const guint8 *payload,
 		if (decoded->get_snapshot != NULL)
 			request->kind = SAKURA_CONTROL_REQUEST_GET_SNAPSHOT;
 		break;
+	case SAKURA__CONTROL__V1__REQUEST__BODY_HELLO:
+		if (decoded->hello != NULL) {
+			request->kind = SAKURA_CONTROL_REQUEST_HELLO;
+			request->protocol_version = decoded->hello->protocol_version;
+			request->client_name = g_strdup(decoded->hello->client_name);
+		}
+		break;
 	case SAKURA__CONTROL__V1__REQUEST__BODY_CREATE_GROUP:
 		if (decoded->create_group != NULL) {
 			request->kind = SAKURA_CONTROL_REQUEST_CREATE_GROUP;
@@ -886,6 +921,30 @@ sakura_control_encode_accepted_response(const gchar *request_id,
 
 
 gboolean
+sakura_control_encode_hello_response(const gchar *request_id,
+	                                    guint protocol_version,
+	                                    const gchar *agent_version,
+	                                    guint64 capabilities,
+	                                    GByteArray *payload)
+{
+	Sakura__Control__V1__HelloResponse hello =
+		SAKURA__CONTROL__V1__HELLO_RESPONSE__INIT;
+	Sakura__Control__V1__Response response =
+		SAKURA__CONTROL__V1__RESPONSE__INIT;
+
+	if (request_id == NULL || request_id[0] == '\0' || payload == NULL)
+		return FALSE;
+	hello.protocol_version = protocol_version;
+	hello.agent_version = (gchar *)sakura_control_string(agent_version);
+	hello.capabilities = capabilities;
+	response.request_id = (gchar *)request_id;
+	response.body_case = SAKURA__CONTROL__V1__RESPONSE__BODY_HELLO;
+	response.hello = &hello;
+	return sakura_control_pack_message(&response.base, payload);
+}
+
+
+gboolean
 sakura_control_encode_terminal_attachment_response(
 	const gchar *request_id, const SakuraCoreTerminal *terminal,
 	const guint8 *replay_data, gsize replay_data_length, GByteArray *payload)
@@ -998,6 +1057,7 @@ sakura_control_decode_response(const guint8 *payload,
 	Sakura__Control__V1__Response *decoded;
 	gboolean has_snapshot;
 	gboolean accepted;
+	gboolean hello;
 	gboolean attached;
 
 	if (payload == NULL || response == NULL)
@@ -1023,6 +1083,9 @@ sakura_control_decode_response(const guint8 *payload,
 	accepted =
 		decoded->body_case == SAKURA__CONTROL__V1__RESPONSE__BODY_ACCEPTED &&
 		decoded->accepted != NULL;
+	hello =
+		decoded->body_case == SAKURA__CONTROL__V1__RESPONSE__BODY_HELLO &&
+		decoded->hello != NULL;
 	attached =
 		decoded->body_case ==
 			SAKURA__CONTROL__V1__RESPONSE__BODY_TERMINAL_ATTACHMENT &&
@@ -1030,6 +1093,11 @@ sakura_control_decode_response(const guint8 *payload,
 	if (accepted) {
 		response->accepted_kind = g_strdup(decoded->accepted->kind);
 		response->accepted_id = g_strdup(decoded->accepted->id);
+	}
+	if (hello) {
+		response->hello_protocol_version = decoded->hello->protocol_version;
+		response->agent_version = g_strdup(decoded->hello->agent_version);
+		response->capabilities = decoded->hello->capabilities;
 	}
 	if (attached) {
 		Sakura__Control__V1__TerminalAttachment *attachment =
@@ -1050,9 +1118,11 @@ sakura_control_decode_response(const guint8 *payload,
 	sakura__control__v1__response__free_unpacked(decoded, NULL);
 	response->has_snapshot = has_snapshot;
 	response->accepted = accepted;
+	response->hello = hello;
 	response->attached = attached;
 	if (response->request_id == NULL ||
-	    (!response->has_snapshot && !response->accepted && !response->attached))
+	    (!response->has_snapshot && !response->accepted && !response->hello &&
+	     !response->attached))
 		return sakura_control_error(error, "unsupported control response");
 	return TRUE;
 }

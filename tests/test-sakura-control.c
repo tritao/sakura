@@ -83,6 +83,50 @@ test_snapshot_response_roundtrip(void)
 
 
 static void
+test_hello_roundtrip(void)
+{
+	GByteArray *request_payload = g_byte_array_new();
+	GByteArray *response_payload = g_byte_array_new();
+	SakuraControlRequest request = { 0 };
+	SakuraControlResponse response = { 0 };
+	GError *error = NULL;
+
+	g_assert_true(sakura_control_encode_hello_request(
+		"hello-request", SAKURA_CONTROL_PROTOCOL_VERSION, "test-client",
+		request_payload));
+	g_assert_true(sakura_control_decode_request(
+		request_payload->data, request_payload->len, &request, &error));
+	g_assert_no_error(error);
+	g_assert_cmpint(request.kind, ==, SAKURA_CONTROL_REQUEST_HELLO);
+	g_assert_cmpuint(request.protocol_version, ==,
+	                SAKURA_CONTROL_PROTOCOL_VERSION);
+	g_assert_cmpstr(request.client_name, ==, "test-client");
+	sakura_control_request_clear(&request);
+
+	g_assert_true(sakura_control_encode_hello_response(
+		"hello-request", SAKURA_CONTROL_PROTOCOL_VERSION, "0.1",
+		SAKURA_CONTROL_CAPABILITY_WORKSPACE |
+		SAKURA_CONTROL_CAPABILITY_TERMINALS, response_payload));
+	g_assert_true(sakura_control_decode_response(
+		response_payload->data, response_payload->len, &response, &error));
+	g_assert_no_error(error);
+	g_assert_true(response.hello);
+	g_assert_cmpstr(response.request_id, ==, "hello-request");
+	g_assert_cmpuint(response.hello_protocol_version, ==,
+	                SAKURA_CONTROL_PROTOCOL_VERSION);
+	g_assert_cmpstr(response.agent_version, ==, "0.1");
+	g_assert_cmpuint(response.capabilities,
+	                ==,
+	                SAKURA_CONTROL_CAPABILITY_WORKSPACE |
+	                SAKURA_CONTROL_CAPABILITY_TERMINALS);
+
+	sakura_control_response_clear(&response);
+	g_byte_array_unref(response_payload);
+	g_byte_array_unref(request_payload);
+}
+
+
+static void
 test_mutation_request_roundtrip(void)
 {
 	GByteArray *encoded = g_byte_array_new();
@@ -322,6 +366,38 @@ test_agent_stop(GSubprocess *process)
 
 
 static void
+test_agent_handshake_on_connection(GSocketConnection *connection)
+{
+	GInputStream *input;
+	GOutputStream *output;
+	GError *error = NULL;
+	GByteArray *hello_payload = g_byte_array_new();
+	GByteArray *hello_response_payload = NULL;
+	SakuraControlResponse hello_response = { 0 };
+
+	input = g_io_stream_get_input_stream(G_IO_STREAM(connection));
+	output = g_io_stream_get_output_stream(G_IO_STREAM(connection));
+	g_assert_true(sakura_control_encode_hello_request(
+		"test-hello", SAKURA_CONTROL_PROTOCOL_VERSION, "sakura-test",
+		hello_payload));
+	g_assert_true(sakura_control_frame_write(output, hello_payload->data,
+	                                         hello_payload->len, NULL, &error));
+	g_assert_no_error(error);
+	g_assert_true(sakura_control_frame_read(input, &hello_response_payload, NULL,
+	                                        &error));
+	g_assert_no_error(error);
+	g_assert_true(sakura_control_decode_response(
+		hello_response_payload->data, hello_response_payload->len,
+		&hello_response, &error));
+	g_assert_no_error(error);
+	g_assert_true(hello_response.hello);
+	sakura_control_response_clear(&hello_response);
+	g_clear_pointer(&hello_response_payload, g_byte_array_unref);
+	g_byte_array_unref(hello_payload);
+}
+
+
+static void
 test_agent_call_on_connection(GSocketConnection *connection,
 	                            const gchar *request_id,
 	                            GByteArray *request_payload,
@@ -334,6 +410,8 @@ test_agent_call_on_connection(GSocketConnection *connection,
 
 	input = g_io_stream_get_input_stream(G_IO_STREAM(connection));
 	output = g_io_stream_get_output_stream(G_IO_STREAM(connection));
+	test_agent_handshake_on_connection(connection);
+
 	g_assert_true(sakura_control_frame_write(output, request_payload->data,
 	                                         request_payload->len, NULL,
 	                                         &error));
@@ -585,6 +663,7 @@ test_agent_create_and_reload(void)
 	subscriber = test_agent_connect_wait(socket_path);
 	subscriber_input = g_io_stream_get_input_stream(G_IO_STREAM(subscriber));
 	subscriber_output = g_io_stream_get_output_stream(G_IO_STREAM(subscriber));
+	test_agent_handshake_on_connection(subscriber);
 	g_byte_array_set_size(request, 0);
 	g_assert_true(sakura_control_encode_subscribe_events_request(
 		"subscribe", 0, request));
@@ -810,6 +889,7 @@ test_agent_terminal_lifecycle(void)
 	test_agent_set_event_timeout(subscriber);
 	subscriber_input = g_io_stream_get_input_stream(G_IO_STREAM(subscriber));
 	subscriber_output = g_io_stream_get_output_stream(G_IO_STREAM(subscriber));
+	test_agent_handshake_on_connection(subscriber);
 	g_assert_true(sakura_control_encode_subscribe_events_request(
 		"subscribe-terminal", 0, request));
 	g_assert_true(sakura_control_frame_write(subscriber_output, request->data,
@@ -946,6 +1026,8 @@ main(int argc, char **argv)
 	                test_request_frame_roundtrip);
 	g_test_add_func("/control/snapshot-response-roundtrip",
 	                test_snapshot_response_roundtrip);
+	g_test_add_func("/control/hello-roundtrip",
+	                test_hello_roundtrip);
 	g_test_add_func("/control/mutation-request-roundtrip",
 	                test_mutation_request_roundtrip);
 	g_test_add_func("/control/agent-create-and-reload",

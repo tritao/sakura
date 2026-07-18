@@ -9,6 +9,10 @@
  * can later be carried by an HTTP or WebSocket adapter. */
 #define SAKURA_CONTROL_PROTOCOL_VERSION 1
 #define SAKURA_CONTROL_MAX_FRAME (1024 * 1024)
+#define SAKURA_CONTROL_CAPABILITY_WORKSPACE G_GUINT64_CONSTANT(1)
+#define SAKURA_CONTROL_CAPABILITY_TERMINALS G_GUINT64_CONSTANT(2)
+#define SAKURA_CONTROL_CAPABILITY_TERMINAL_ATTACH G_GUINT64_CONSTANT(4)
+#define SAKURA_CONTROL_CAPABILITY_EVENT_STREAM G_GUINT64_CONSTANT(8)
 
 typedef enum {
 	SAKURA_CONTROL_REQUEST_NONE,
@@ -27,7 +31,8 @@ typedef enum {
 	SAKURA_CONTROL_REQUEST_CLOSE_TERMINAL,
 	SAKURA_CONTROL_REQUEST_SUBSCRIBE_EVENTS,
 	SAKURA_CONTROL_REQUEST_ATTACH_TERMINAL,
-	SAKURA_CONTROL_REQUEST_DETACH_TERMINAL
+	SAKURA_CONTROL_REQUEST_DETACH_TERMINAL,
+	SAKURA_CONTROL_REQUEST_HELLO
 } SakuraControlRequestKind;
 
 typedef struct {
@@ -43,7 +48,9 @@ typedef struct {
 	gchar *provider;
 	gchar *external_id;
 	gchar *url;
+	gchar *client_name;
 	gboolean archived;
+	guint protocol_version;
 	guint8 *input_data;
 	gsize input_length;
 	guint cols;
@@ -57,6 +64,10 @@ typedef struct {
 	gboolean accepted;
 	gchar *accepted_kind;
 	gchar *accepted_id;
+	gboolean hello;
+	guint hello_protocol_version;
+	gchar *agent_version;
+	guint64 capabilities;
 	gboolean attached;
 	gchar *attached_terminal_id;
 	guint attached_cols;
@@ -81,6 +92,10 @@ gboolean sakura_control_frame_write(GOutputStream *output,
 
 gboolean sakura_control_encode_get_snapshot_request(const gchar *request_id,
 	                                                  GByteArray *payload);
+gboolean sakura_control_encode_hello_request(const gchar *request_id,
+	                                           guint protocol_version,
+	                                           const gchar *client_name,
+	                                           GByteArray *payload);
 gboolean sakura_control_encode_create_group_request(
 	const gchar *request_id, const gchar *parent_id, const gchar *title,
 	const gchar *directory, GByteArray *payload);
@@ -139,6 +154,11 @@ gboolean sakura_control_encode_accepted_response(const gchar *request_id,
 	                                               const gchar *kind,
 	                                               const gchar *id,
 	                                               GByteArray *payload);
+gboolean sakura_control_encode_hello_response(const gchar *request_id,
+	                                            guint protocol_version,
+	                                            const gchar *agent_version,
+	                                            guint64 capabilities,
+	                                            GByteArray *payload);
 gboolean sakura_control_encode_terminal_attachment_response(
 	const gchar *request_id, const SakuraCoreTerminal *terminal,
 	const guint8 *replay_data, gsize replay_data_length, GByteArray *payload);

@@ -36,6 +36,12 @@ typedef struct {
 } SakuraAgentTerminal;
 
 #define SAKURA_AGENT_OUTPUT_BUFFER_SIZE (64 * 1024)
+#define SAKURA_AGENT_VERSION "0.1"
+#define SAKURA_AGENT_CAPABILITIES \
+	(SAKURA_CONTROL_CAPABILITY_WORKSPACE | \
+	 SAKURA_CONTROL_CAPABILITY_TERMINALS | \
+	 SAKURA_CONTROL_CAPABILITY_TERMINAL_ATTACH | \
+	 SAKURA_CONTROL_CAPABILITY_EVENT_STREAM)
 
 struct _SakuraAgent {
 	GMainLoop *loop;
@@ -940,6 +946,7 @@ sakura_agent_connection_thread(gpointer data)
 	const gchar *request_id = "unknown";
 	gchar *accepted_id = NULL;
 	gboolean subscribed = FALSE;
+	gboolean handshaken = FALSE;
 
 	input = g_io_stream_get_input_stream(G_IO_STREAM(request->connection));
 	output = g_io_stream_get_output_stream(G_IO_STREAM(request->connection));
@@ -958,7 +965,20 @@ sakura_agent_connection_thread(gpointer data)
 		if (sakura_control_decode_request(payload->data, payload->len, &decoded,
 	                                   &error)) {
 		request_id = decoded.request_id != NULL ? decoded.request_id : "unknown";
-		if (decoded.kind == SAKURA_CONTROL_REQUEST_SUBSCRIBE_EVENTS) {
+		if (decoded.kind == SAKURA_CONTROL_REQUEST_HELLO) {
+			if (decoded.protocol_version != SAKURA_CONTROL_PROTOCOL_VERSION) {
+				g_set_error(&error, G_IO_ERROR, G_IO_ERROR_NOT_SUPPORTED,
+				            "unsupported control protocol version %u",
+				            decoded.protocol_version);
+			} else if (sakura_control_encode_hello_response(
+					request_id, SAKURA_CONTROL_PROTOCOL_VERSION,
+					SAKURA_AGENT_VERSION, SAKURA_AGENT_CAPABILITIES, response)) {
+				handshaken = TRUE;
+			}
+		} else if (!handshaken) {
+			g_set_error_literal(&error, G_IO_ERROR, G_IO_ERROR_PERMISSION_DENIED,
+			                    "control hello is required before requests");
+		} else if (decoded.kind == SAKURA_CONTROL_REQUEST_SUBSCRIBE_EVENTS) {
 			g_ptr_array_add(request->agent->subscribers,
 			                 g_object_ref(request->connection));
 			sakura_control_encode_accepted_response(request_id,

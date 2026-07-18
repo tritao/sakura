@@ -64,6 +64,11 @@ message Error {
 
 message GetSnapshotRequest {}
 
+message HelloRequest {
+  uint32 protocol_version = 1;
+  string client_name = 2;
+}
+
 message CreateGroupRequest {
   string parent_id = 1;
   string title = 2;
@@ -165,6 +170,7 @@ message Request {
     DeleteTaskRequest delete_task = 15;
     AttachTerminalRequest attach_terminal = 16;
     DetachTerminalRequest detach_terminal = 17;
+    HelloRequest hello = 18;
   }
 }
 
@@ -175,7 +181,14 @@ message Response {
     EntityRef accepted = 3;
     Error error = 4;
     TerminalAttachment terminal_attachment = 5;
+    HelloResponse hello = 6;
   }
+}
+
+message HelloResponse {
+  uint32 protocol_version = 1;
+  string agent_version = 2;
+  uint64 capabilities = 3;
 }
 
 message TerminalAttachment {
