@@ -2049,6 +2049,8 @@ sakura_tab_keypress_cb(GtkWidget *widget, GdkEventKey *event, gpointer data)
 	    event->keyval == GDK_KEY_c &&
 	    (event->state & (GDK_CONTROL_MASK | GDK_SHIFT_MASK)) == GDK_CONTROL_MASK) {
 		tab->codex_interrupt_requested = TRUE;
+		g_free(tab->codex_interrupt_turn_id);
+		tab->codex_interrupt_turn_id = g_strdup(tab->codex_turn_id);
 		sakura_tab_set_status(tab, SAKURA_TAB_STATUS_INTERRUPTED, FALSE);
 	}
 
@@ -2450,6 +2452,8 @@ sakura_tab_free(SakuraTab *tab)
 	g_free(tab->codex_session_id);
 	g_free(tab->codex_session_name);
 	g_free(tab->codex_reasoning_effort);
+	g_free(tab->codex_turn_id);
+	g_free(tab->codex_interrupt_turn_id);
 	g_free(tab->codex_tracking_token);
 	g_free(tab);
 }

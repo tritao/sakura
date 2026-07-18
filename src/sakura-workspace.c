@@ -14,6 +14,7 @@ static void sakura_sidebar_archive_cb(GtkWidget *widget, void *data);
 static void sakura_sidebar_show_archived_cb(GtkWidget *widget, void *data);
 static void sakura_sidebar_set_directory_cb(GtkWidget *widget, void *data);
 static void sakura_sidebar_clear_directory_cb(GtkWidget *widget, void *data);
+static void sakura_sidebar_collapse_all_cb(GtkWidget *widget, void *data);
 static void sakura_sidebar_rename_task_cb(GtkWidget *widget, void *data);
 static void sakura_sidebar_delete_task_cb(GtkWidget *widget, void *data);
 static void sakura_sidebar_move_page_to_task_cb(GtkWidget *widget, void *data);
@@ -4189,6 +4190,15 @@ sakura_sidebar_toggle_cb (GtkWidget *widget, void *data)
 
 
 static void
+sakura_sidebar_collapse_all_cb(GtkWidget *widget, void *data)
+{
+	(void)widget;
+	(void)data;
+	sakura_sidebar_collapse_all();
+}
+
+
+static void
 sakura_sidebar_show_archived_cb(GtkWidget *widget, void *data)
 {
 	gboolean show_archived;
@@ -4234,7 +4244,7 @@ void
 sakura_sidebar_init (gboolean restore_session)
 {
 	GtkWidget *sidebar_box, *toolbar, *title, *tools_button, *open_here_button,
-	          *new_terminal, *new_group, *new_task;
+	          *collapse_all, *new_terminal, *new_group, *new_task;
 	GtkWidget *tools_menu, *tool_item;
 	GtkWidget *tab_shell, *scope_label, *tab_scrolled, *tab_bar, *tab_new;
 	GtkWidget *empty_state, *empty_label, *empty_new;
@@ -4356,6 +4366,10 @@ sakura_sidebar_init (gboolean restore_session)
 	gtk_widget_set_tooltip_text(open_here_button, _("Open Here"));
 	gtk_menu_button_set_popup(GTK_MENU_BUTTON(open_here_button), sakura_open_here_menu_new());
 	gtk_box_pack_start(GTK_BOX(toolbar), open_here_button, FALSE, FALSE, 0);
+	collapse_all = gtk_button_new_from_icon_name("go-up", GTK_ICON_SIZE_MENU);
+	gtk_button_set_relief(GTK_BUTTON(collapse_all), GTK_RELIEF_NONE);
+	gtk_widget_set_tooltip_text(collapse_all, _("Collapse all groups"));
+	gtk_box_pack_start(GTK_BOX(toolbar), collapse_all, FALSE, FALSE, 0);
 	new_terminal = gtk_button_new_from_icon_name("utilities-terminal", GTK_ICON_SIZE_MENU);
 	gtk_button_set_relief(GTK_BUTTON(new_terminal), GTK_RELIEF_NONE);
 	gtk_widget_set_tooltip_text(new_terminal, _("New terminal"));
@@ -4508,6 +4522,8 @@ sakura_sidebar_init (gboolean restore_session)
 	}
 
 	g_signal_connect(new_terminal, "clicked", G_CALLBACK(sakura_new_tab_cb), NULL);
+	g_signal_connect(collapse_all, "clicked",
+	                 G_CALLBACK(sakura_sidebar_collapse_all_cb), NULL);
 	g_signal_connect(new_group, "clicked", G_CALLBACK(sakura_sidebar_new_group_cb), NULL);
 	g_signal_connect(new_task, "clicked", G_CALLBACK(sakura_sidebar_new_task_cb), NULL);
 	g_signal_connect(tab_new, "clicked", G_CALLBACK(sakura_new_tab_cb), NULL);
@@ -5513,6 +5529,15 @@ sakura_sidebar_apply_default_expansion(void)
 	model = GTK_TREE_MODEL(sakura.sidebar_model);
 	gtk_tree_view_expand_all(GTK_TREE_VIEW(sakura.sidebar_tree));
 	sakura_sidebar_collapse_page_rows(model, NULL);
+}
+
+
+void
+sakura_sidebar_collapse_all(void)
+{
+	if (sakura.sidebar_tree == NULL)
+		return;
+	gtk_tree_view_collapse_all(GTK_TREE_VIEW(sakura.sidebar_tree));
 }
 
 

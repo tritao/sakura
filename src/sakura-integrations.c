@@ -1732,6 +1732,23 @@ sakura_codex_status_from_state(const gchar *state, SakuraTabStatus *status,
 
 
 gboolean
+sakura_codex_interrupt_matches_event(const SakuraTab *tab,
+                                      const gchar *event_name,
+                                      const gchar *turn_id)
+{
+	if (tab == NULL || !tab->codex_interrupt_requested ||
+	    g_strcmp0(event_name, "UserPromptSubmit") == 0)
+		return FALSE;
+	if (turn_id != NULL && turn_id[0] != '\0' &&
+	    tab->codex_interrupt_turn_id != NULL)
+		return g_strcmp0(turn_id, tab->codex_interrupt_turn_id) == 0;
+	/* Older hook payloads may not carry turn_id. Hold the local interrupt
+	 * until a new user prompt gives us an unambiguous new turn. */
+	return turn_id == NULL || turn_id[0] == '\0';
+}
+
+
+gboolean
 sakura_codex_tracking_poll_cb(gpointer data)
 {
 	GDir *dir;
@@ -1747,6 +1764,7 @@ sakura_codex_tracking_poll_cb(gpointer data)
 
 	while ((filename = g_dir_read_name(dir)) != NULL) {
 		gchar *path, *contents, *session_id = NULL, *state = NULL;
+		gchar *event_name = NULL, *turn_id = NULL;
 		GKeyFile *tracking;
 		gsize length;
 		guint page;
@@ -1773,6 +1791,8 @@ sakura_codex_tracking_poll_cb(gpointer data)
 		                              G_KEY_FILE_NONE, NULL)) {
 			session_id = g_key_file_get_string(tracking, "tracking", "session_id", NULL);
 			state = g_key_file_get_string(tracking, "tracking", "state", NULL);
+			event_name = g_key_file_get_string(tracking, "tracking", "event", NULL);
+			turn_id = g_key_file_get_string(tracking, "tracking", "turn_id", NULL);
 		} else {
 			session_id = g_strdup(contents);
 		}
@@ -1780,6 +1800,8 @@ sakura_codex_tracking_poll_cb(gpointer data)
 		if (session_id == NULL || session_id[0] == '\0') {
 			g_free(session_id);
 			g_free(state);
+			g_free(event_name);
+			g_free(turn_id);
 			g_free(contents);
 			g_free(path);
 			continue;
@@ -1802,15 +1824,28 @@ sakura_codex_tracking_poll_cb(gpointer data)
 					changed = TRUE;
 				}
 				if (state != NULL && sakura_codex_status_from_state(state, &status, &attention)) {
-					if (status == SAKURA_TAB_STATUS_RUNNING) {
-						tab->codex_interrupt_requested = FALSE;
-					} else if (status == SAKURA_TAB_STATUS_READY &&
-					           tab->codex_interrupt_requested) {
-						status = SAKURA_TAB_STATUS_INTERRUPTED;
-						attention = FALSE;
-						tab->codex_interrupt_requested = FALSE;
+					gboolean preserve_interrupt;
+
+					if (turn_id != NULL && turn_id[0] != '\0') {
+						g_free(tab->codex_turn_id);
+						tab->codex_turn_id = g_strdup(turn_id);
 					}
-					sakura_tab_set_status(tab, status, attention);
+					preserve_interrupt = sakura_codex_interrupt_matches_event(
+						tab, event_name, turn_id);
+					if (status == SAKURA_TAB_STATUS_RUNNING && preserve_interrupt) {
+						/* A delayed running event from the interrupted turn must
+						 * not restart the activity spinner. */
+					} else {
+						if (status == SAKURA_TAB_STATUS_READY && preserve_interrupt) {
+							status = SAKURA_TAB_STATUS_INTERRUPTED;
+							attention = FALSE;
+						}
+						if (tab->codex_interrupt_requested) {
+							tab->codex_interrupt_requested = FALSE;
+							g_clear_pointer(&tab->codex_interrupt_turn_id, g_free);
+						}
+						sakura_tab_set_status(tab, status, attention);
+					}
 				} else if (state == NULL && tab->status == SAKURA_TAB_STATUS_NONE) {
 					sakura_tab_set_status(tab, SAKURA_TAB_STATUS_IDLE, FALSE);
 				}
@@ -1824,6 +1859,8 @@ sakura_codex_tracking_poll_cb(gpointer data)
 		g_free(contents);
 		g_free(session_id);
 		g_free(state);
+		g_free(event_name);
+		g_free(turn_id);
 		g_free(path);
 	}
 	g_dir_close(dir);

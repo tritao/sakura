@@ -12,6 +12,29 @@ test_workspace_snapshot_new(void)
 }
 
 
+static void
+test_codex_interrupt_event_matching(void)
+{
+	SakuraTab tab = { 0 };
+
+	tab.codex_interrupt_requested = TRUE;
+	tab.codex_interrupt_turn_id = g_strdup("turn-a");
+	g_assert_true(sakura_codex_interrupt_matches_event(
+		&tab, "SubagentStart", "turn-a"));
+	g_assert_false(sakura_codex_interrupt_matches_event(
+		&tab, "UserPromptSubmit", "turn-a"));
+	g_assert_false(sakura_codex_interrupt_matches_event(
+		&tab, "SubagentStart", "turn-b"));
+	g_free(tab.codex_interrupt_turn_id);
+	tab.codex_interrupt_turn_id = NULL;
+	g_assert_true(sakura_codex_interrupt_matches_event(
+		&tab, "SubagentStart", NULL));
+	tab.codex_interrupt_requested = FALSE;
+	g_assert_false(sakura_codex_interrupt_matches_event(
+		&tab, "SubagentStart", NULL));
+}
+
+
 static SakuraPage *
 test_page_new(const gchar *page_id, const gchar *terminal_id)
 {
@@ -2598,6 +2621,8 @@ main(int argc, char **argv)
 	gtk_test_init(&argc, &argv, NULL);
 	g_test_add_func("/workspace/notebook-identity-reorder",
 	                test_notebook_identity_and_reorder);
+	g_test_add_func("/workspace/codex-interrupt-event-matching",
+	                test_codex_interrupt_event_matching);
 	g_test_add_func("/workspace/leaf-widget-split", test_leaf_widget_can_split);
 	g_test_add_func("/workspace/generated-page-id-avoids-existing",
 	                test_generated_page_id_avoids_existing_page);

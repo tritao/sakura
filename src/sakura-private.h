@@ -501,6 +501,8 @@ struct sakura_tab {
 	gchar *codex_session_id;
 	gchar *codex_session_name;
 	gchar *codex_reasoning_effort;
+	gchar *codex_turn_id;
+	gchar *codex_interrupt_turn_id;
 	gchar *codex_tracking_token;
 	gboolean codex_start_pending;
 	gboolean codex_name_query_active;
@@ -751,6 +753,9 @@ gboolean sakura_codex_session_id_is_uuid(const gchar *value);
 gboolean sakura_codex_reasoning_effort_is_valid(const gchar *value);
 const gchar *sakura_codex_reasoning_effort_label(const gchar *value);
 gboolean sakura_codex_tracking_poll_cb(gpointer data);
+gboolean sakura_codex_interrupt_matches_event(const SakuraTab *tab,
+                                               const gchar *event_name,
+                                               const gchar *turn_id);
 SakuraTab *sakura_find_codex_tab_by_tracking_token(const gchar *token);
 gchar *sakura_find_codex_name_helper(void);
 void sakura_codex_name_helper_shutdown(void);
@@ -798,6 +803,7 @@ void sakura_sidebar_queue_select_node_with_reason(
 void sakura_sidebar_select_created_tab(SakuraTab *tab);
 void sakura_sidebar_cancel_pending_selection(void);
 void sakura_sidebar_apply_default_expansion(void);
+void sakura_sidebar_collapse_all(void);
 void sakura_sidebar_rebuild_projection(void);
 void sakura_workspace_begin_mutation(void);
 void sakura_workspace_end_mutation(void);
