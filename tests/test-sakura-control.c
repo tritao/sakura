@@ -614,6 +614,27 @@ test_load_agent_session(const gchar *session_path)
 
 
 static void
+test_save_agent_session(const gchar *session_path,
+                        const SakuraSessionSnapshot *snapshot)
+{
+	GKeyFile *key_file;
+	gchar *data;
+	gsize data_length;
+	GError *error = NULL;
+
+	key_file = g_key_file_new();
+	sakura_session_snapshot_save(snapshot, key_file);
+	data = g_key_file_to_data(key_file, &data_length, &error);
+	g_assert_no_error(error);
+	g_assert_nonnull(data);
+	g_assert_true(g_file_set_contents(session_path, data, data_length, &error));
+	g_assert_no_error(error);
+	g_free(data);
+	g_key_file_free(key_file);
+}
+
+
+static void
 test_agent_create_and_reload(void)
 {
 	GSubprocess *process;
@@ -642,11 +663,55 @@ test_agent_create_and_reload(void)
 	socket_path = g_build_filename(directory, "agent.sock", NULL);
 	session_path = g_build_filename(directory, "workspace.session", NULL);
 	process = test_agent_start(socket_path, session_path);
+	subscriber = test_agent_connect_wait(socket_path);
+	subscriber_input = g_io_stream_get_input_stream(G_IO_STREAM(subscriber));
+	subscriber_output = g_io_stream_get_output_stream(G_IO_STREAM(subscriber));
+	test_agent_handshake_on_connection(subscriber);
+	test_agent_set_event_timeout(subscriber);
+	g_assert_true(sakura_control_encode_subscribe_events_request(
+		"initial-subscribe", 0, request));
+	g_assert_true(sakura_control_frame_write(subscriber_output, request->data,
+	                                         request->len, NULL, &error));
+	g_assert_no_error(error);
+	g_assert_true(sakura_control_frame_read(subscriber_input, &event_payload,
+	                                        NULL, &error));
+	g_assert_no_error(error);
+	g_assert_true(sakura_control_decode_response(event_payload->data,
+	                                             event_payload->len, &response,
+	                                             &error));
+	g_assert_no_error(error);
+	g_assert_true(response.accepted);
+	sakura_control_response_clear(&response);
+	g_clear_pointer(&event_payload, g_byte_array_unref);
+	g_assert_true(sakura_control_frame_read(subscriber_input, &event_payload,
+	                                        NULL, &error));
+	g_assert_no_error(error);
+	g_assert_true(sakura_control_decode_workspace_changed_event(
+		event_payload->data, event_payload->len, &event_sequence,
+		&event_snapshot, &error));
+	g_assert_no_error(error);
+	g_assert_cmpuint(event_sequence, ==, 0);
+	g_assert_cmpuint(event_snapshot->groups->len, ==, 0);
+	sakura_session_snapshot_free(event_snapshot);
+	event_snapshot = NULL;
+	g_clear_pointer(&event_payload, g_byte_array_unref);
+	g_byte_array_set_size(request, 0);
 
 	g_assert_true(sakura_control_encode_create_group_request(
 		"create-group", "root", "Projects", "/tmp/projects", request));
 	test_agent_call(socket_path, "create-group", request, &response);
 	sakura_control_response_clear(&response);
+	g_assert_true(sakura_control_frame_read(subscriber_input, &event_payload,
+	                                        NULL, &error));
+	g_assert_no_error(error);
+	g_assert_true(sakura_control_decode_workspace_changed_event(
+		event_payload->data, event_payload->len, &event_sequence,
+		&event_snapshot, &error));
+	g_assert_no_error(error);
+	g_assert_cmpuint(event_sequence, ==, 1);
+	g_assert_cmpuint(event_snapshot->groups->len, ==, 1);
+	test_save_agent_session(session_path, event_snapshot);
+
 
 	snapshot = test_load_agent_session(session_path);
 	g_assert_cmpuint(snapshot->groups->len, ==, 1);
@@ -660,6 +725,19 @@ test_agent_create_and_reload(void)
 		"create-task", group_id, "", "Build", "local", "42", "", request));
 	test_agent_call(socket_path, "create-task", request, &response);
 	sakura_control_response_clear(&response);
+	g_clear_pointer(&event_payload, g_byte_array_unref);
+	sakura_session_snapshot_free(event_snapshot);
+	event_snapshot = NULL;
+	g_assert_true(sakura_control_frame_read(subscriber_input, &event_payload,
+	                                        NULL, &error));
+	g_assert_no_error(error);
+	g_assert_true(sakura_control_decode_workspace_changed_event(
+		event_payload->data, event_payload->len, &event_sequence,
+		&event_snapshot, &error));
+	g_assert_no_error(error);
+	g_assert_cmpuint(event_sequence, ==, 2);
+	g_assert_cmpuint(event_snapshot->tasks->len, ==, 1);
+	test_save_agent_session(session_path, event_snapshot);
 
 	snapshot = test_load_agent_session(session_path);
 	g_assert_cmpuint(snapshot->groups->len, ==, 1);
@@ -669,6 +747,11 @@ test_agent_create_and_reload(void)
 	g_assert_cmpstr(task->group_id, ==, group_id);
 	task_id = g_strdup(task->id);
 	sakura_session_snapshot_free(snapshot);
+	g_clear_pointer(&event_payload, g_byte_array_unref);
+	sakura_session_snapshot_free(event_snapshot);
+	event_snapshot = NULL;
+	g_io_stream_close(G_IO_STREAM(subscriber), NULL, NULL);
+	g_object_unref(subscriber);
 	test_agent_stop(process);
 
 	process = test_agent_start(socket_path, session_path);
@@ -725,6 +808,7 @@ test_agent_create_and_reload(void)
 	g_assert_no_error(error);
 	g_assert_cmpuint(event_sequence, ==, 1);
 	g_assert_cmpuint(event_snapshot->groups->len, ==, 2);
+	test_save_agent_session(session_path, event_snapshot);
 	sakura_session_snapshot_free(event_snapshot);
 	event_snapshot = NULL;
 	g_clear_pointer(&event_payload, g_byte_array_unref);

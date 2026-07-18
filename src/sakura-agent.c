@@ -53,7 +53,6 @@ struct _SakuraAgent {
 	GPtrArray *terminals; /* SakuraAgentTerminal *, owned. */
 	guint64 sequence;
 	gchar *socket_path;
-	gchar *session_path;
 };
 
 
@@ -76,6 +75,8 @@ sakura_agent_load_session(const gchar *session_path, GError **error)
 	SakuraSessionSnapshot *snapshot;
 	GKeyFile *key_file;
 
+	/* The desktop coordinator is the sole session writer. The agent only
+	 * reads this snapshot to bootstrap its runtime projection. */
 	snapshot = sakura_session_snapshot_new();
 	if (session_path == NULL ||
 	    !g_file_test(session_path, G_FILE_TEST_IS_REGULAR))
@@ -89,55 +90,6 @@ sakura_agent_load_session(const gchar *session_path, GError **error)
 	}
 	g_key_file_free(key_file);
 	return snapshot;
-}
-
-
-static gboolean
-sakura_agent_save_session(SakuraAgent *agent, GError **error)
-{
-	GKeyFile *key_file;
-	gchar *data;
-	gchar *directory;
-	gchar *temporary_file;
-	gsize data_length;
-
-	if (agent == NULL || agent->session_snapshot == NULL ||
-	    agent->session_path == NULL || agent->session_path[0] == '\0')
-		return TRUE;
-	key_file = g_key_file_new();
-	sakura_session_snapshot_save(agent->session_snapshot, key_file);
-	data = g_key_file_to_data(key_file, &data_length, error);
-	g_key_file_free(key_file);
-	if (data == NULL)
-		return FALSE;
-	directory = g_path_get_dirname(agent->session_path);
-	if (g_mkdir_with_parents(directory, 0700) != 0) {
-		g_set_error(error, G_FILE_ERROR, g_file_error_from_errno(errno),
-		            "Could not create session directory %s: %s", directory,
-		            g_strerror(errno));
-		g_free(directory);
-		g_free(data);
-		return FALSE;
-	}
-	temporary_file = g_strdup_printf("%s.tmp.%d", agent->session_path,
-	                                  (int)getpid());
-	if (!g_file_set_contents(temporary_file, data, data_length, error) ||
-	    g_chmod(temporary_file, 0600) != 0 ||
-	    g_rename(temporary_file, agent->session_path) != 0) {
-		if (error == NULL || *error == NULL)
-			g_set_error(error, G_FILE_ERROR, g_file_error_from_errno(errno),
-			            "Could not save session %s: %s", agent->session_path,
-			            g_strerror(errno));
-		g_remove(temporary_file);
-		g_free(temporary_file);
-		g_free(directory);
-		g_free(data);
-		return FALSE;
-	}
-	g_free(temporary_file);
-	g_free(directory);
-	g_free(data);
-	return TRUE;
 }
 
 
@@ -191,24 +143,6 @@ sakura_agent_request_group(SakuraAgent *agent, const gchar *group_id,
 		return NULL;
 	}
 	return sakura_core_workspace_find_group(agent->workspace, group_id);
-}
-
-
-static gboolean
-sakura_agent_session_has_terminal(const SakuraAgent *agent,
-                                  const gchar *terminal_id)
-{
-	if (agent == NULL || agent->session_snapshot == NULL ||
-	    agent->session_snapshot->tabs == NULL || terminal_id == NULL ||
-	    terminal_id[0] == '\0')
-		return FALSE;
-	for (guint index = 0; index < agent->session_snapshot->tabs->len; index++) {
-		SakuraSessionTabRecord *record =
-			g_ptr_array_index(agent->session_snapshot->tabs, index);
-		if (record != NULL && g_strcmp0(record->terminal_id, terminal_id) == 0)
-			return TRUE;
-	}
-	return FALSE;
 }
 
 
@@ -760,7 +694,6 @@ sakura_agent_attach_terminal(SakuraAgent *agent,
 {
 	SakuraAgentTerminal *terminal;
 	struct winsize size = { 0 };
-	gboolean changed = FALSE;
 
 	if (workspace_changed != NULL)
 		*workspace_changed = FALSE;
@@ -771,8 +704,6 @@ sakura_agent_attach_terminal(SakuraAgent *agent,
 	if (terminal->core == NULL)
 		return sakura_agent_error(error, "terminal is closed");
 	if (request->cols != 0 && request->rows != 0) {
-		changed = terminal->core->cols != request->cols ||
-		          terminal->core->rows != request->rows;
 		size.ws_col = request->cols;
 		size.ws_row = request->rows;
 		if (terminal->master_fd >= 0 &&
@@ -787,13 +718,6 @@ sakura_agent_attach_terminal(SakuraAgent *agent,
 		if (terminal->pid > 0)
 			kill(terminal->pid, SIGWINCH);
 	}
-	if (changed) {
-		if (!sakura_core_workspace_sync_snapshot(agent->workspace,
-		                                         agent->session_snapshot))
-			return sakura_agent_error(error, "could not update session snapshot");
-		if (!sakura_agent_save_session(agent, error))
-			return FALSE;
-	}
 	terminal->attached_clients++;
 	if (!sakura_control_encode_terminal_attachment_response(
 			request_id, terminal->core,
@@ -803,8 +727,6 @@ sakura_agent_attach_terminal(SakuraAgent *agent,
 		terminal->attached_clients--;
 		return sakura_agent_error(error, "could not encode terminal attachment");
 	}
-	if (workspace_changed != NULL)
-		*workspace_changed = changed;
 	return TRUE;
 }
 
@@ -904,9 +826,6 @@ sakura_agent_apply_request(SakuraAgent *agent,
 	                         GError **error)
 {
 	gboolean changed = FALSE;
-	gboolean restoring_terminal =
-		request->kind == SAKURA_CONTROL_REQUEST_CREATE_TERMINAL &&
-		sakura_agent_session_has_terminal(agent, request->terminal_id);
 
 	switch (request->kind) {
 	case SAKURA_CONTROL_REQUEST_CREATE_GROUP:
@@ -958,12 +877,7 @@ sakura_agent_apply_request(SakuraAgent *agent,
 	if (!sakura_core_workspace_sync_snapshot(agent->workspace,
 	                                         agent->session_snapshot))
 		return sakura_agent_error(error, "could not update session snapshot");
-	/* Rehydrating a saved terminal updates the agent's runtime projection, but
-	 * must not race the application's incremental session restore by writing
-	 * the shared session file. New logical terminals still persist normally. */
-	if (restoring_terminal)
-		return TRUE;
-	return sakura_agent_save_session(agent, error);
+	return TRUE;
 }
 
 
@@ -1331,7 +1245,6 @@ main(int argc, char **argv)
 	agent.terminals = g_ptr_array_new_with_free_func(
 		(GDestroyNotify)sakura_agent_terminal_free);
 	agent.socket_path = socket_path;
-	agent.session_path = session_path;
 	g_mutex_init(&agent.state_mutex);
 	g_signal_connect(service, "incoming", G_CALLBACK(sakura_agent_incoming_cb),
 	                 &agent);
