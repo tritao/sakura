@@ -79,6 +79,13 @@ current tab's group when **All terminals** is selected, or the active group when
 a specific group is selected. An empty group offers a direct **New terminal**
 action.
 
+Tasks and groups can be archived from their sidebar context menu instead of
+being removed. Archiving preserves the hierarchy and any attached live
+terminals; use **All terminals → Show archived** to reveal archived entries,
+then choose **Restore** to bring them back. Archiving a task or group also
+archives its nested children. Permanent deletion is available only for empty
+archived entries and requires confirmation.
+
 If a manually launched session is missed, use **Codex → Attach current tab...**
 to associate its session ID with the current tab. **Codex → Check session
 tracking** shows whether the current tab has the required environment. After

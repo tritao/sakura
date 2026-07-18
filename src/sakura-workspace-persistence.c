@@ -318,6 +318,7 @@ sakura_workspace_model_snapshot_new(const SakuraWorkspaceModel *model,
 		group->directory = g_strdup(model_group->directory != NULL
 		                           ? model_group->directory : "");
 		group->order = model_group->order;
+		group->archived = model_group->archived;
 		g_ptr_array_add(snapshot->groups, group);
 	}
 	g_ptr_array_unref(ordered_groups);
@@ -341,6 +342,7 @@ sakura_workspace_model_snapshot_new(const SakuraWorkspaceModel *model,
 		task->url = g_strdup(model_task->url);
 		task->status = model_task->status;
 		task->order = model_task->order;
+		task->archived = model_task->archived;
 		g_ptr_array_add(snapshot->tasks, task);
 	}
 	g_ptr_array_unref(ordered_tasks);

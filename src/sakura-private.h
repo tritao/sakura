@@ -207,6 +207,7 @@ struct sakura_app {
 	GtkWidget *tab_bar_new_button;
 	GtkWidget *tab_bar_empty;
 	SakuraSidebarNode *active_group_scope;
+	bool show_archived;
 	gboolean tab_bar_refreshing;
 	GtkWidget *menu;
 	GtkWidget *fade_window;  /* Window used for fading effect */
@@ -378,6 +379,7 @@ struct sakura_group {
 	gchar *last_terminal_id;
 	SakuraGroup *parent;
 	guint order; /* Sibling order in the workspace model. */
+	gboolean archived;
 	SakuraSidebarNode *sidebar_node; /* Current projection row, if materialized. */
 };
 
@@ -392,6 +394,7 @@ struct sakura_task {
 	SakuraTask *parent;
 	SakuraGroup *group; /* Explicit owning group; not separately owned. */
 	guint order; /* Sibling order in the workspace model. */
+	gboolean archived;
 };
 
 struct sakura_page {
@@ -802,6 +805,16 @@ gboolean sakura_workspace_model_reorder_group(SakuraWorkspaceModel *model,
 gboolean sakura_workspace_model_append_task(SakuraWorkspaceModel *model,
                                              SakuraTask *task,
                                              SakuraGroup *group);
+gboolean sakura_workspace_model_group_is_archived(const SakuraWorkspaceModel *model,
+                                                   const SakuraGroup *group);
+gboolean sakura_workspace_model_task_is_archived(const SakuraWorkspaceModel *model,
+                                                  const SakuraTask *task);
+void sakura_workspace_model_set_group_archived(SakuraWorkspaceModel *model,
+                                                SakuraGroup *group,
+                                                gboolean archived);
+void sakura_workspace_model_set_task_archived(SakuraWorkspaceModel *model,
+                                               SakuraTask *task,
+                                               gboolean archived);
 SakuraSessionSnapshot *sakura_workspace_model_snapshot_new(
 	const SakuraWorkspaceModel *model, gboolean sidebar_visible,
 	gint sidebar_width);
@@ -834,6 +847,7 @@ typedef struct {
 	gchar *title;
 	gchar *directory;
 	guint order;
+	gboolean archived;
 } SakuraSessionGroupRecord;
 
 typedef struct {
@@ -846,6 +860,7 @@ typedef struct {
 	gchar *url;
 	SakuraTaskStatus status;
 	guint order;
+	gboolean archived;
 } SakuraSessionTaskRecord;
 
 typedef struct {
@@ -901,6 +916,7 @@ struct sakura_session_snapshot {
 	gchar *root_directory;
 	gboolean sidebar_visible;
 	gint sidebar_width;
+	gboolean show_archived;
 };
 
 SakuraSessionSnapshot *sakura_session_snapshot_new(void);

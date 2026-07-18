@@ -5,7 +5,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: sakura\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-07-17 19:48+0100\n"
+"POT-Creation-Date: 2026-07-18 00:01+0100\n"
 "PO-Revision-Date: 2018-04-29 13:18+0000\n"
 "Last-Translator: David Gómez <david@pleyades.net>\n"
 "Language-Team: hu\n"
@@ -381,8 +381,16 @@ msgstr ""
 msgid "Rename task..."
 msgstr "Fül nevének beállítása..."
 
-msgid "Delete task"
+#, fuzzy
+msgid "Restore task"
+msgstr "Fül nevének beállítása..."
+
+msgid "Delete permanently"
 msgstr ""
+
+#, fuzzy
+msgid "Archive task"
+msgstr "Új fül"
 
 #, fuzzy
 msgid "New Codex session with reasoning"
@@ -445,10 +453,16 @@ msgstr "Munkakönyvtár beállítása"
 msgid "Clear working directory"
 msgstr "Munkakönyvtár beállítása"
 
+msgid "Show archived"
+msgstr ""
+
 msgid "Rename group..."
 msgstr ""
 
-msgid "Delete group"
+msgid "Restore group"
+msgstr ""
+
+msgid "Archive group"
 msgstr ""
 
 msgid "New group"
@@ -467,7 +481,13 @@ msgstr ""
 msgid "Rename task"
 msgstr "Fül nevének beállítása..."
 
-msgid "Only empty tasks can be deleted."
+msgid "Only empty archived tasks can be deleted permanently."
+msgstr ""
+
+msgid "Delete this archived task permanently?"
+msgstr ""
+
+msgid "This action cannot be undone."
 msgstr ""
 
 #, fuzzy
@@ -480,7 +500,10 @@ msgstr "_Kiválasztás"
 msgid "Rename group"
 msgstr ""
 
-msgid "Only empty terminal groups can be deleted."
+msgid "Only empty archived groups can be deleted permanently."
+msgstr ""
+
+msgid "Delete this archived group permanently?"
 msgstr ""
 
 msgid "Workspace"

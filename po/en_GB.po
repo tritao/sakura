@@ -7,7 +7,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: sakura\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-07-17 19:48+0100\n"
+"POT-Creation-Date: 2026-07-18 00:01+0100\n"
 "PO-Revision-Date: 2019-08-12 16:54+0000\n"
 "Last-Translator: David Gómez <david@pleyades.net>\n"
 "Language-Team: English (United Kingdom) <en_GB@li.org>\n"
@@ -383,8 +383,16 @@ msgstr ""
 msgid "Rename task..."
 msgstr "Set tab name..."
 
-msgid "Delete task"
+#, fuzzy
+msgid "Restore task"
+msgstr "Set tab name..."
+
+msgid "Delete permanently"
 msgstr ""
+
+#, fuzzy
+msgid "Archive task"
+msgstr "New tab"
 
 #, fuzzy
 msgid "New Codex session with reasoning"
@@ -448,10 +456,16 @@ msgstr "Set working directory"
 msgid "Clear working directory"
 msgstr "Set working directory"
 
+msgid "Show archived"
+msgstr ""
+
 msgid "Rename group..."
 msgstr ""
 
-msgid "Delete group"
+msgid "Restore group"
+msgstr ""
+
+msgid "Archive group"
 msgstr ""
 
 msgid "New group"
@@ -470,7 +484,13 @@ msgstr ""
 msgid "Rename task"
 msgstr "Set tab name..."
 
-msgid "Only empty tasks can be deleted."
+msgid "Only empty archived tasks can be deleted permanently."
+msgstr ""
+
+msgid "Delete this archived task permanently?"
+msgstr ""
+
+msgid "This action cannot be undone."
 msgstr ""
 
 #, fuzzy
@@ -483,7 +503,10 @@ msgstr "_Select"
 msgid "Rename group"
 msgstr ""
 
-msgid "Only empty terminal groups can be deleted."
+msgid "Only empty archived groups can be deleted permanently."
+msgstr ""
+
+msgid "Delete this archived group permanently?"
 msgstr ""
 
 msgid "Workspace"

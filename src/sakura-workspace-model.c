@@ -320,6 +320,7 @@ sakura_workspace_model_restore_snapshot(SakuraWorkspaceModel *model,
 			group = sakura_group_new(record->id, record->title, parent);
 			group->directory = g_strdup(record->directory);
 			group->order = record->order;
+			group->archived = record->archived;
 			if (!sakura_workspace_model_add_group(model, group)) {
 				sakura_group_free(group);
 				continue;
@@ -392,6 +393,7 @@ sakura_workspace_model_restore_snapshot(SakuraWorkspaceModel *model,
 			task->url = g_strdup(record->url);
 			task->status = record->status;
 			task->order = record->order;
+			task->archived = record->archived;
 			task->parent = parent;
 			task->group = group;
 			if (!sakura_workspace_model_add_task(model, task)) {
@@ -428,6 +430,7 @@ sakura_workspace_model_restore_snapshot(SakuraWorkspaceModel *model,
 			task->url = g_strdup(record->url);
 			task->status = record->status;
 			task->order = record->order;
+			task->archived = record->archived;
 			task->group = group;
 			if (!sakura_workspace_model_add_task(model, task)) {
 				sakura_task_free(task);
@@ -448,6 +451,108 @@ sakura_workspace_model_group_is_child_of(SakuraWorkspaceModel *model,
 	return group != NULL &&
 	       (group->parent == parent ||
 	        (group->parent == NULL && parent == model->root_group));
+}
+
+
+static gboolean
+sakura_workspace_model_group_is_within(const SakuraGroup *group,
+                                       const SakuraGroup *ancestor)
+{
+	while (group != NULL) {
+		if (group == ancestor)
+			return TRUE;
+		group = group->parent;
+	}
+	return FALSE;
+}
+
+
+static gboolean
+sakura_workspace_model_task_is_within(const SakuraTask *task,
+                                      const SakuraTask *ancestor)
+{
+	while (task != NULL) {
+		if (task == ancestor)
+			return TRUE;
+		task = task->parent;
+	}
+	return FALSE;
+}
+
+
+gboolean
+sakura_workspace_model_group_is_archived(const SakuraWorkspaceModel *model,
+                                          const SakuraGroup *group)
+{
+	(void)model;
+	while (group != NULL) {
+		if (group->archived)
+			return TRUE;
+		group = group->parent;
+	}
+	return FALSE;
+}
+
+
+gboolean
+sakura_workspace_model_task_is_archived(const SakuraWorkspaceModel *model,
+                                         const SakuraTask *task)
+{
+	const SakuraTask *candidate = task;
+	SakuraGroup *group;
+
+	if (task == NULL)
+		return FALSE;
+	while (candidate != NULL) {
+		if (candidate->archived)
+			return TRUE;
+		candidate = candidate->parent;
+	}
+	group = task->group;
+	return sakura_workspace_model_group_is_archived(
+		model, group);
+}
+
+
+void
+sakura_workspace_model_set_group_archived(SakuraWorkspaceModel *model,
+                                           SakuraGroup *group,
+                                           gboolean archived)
+{
+	if (model == NULL || group == NULL)
+		return;
+	for (GList *link = model->groups; link != NULL; link = link->next) {
+		SakuraGroup *candidate = link->data;
+
+		if (candidate != NULL &&
+		    sakura_workspace_model_group_is_within(candidate, group))
+			candidate->archived = archived;
+	}
+	for (guint index = 0; model->tasks != NULL && index < model->tasks->len;
+	     index++) {
+		SakuraTask *task = g_ptr_array_index(model->tasks, index);
+
+		if (task != NULL &&
+		    sakura_workspace_model_group_is_within(task->group, group))
+			task->archived = archived;
+	}
+}
+
+
+void
+sakura_workspace_model_set_task_archived(SakuraWorkspaceModel *model,
+                                          SakuraTask *task,
+                                          gboolean archived)
+{
+	if (model == NULL || task == NULL || model->tasks == NULL)
+		return;
+	for (guint index = 0; index < model->tasks->len; index++) {
+		SakuraTask *candidate = g_ptr_array_index(model->tasks, index);
+
+		if (candidate != NULL &&
+		    sakura_workspace_model_task_is_within(candidate, task))
+			candidate->archived = archived;
+	}
 }
 
 

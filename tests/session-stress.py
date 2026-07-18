@@ -339,7 +339,7 @@ def read_session(session_file):
     parser.read(session_file, encoding="utf-8")
     if not parser.has_section("Session"):
         raise AssertionError("session has no [Session] section")
-    if parser.getint("Session", "version") not in (3, 4, 5, 6):
+    if parser.getint("Session", "version") not in (3, 4, 5, 6, 7):
         raise AssertionError("unexpected session version")
 
     group_count = parser.getint("Session", "group_count")
@@ -421,6 +421,7 @@ def read_task_state(session_file):
             "group": parser.get(section, "group", fallback="root"),
             "title": parser.get(section, "title", fallback=""),
             "status": parser.getint(section, "status", fallback=0),
+            "archived": parser.getboolean(section, "archived", fallback=False),
         }
     return (
         tasks,
@@ -1169,7 +1170,7 @@ def run_group_close_selection_case(binary, config_file, session_file, env, log_f
 
 
 def run_task_workflow_case(binary, config_file, session_file, env, log_file):
-    """Exercise task context actions across groups and task deletion fallback."""
+    """Exercise task context actions across groups and task archive fallback."""
     write_task_fixture(config_file, session_file)
     process, window = launch_sakura(binary, config_file, env, log_file)
     rows = [
@@ -1230,9 +1231,9 @@ def run_task_workflow_case(binary, config_file, session_file, env, log_file):
             value[0]["task-b"]["title"] == "Renamed Task Beta",
         )
 
-        # Select the empty task normally, then delete it from its context menu.
-        # The task selection leaves the task-filtered scope empty, so deletion
-        # must restore the first terminal in group A rather than a stale tab.
+        # Select the empty task normally, then archive it from its context menu.
+        # Archiving clears the task-filtered scope and must restore the first
+        # terminal in group A rather than leaving a stale tab selected.
         sidebar_click_row(window, env, rows, 4, 1)
         wait_for_task_state(
             session_file,
@@ -1241,16 +1242,16 @@ def run_task_workflow_case(binary, config_file, session_file, env, log_file):
         activate_task_context_item(window, env, rows, 4, 7)
         wait_for_task_state(
             session_file,
-            lambda value: "task-empty" not in value[0] and
+            lambda value: value[0].get("task-empty", {}).get("archived", False) and
             value[1] == "task-a" and value[2] == "group-a",
         )
         _, selected_id = read_metadata(session_file)
         if selected_id != "task-terminal-a":
             raise AssertionError(
-                f"deleting empty task selected {selected_id}, expected task-terminal-a"
+                f"archiving empty task selected {selected_id}, expected task-terminal-a"
             )
 
-        # Let the authoritative post-delete sidebar selection and tab refresh
+        # Let the authoritative post-archive sidebar selection and tab refresh
         # finish before asking X11 to destroy the window.
         run(["xdotool", "key", "Escape"], env, check=False)
         time.sleep(1.0)

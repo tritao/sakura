@@ -10,6 +10,8 @@
 static void sakura_sidebar_save_groups(void);
 static void sakura_sidebar_rename_group_cb(GtkWidget *widget, void *data);
 static void sakura_sidebar_delete_group_cb(GtkWidget *widget, void *data);
+static void sakura_sidebar_archive_cb(GtkWidget *widget, void *data);
+static void sakura_sidebar_show_archived_cb(GtkWidget *widget, void *data);
 static void sakura_sidebar_set_directory_cb(GtkWidget *widget, void *data);
 static void sakura_sidebar_clear_directory_cb(GtkWidget *widget, void *data);
 static void sakura_sidebar_rename_task_cb(GtkWidget *widget, void *data);
@@ -51,6 +53,40 @@ static gboolean sakura_sidebar_drag_drop_cb(GtkWidget *widget,
                                              gint x, gint y, guint time,
                                              gpointer data);
 static gchar *sakura_pending_restore_terminal_id = NULL;
+
+
+static gboolean
+sakura_sidebar_group_is_archived(SakuraGroup *group)
+{
+	return sakura_workspace_model_group_is_archived(sakura.workspace, group);
+}
+
+
+static gboolean
+sakura_sidebar_task_is_archived(SakuraTask *task)
+{
+	return sakura_workspace_model_task_is_archived(sakura.workspace, task);
+}
+
+
+static gboolean
+sakura_sidebar_node_is_archived(SakuraSidebarNode *node)
+{
+	if (node == NULL)
+		return FALSE;
+	if (node->type == SAKURA_SIDEBAR_GROUP)
+		return sakura_sidebar_group_is_archived(node->group);
+	if (node->type == SAKURA_SIDEBAR_TASK)
+		return sakura_sidebar_task_is_archived(node->task);
+	if (node->type == SAKURA_SIDEBAR_PAGE && node->page != NULL)
+		return sakura_sidebar_task_is_archived(node->page->task) ||
+		       sakura_sidebar_group_is_archived(node->page->group);
+	if (node->type == SAKURA_SIDEBAR_TERMINAL && node->tab != NULL &&
+	    node->tab->page != NULL)
+		return sakura_sidebar_task_is_archived(node->tab->page->task) ||
+		       sakura_sidebar_group_is_archived(node->tab->page->group);
+	return FALSE;
+}
 
 
 const gchar *
@@ -624,6 +660,13 @@ sakura_workspace_validate(GError **error)
 			SakuraGroup *group = group_link->data;
 			SakuraSidebarNode *node = group != NULL ? group->sidebar_node : NULL;
 
+			/* Archived groups are intentionally absent from the projection while
+			 * the sidebar is filtered. Their model links remain valid and must not
+			 * be mistaken for a broken model/view relationship. */
+			if (group != NULL && group != sakura.workspace->root_group &&
+			    !sakura.show_archived &&
+			    sakura_workspace_model_group_is_archived(sakura.workspace, group))
+				continue;
 			if (group == NULL || node == NULL || node->type != SAKURA_SIDEBAR_GROUP ||
 			    node->group != group ||
 			    (group != sakura.workspace->root_group && group->parent == NULL) ||
@@ -1968,10 +2011,24 @@ sakura_sidebar_context_menu_new (struct sakura_sidebar_node *node)
 		g_signal_connect(item, "activate", G_CALLBACK(sakura_sidebar_rename_task_cb),
 		                 context_node->task);
 		gtk_menu_shell_append(GTK_MENU_SHELL(menu), item);
-		item = gtk_menu_item_new_with_label(_("Delete task"));
-		g_signal_connect(item, "activate", G_CALLBACK(sakura_sidebar_delete_task_cb),
-		                 context_node->task);
-		gtk_menu_shell_append(GTK_MENU_SHELL(menu), item);
+		if (sakura_sidebar_task_is_archived(context_node->task)) {
+			item = gtk_menu_item_new_with_label(_("Restore task"));
+			g_signal_connect(item, "activate", G_CALLBACK(sakura_sidebar_archive_cb),
+			                 context_node);
+			gtk_menu_shell_append(GTK_MENU_SHELL(menu), item);
+			item = gtk_menu_item_new_with_label(_("Delete permanently"));
+			gtk_widget_set_sensitive(item,
+			                         sakura_workspace_model_can_remove_task(
+				                         sakura.workspace, context_node->task));
+			g_signal_connect(item, "activate", G_CALLBACK(sakura_sidebar_delete_task_cb),
+			                 context_node->task);
+			gtk_menu_shell_append(GTK_MENU_SHELL(menu), item);
+		} else {
+			item = gtk_menu_item_new_with_label(_("Archive task"));
+			g_signal_connect(item, "activate", G_CALLBACK(sakura_sidebar_archive_cb),
+			                 context_node);
+			gtk_menu_shell_append(GTK_MENU_SHELL(menu), item);
+		}
 	} else if (context_node != NULL && context_node->type == SAKURA_SIDEBAR_TERMINAL) {
 		item = gtk_menu_item_new_with_label(_("New terminal"));
 		g_signal_connect(item, "activate", G_CALLBACK(sakura_new_tab_in_scope_cb),
@@ -2108,6 +2165,12 @@ sakura_sidebar_context_menu_new (struct sakura_sidebar_node *node)
 			gtk_menu_item_set_submenu(GTK_MENU_ITEM(item),
 			                          sakura_sidebar_tools_menu_new(context_node));
 			gtk_menu_shell_append(GTK_MENU_SHELL(menu), item);
+			item = gtk_check_menu_item_new_with_label(_("Show archived"));
+			gtk_check_menu_item_set_active(GTK_CHECK_MENU_ITEM(item),
+			                              sakura.show_archived);
+			g_signal_connect(item, "toggled",
+			                 G_CALLBACK(sakura_sidebar_show_archived_cb), NULL);
+			gtk_menu_shell_append(GTK_MENU_SHELL(menu), item);
 		} else {
 			gtk_menu_shell_append(GTK_MENU_SHELL(menu), gtk_separator_menu_item_new());
 			item = gtk_menu_item_new_with_label(_("Rename group..."));
@@ -2115,10 +2178,24 @@ sakura_sidebar_context_menu_new (struct sakura_sidebar_node *node)
 			                 G_CALLBACK(sakura_sidebar_rename_group_cb), context_node);
 			gtk_menu_shell_append(GTK_MENU_SHELL(menu), item);
 			gtk_menu_shell_append(GTK_MENU_SHELL(menu), gtk_separator_menu_item_new());
-			item = gtk_menu_item_new_with_label(_("Delete group"));
-			g_signal_connect(item, "activate",
-			                 G_CALLBACK(sakura_sidebar_delete_group_cb), context_node);
-			gtk_menu_shell_append(GTK_MENU_SHELL(menu), item);
+			if (sakura_sidebar_group_is_archived(context_node->group)) {
+				item = gtk_menu_item_new_with_label(_("Restore group"));
+				g_signal_connect(item, "activate",
+				                 G_CALLBACK(sakura_sidebar_archive_cb), context_node);
+				gtk_menu_shell_append(GTK_MENU_SHELL(menu), item);
+				item = gtk_menu_item_new_with_label(_("Delete permanently"));
+				gtk_widget_set_sensitive(item,
+				                         sakura_workspace_model_can_remove_group(
+					                         sakura.workspace, context_node->group));
+				g_signal_connect(item, "activate",
+				                 G_CALLBACK(sakura_sidebar_delete_group_cb), context_node);
+				gtk_menu_shell_append(GTK_MENU_SHELL(menu), item);
+			} else {
+				item = gtk_menu_item_new_with_label(_("Archive group"));
+				g_signal_connect(item, "activate",
+				                 G_CALLBACK(sakura_sidebar_archive_cb), context_node);
+				gtk_menu_shell_append(GTK_MENU_SHELL(menu), item);
+			}
 		}
 	}
 	return menu;
@@ -2575,24 +2652,101 @@ sakura_sidebar_rename_task_cb(GtkWidget *widget, void *data)
 
 
 static void
+sakura_sidebar_archive_cb(GtkWidget *widget, void *data)
+{
+	SakuraSidebarNode *node = data;
+	gboolean archive;
+	SakuraTask *task = NULL;
+	SakuraGroup *group = NULL;
+	SakuraTask *active_task;
+	SakuraGroup *active_group;
+
+	(void)widget;
+	if (node == NULL)
+		return;
+	if (node->type == SAKURA_SIDEBAR_TASK)
+		task = node->task;
+	else if (node->type == SAKURA_SIDEBAR_GROUP)
+		group = node->group;
+	else
+		return;
+
+	archive = node->type == SAKURA_SIDEBAR_TASK
+	        ? !sakura_sidebar_task_is_archived(task)
+	        : !sakura_sidebar_group_is_archived(group);
+	active_task = sakura.workspace->active_task;
+	active_group = sakura.workspace->active_group;
+	sakura_workspace_begin_mutation();
+	if (task != NULL)
+		sakura_workspace_model_set_task_archived(sakura.workspace, task, archive);
+	else
+		sakura_workspace_model_set_group_archived(sakura.workspace, group, archive);
+
+	if (archive && task != NULL && sakura_task_is_within(active_task, task)) {
+		sakura.workspace->active_task = NULL;
+		if (task->group != NULL && !sakura_sidebar_group_is_archived(task->group)) {
+			sakura.workspace->active_group = task->group;
+			sakura.active_group_scope = task->group->sidebar_node;
+		} else {
+			sakura.workspace->active_group = sakura.workspace->root_group;
+			sakura.active_group_scope = sakura.sidebar_root;
+		}
+	} else if (archive && group != NULL &&
+	           (sakura_sidebar_group_is_archived(active_group) ||
+	            (active_task != NULL &&
+	             sakura_sidebar_group_is_archived(active_task->group)))) {
+		sakura.workspace->active_task = NULL;
+		sakura.workspace->active_group = sakura.workspace->root_group;
+		sakura.active_group_scope = sakura.sidebar_root;
+	}
+	sakura_sidebar_rebuild_projection();
+	sakura_workspace_mark_changed(SAKURA_WORKSPACE_CHANGE_STRUCTURE |
+	                              SAKURA_WORKSPACE_CHANGE_SCOPE |
+	                              SAKURA_WORKSPACE_CHANGE_SELECTION |
+	                              SAKURA_WORKSPACE_CHANGE_METADATA);
+	sakura_session_mark_dirty();
+	sakura_sidebar_save_groups();
+	sakura_workspace_end_mutation();
+	if (archive)
+		sakura_select_scope_default();
+}
+
+
+static void
 sakura_sidebar_delete_task_cb(GtkWidget *widget, void *data)
 {
 	SakuraTask *task = data;
 	GtkTreeIter iter;
 	gboolean was_active_task;
+	GtkWidget *dialog;
+	gint response;
 
 	(void)widget;
 	if (task == NULL)
 		return;
+	if (!sakura_sidebar_task_is_archived(task))
+		return;
 	if (!sakura_workspace_model_can_remove_task(sakura.workspace, task)) {
-		GtkWidget *dialog = gtk_message_dialog_new(
+		dialog = gtk_message_dialog_new(
 			GTK_WINDOW(sakura.main_window), GTK_DIALOG_MODAL,
 			GTK_MESSAGE_INFO, GTK_BUTTONS_OK,
-			_("Only empty tasks can be deleted."));
+			_("Only empty archived tasks can be deleted permanently."));
 		gtk_dialog_run(GTK_DIALOG(dialog));
 		gtk_widget_destroy(dialog);
 		return;
 	}
+	dialog = gtk_message_dialog_new(GTK_WINDOW(sakura.main_window), GTK_DIALOG_MODAL,
+	                                GTK_MESSAGE_WARNING, GTK_BUTTONS_NONE,
+	                                _("Delete this archived task permanently?"));
+	gtk_message_dialog_format_secondary_text(
+		GTK_MESSAGE_DIALOG(dialog),
+		_("This action cannot be undone."));
+	gtk_dialog_add_button(GTK_DIALOG(dialog), _("_Cancel"), GTK_RESPONSE_CANCEL);
+	gtk_dialog_add_button(GTK_DIALOG(dialog), _("Delete permanently"), GTK_RESPONSE_ACCEPT);
+	response = gtk_dialog_run(GTK_DIALOG(dialog));
+	gtk_widget_destroy(dialog);
+	if (response != GTK_RESPONSE_ACCEPT)
+		return;
 	sakura_workspace_begin_mutation();
 	sakura_sidebar_cancel_pending_selection();
 	was_active_task = sakura.workspace->active_task == task;
@@ -2823,10 +2977,14 @@ sakura_sidebar_delete_group_cb (GtkWidget *widget, void *data)
 	struct sakura_sidebar_node *node = data;
 	SakuraGroup *model_group;
 	GtkTreeIter iter;
+	GtkWidget *dialog;
+	gint response;
 
 	if (node == NULL || node == sakura.sidebar_root ||
 	    node->type != SAKURA_SIDEBAR_GROUP ||
 	    !sakura_sidebar_get_iter(node, &iter))
+		return;
+	if (!sakura_sidebar_group_is_archived(node->group))
 		return;
 
 	if (gtk_tree_model_iter_has_child(GTK_TREE_MODEL(sakura.sidebar_model), &iter) ||
@@ -2835,11 +2993,23 @@ sakura_sidebar_delete_group_cb (GtkWidget *widget, void *data)
 		                                           GTK_DIALOG_MODAL,
 		                                           GTK_MESSAGE_INFO,
 		                                           GTK_BUTTONS_OK,
-		                                           _("Only empty terminal groups can be deleted."));
+		                                           _("Only empty archived groups can be deleted permanently."));
 		gtk_dialog_run(GTK_DIALOG(dialog));
 		gtk_widget_destroy(dialog);
 		return;
 	}
+	dialog = gtk_message_dialog_new(GTK_WINDOW(sakura.main_window), GTK_DIALOG_MODAL,
+	                                GTK_MESSAGE_WARNING, GTK_BUTTONS_NONE,
+	                                _("Delete this archived group permanently?"));
+	gtk_message_dialog_format_secondary_text(
+		GTK_MESSAGE_DIALOG(dialog),
+		_("This action cannot be undone."));
+	gtk_dialog_add_button(GTK_DIALOG(dialog), _("_Cancel"), GTK_RESPONSE_CANCEL);
+	gtk_dialog_add_button(GTK_DIALOG(dialog), _("Delete permanently"), GTK_RESPONSE_ACCEPT);
+	response = gtk_dialog_run(GTK_DIALOG(dialog));
+	gtk_widget_destroy(dialog);
+	if (response != GTK_RESPONSE_ACCEPT)
+		return;
 
 	model_group = node->group;
 	sakura_workspace_begin_mutation();
@@ -3294,15 +3464,26 @@ sakura_workspace_restore_snapshot (SakuraSessionSnapshot *snapshot)
 {
 	gint selected_terminal, restored = 0;
 	guint i;
+	gboolean previous_show_archived;
+	gboolean restored_layout;
 
 	if (snapshot == NULL)
 		return FALSE;
 	if (snapshot->tabs->len == 0) {
 		return FALSE;
 	}
+	previous_show_archived = sakura.show_archived;
+	/* Materialize archived parents while restoring so page ownership is
+	 * reconstructed from the saved hierarchy rather than falling back to root. */
+	sakura.show_archived = TRUE;
 	if (snapshot->pages != NULL && snapshot->pages->len > 0 &&
 	    snapshot->layouts != NULL && snapshot->layouts->len > 0)
-		return sakura_workspace_restore_layout_snapshot(snapshot);
+	{
+		restored_layout = sakura_workspace_restore_layout_snapshot(snapshot);
+		sakura.show_archived = previous_show_archived;
+		sakura_sidebar_rebuild_projection();
+		return restored_layout;
+	}
 
 	selected_terminal = snapshot->selected_terminal;
 	for (i = 0; i < snapshot->tabs->len; i++) {
@@ -3351,6 +3532,7 @@ sakura_workspace_restore_snapshot (SakuraSessionSnapshot *snapshot)
 		restored++;
 		g_free(cwd);
 	}
+	sakura.show_archived = previous_show_archived;
 	sakura_sidebar_rebuild_projection();
 
 	if (restored > 0) {
@@ -3411,6 +3593,40 @@ sakura_sidebar_toggle_cb (GtkWidget *widget, void *data)
 		gtk_widget_set_visible(sakura.sidebar, sakura.sidebar_visible);
 	sakura_workspace_set_boolean("sidebar_visible", sakura.sidebar_visible);
 	sakura_session_mark_dirty();
+}
+
+
+static void
+sakura_sidebar_show_archived_cb(GtkWidget *widget, void *data)
+{
+	gboolean show_archived;
+
+	(void)data;
+	if (widget == NULL || !GTK_IS_CHECK_MENU_ITEM(widget))
+		return;
+	show_archived = gtk_check_menu_item_get_active(GTK_CHECK_MENU_ITEM(widget));
+	if (sakura.show_archived == show_archived)
+		return;
+
+	sakura_workspace_begin_mutation();
+	sakura.show_archived = show_archived;
+	if (!show_archived) {
+		if (sakura_sidebar_group_is_archived(sakura.workspace->active_group)) {
+			sakura.workspace->active_group = sakura.workspace->root_group;
+			sakura.active_group_scope = sakura.sidebar_root;
+		}
+		if (sakura_sidebar_task_is_archived(sakura.workspace->active_task))
+			sakura.workspace->active_task = NULL;
+	}
+	sakura_sidebar_rebuild_projection();
+	sakura_workspace_mark_changed(SAKURA_WORKSPACE_CHANGE_STRUCTURE |
+	                              SAKURA_WORKSPACE_CHANGE_SCOPE |
+	                              SAKURA_WORKSPACE_CHANGE_SELECTION);
+	sakura_workspace_set_boolean("show_archived", show_archived);
+	sakura_session_mark_dirty();
+	sakura_workspace_end_mutation();
+	if (!show_archived)
+		sakura_select_scope_default();
 }
 
 
@@ -3579,6 +3795,11 @@ sakura_sidebar_init (gboolean restore_session)
 
 	session_has_groups = restore_session &&
 		sakura.session_snapshot != NULL;
+	if (!session_has_groups &&
+	    g_key_file_has_key(sakura.cfg, SAKURA_CONFIG_GROUP,
+                        "show_archived", NULL))
+		sakura.show_archived = g_key_file_get_boolean(
+			sakura.cfg, SAKURA_CONFIG_GROUP, "show_archived", NULL);
 	if (session_has_groups) {
 		if (sakura.session_snapshot->root_directory != NULL)
 			sakura.workspace->root_group->directory =
@@ -3929,6 +4150,7 @@ sakura_sidebar_set_node_row(SakuraSidebarNode *node, GtkTreeIter *iter)
 	gchar *status_markup = NULL;
 	gchar *tooltip_markup = NULL;
 	gboolean status_running, status_marker_visible, attention_visible = FALSE;
+	gboolean archived;
 	SakuraTabStatus status = node != NULL && node->tab != NULL
 	                       ? node->tab->status : SAKURA_TAB_STATUS_NONE;
 	SakuraTaskStatus task_status = node != NULL && node->task != NULL
@@ -3994,6 +4216,13 @@ sakura_sidebar_set_node_row(SakuraSidebarNode *node, GtkTreeIter *iter)
 		title_markup = g_strdup_printf("<b>%s</b>", escaped_title);
 	else
 		title_markup = g_strdup(escaped_title);
+	archived = sakura_sidebar_node_is_archived(node);
+	if (archived) {
+		gchar *muted_title = g_strdup_printf(
+			"<span foreground=\"#888888\">%s</span>", title_markup);
+		g_free(title_markup);
+		title_markup = muted_title;
+	}
 	if (node->subtitle != NULL && node->subtitle[0] != '\0')
 		markup = g_strdup_printf("%s\n<small>%s</small>", title_markup, escaped_subtitle);
 	else
@@ -4400,6 +4629,11 @@ sakura_sidebar_rebuild_projection(void)
 		return;
 
 	active_group = sakura.workspace->active_group != NULL ? sakura.workspace->active_group : sakura.workspace->root_group;
+	if (!sakura.show_archived && sakura_sidebar_group_is_archived(active_group))
+		active_group = sakura.workspace->root_group;
+	if (!sakura.show_archived &&
+	    sakura_sidebar_task_is_archived(sakura.workspace->active_task))
+		sakura.workspace->active_task = NULL;
 	was_syncing = sakura.sidebar_syncing;
 	sakura_sidebar_cancel_pending_selection();
 	sakura.sidebar_pending_insert_after = NULL;
@@ -4460,14 +4694,20 @@ sakura_sidebar_rebuild_projection(void)
 	/* Parent groups are model links. Defer a child until its parent projection
 	 * exists so the sidebar never has to infer group ownership from row order. */
 	remaining = 0;
-	remaining = ordered_groups->len;
+	for (index = 0; index < ordered_groups->len; index++) {
+		SakuraGroup *group = g_ptr_array_index(ordered_groups, index);
+		if (group != NULL &&
+		    (sakura.show_archived || !sakura_sidebar_group_is_archived(group)))
+			remaining++;
+	}
 	for (pass = 0; remaining > 0 && pass <= ordered_groups->len; pass++) {
 		gboolean progress = FALSE;
 		for (index = 0; index < ordered_groups->len; index++) {
 			SakuraGroup *group = g_ptr_array_index(ordered_groups, index);
 			SakuraSidebarNode *parent;
 
-			if (group == NULL || group->sidebar_node != NULL)
+			if (group == NULL || group->sidebar_node != NULL ||
+			    (!sakura.show_archived && sakura_sidebar_group_is_archived(group)))
 				continue;
 			parent = group->parent != NULL ? group->parent->sidebar_node
 			                              : sakura.sidebar_root;
@@ -4486,24 +4726,34 @@ sakura_sidebar_rebuild_projection(void)
 		 * Repair only the model link needed to restore a valid root projection. */
 		for (index = 0; index < ordered_groups->len; index++) {
 			SakuraGroup *group = g_ptr_array_index(ordered_groups, index);
-			if (group == NULL || group->sidebar_node != NULL)
+			if (group == NULL || group->sidebar_node != NULL ||
+			    (!sakura.show_archived && sakura_sidebar_group_is_archived(group)))
 				continue;
-			group->parent = sakura.workspace->root_group;
-			sakura_sidebar_project_group_node(group, sakura.sidebar_root);
+			if (group->parent == NULL || group->parent->sidebar_node != NULL) {
+				group->parent = sakura.workspace->root_group;
+				sakura_sidebar_project_group_node(group, sakura.sidebar_root);
+			}
 		}
 	}
 
 	/* Tasks are projected in parent order even if the model registry was loaded
 	 * from a snapshot whose record order differs from the hierarchy. */
 	ordered_tasks = sakura_workspace_model_ordered_tasks(sakura.workspace);
-	remaining = ordered_tasks->len;
+	remaining = 0;
+	for (index = 0; index < ordered_tasks->len; index++) {
+		SakuraTask *task = g_ptr_array_index(ordered_tasks, index);
+		if (task != NULL &&
+		    (sakura.show_archived || !sakura_sidebar_task_is_archived(task)))
+			remaining++;
+	}
 	for (pass = 0; remaining > 0 && pass <= ordered_tasks->len; pass++) {
 		gboolean progress = FALSE;
 		for (index = 0; index < ordered_tasks->len; index++) {
 			SakuraTask *task = g_ptr_array_index(ordered_tasks, index);
 			SakuraSidebarNode *parent;
 
-			if (task == NULL || task->sidebar_node != NULL)
+			if (task == NULL || task->sidebar_node != NULL ||
+			    (!sakura.show_archived && sakura_sidebar_task_is_archived(task)))
 				continue;
 			if (task->parent != NULL) {
 				parent = task->parent->sidebar_node;
@@ -4526,12 +4776,14 @@ sakura_sidebar_rebuild_projection(void)
 			SakuraTask *task = g_ptr_array_index(ordered_tasks, index);
 			SakuraSidebarNode *parent;
 
-			if (task == NULL || task->sidebar_node != NULL)
+			if (task == NULL || task->sidebar_node != NULL ||
+			    (!sakura.show_archived && sakura_sidebar_task_is_archived(task)))
 				continue;
 			parent = task->group != NULL ? task->group->sidebar_node
 			                            : sakura.sidebar_root;
-			sakura_sidebar_project_task_node(task,
-			                                parent != NULL ? parent : sakura.sidebar_root);
+			if (parent == NULL || parent->row != NULL)
+				sakura_sidebar_project_task_node(task,
+				                                parent != NULL ? parent : sakura.sidebar_root);
 		}
 	}
 	g_ptr_array_unref(ordered_tasks);
@@ -4544,7 +4796,10 @@ sakura_sidebar_rebuild_projection(void)
 			SakuraGroup *group;
 			guint pane_index;
 
-			if (page == NULL)
+			if (page == NULL ||
+			    (!sakura.show_archived &&
+			     (sakura_sidebar_task_is_archived(page->task) ||
+			      sakura_sidebar_group_is_archived(page->group))))
 				continue;
 			group = page->group != NULL ? page->group : sakura_workspace_model_group_for_session(sakura.workspace, page);
 			if (page->task != NULL && page->task->sidebar_node != NULL)

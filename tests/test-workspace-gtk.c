@@ -2053,6 +2053,122 @@ test_workspace_model_instance_ownership(void)
 
 
 static void
+test_workspace_model_archive_subtrees(void)
+{
+	SakuraWorkspaceModel *model = sakura_workspace_model_new();
+	SakuraSessionSnapshot *snapshot;
+	SakuraGroup *root = sakura_group_new("root", "Root", NULL);
+	SakuraGroup *group = sakura_group_new("archive-group", "Archive group", root);
+	SakuraGroup *child_group = sakura_group_new("archive-child", "Child", group);
+	SakuraGroup *other_group = sakura_group_new("other-group", "Other", root);
+	SakuraTask *parent_task = g_new0(SakuraTask, 1);
+	SakuraTask *child_task = g_new0(SakuraTask, 1);
+	SakuraTask *other_task = g_new0(SakuraTask, 1);
+	SakuraSessionGroupRecord *group_record;
+	SakuraSessionTaskRecord *task_record;
+
+	g_assert_true(sakura_workspace_model_set_root(model, root));
+	g_assert_true(sakura_workspace_model_add_group(model, group));
+	g_assert_true(sakura_workspace_model_add_group(model, child_group));
+	g_assert_true(sakura_workspace_model_add_group(model, other_group));
+
+	parent_task->id = g_strdup("archive-parent-task");
+	parent_task->title = g_strdup("Parent");
+	parent_task->group = group;
+	child_task->id = g_strdup("archive-child-task");
+	child_task->title = g_strdup("Child");
+	child_task->group = group;
+	child_task->parent = parent_task;
+	other_task->id = g_strdup("other-task");
+	other_task->title = g_strdup("Other");
+	other_task->group = other_group;
+	g_assert_true(sakura_workspace_model_add_task(model, parent_task));
+	g_assert_true(sakura_workspace_model_add_task(model, child_task));
+	g_assert_true(sakura_workspace_model_add_task(model, other_task));
+
+	sakura_workspace_model_set_group_archived(model, group, TRUE);
+	g_assert_true(group->archived);
+	g_assert_true(child_group->archived);
+	g_assert_true(sakura_workspace_model_task_is_archived(model, parent_task));
+	g_assert_true(sakura_workspace_model_task_is_archived(model, child_task));
+	g_assert_false(sakura_workspace_model_task_is_archived(model, other_task));
+
+	sakura_workspace_model_set_group_archived(model, group, FALSE);
+	g_assert_false(group->archived);
+	g_assert_false(child_group->archived);
+	g_assert_false(parent_task->archived);
+	g_assert_false(child_task->archived);
+
+	sakura_workspace_model_set_task_archived(model, parent_task, TRUE);
+	g_assert_true(parent_task->archived);
+	g_assert_true(child_task->archived);
+	g_assert_false(other_task->archived);
+	sakura_workspace_model_set_task_archived(model, parent_task, FALSE);
+
+	snapshot = sakura_workspace_model_snapshot_new(model, TRUE, 200);
+	group_record = test_snapshot_group_record(snapshot, "archive-group");
+	task_record = test_snapshot_task_record(snapshot, "archive-parent-task");
+	g_assert_nonnull(group_record);
+	g_assert_nonnull(task_record);
+	g_assert_false(group_record->archived);
+	g_assert_false(task_record->archived);
+	sakura_session_snapshot_free(snapshot);
+	sakura_workspace_model_free(model);
+}
+
+
+static void
+test_sidebar_archive_filters_projection(void)
+{
+	SakuraSidebarNode *group_node;
+	SakuraGroup *group;
+	SakuraTask *task;
+	GtkTreeIter iter;
+
+	setup_workspace();
+	setup_sidebar_fixture();
+	group_node = test_sidebar_add_group("sidebar-archive-group", "Archived group",
+	                                  sakura.sidebar_root);
+	group = group_node->group;
+	task = g_new0(SakuraTask, 1);
+	task->id = g_strdup("sidebar-archive-task");
+	task->title = g_strdup("Archived task");
+	task->group = group;
+	g_assert_true(sakura_workspace_model_add_task(sakura.workspace, task));
+	sakura_sidebar_rebuild_projection();
+	g_assert_nonnull(group->sidebar_node);
+	g_assert_nonnull(task->sidebar_node);
+
+	sakura_workspace_model_set_group_archived(sakura.workspace,
+	                                          group, TRUE);
+	sakura_sidebar_rebuild_projection();
+	g_assert_null(group->sidebar_node);
+	g_assert_null(task->sidebar_node);
+	{
+		GError *error = NULL;
+		g_assert_true(sakura_workspace_validate(&error));
+		g_assert_no_error(error);
+	}
+
+	sakura.show_archived = TRUE;
+	sakura_sidebar_rebuild_projection();
+	g_assert_nonnull(group->sidebar_node);
+	g_assert_nonnull(task->sidebar_node);
+	g_assert_true(sakura_sidebar_get_iter(group->sidebar_node, &iter));
+
+	if (task->sidebar_node != NULL) {
+		if (sakura_sidebar_get_iter(task->sidebar_node, &iter))
+			gtk_tree_store_remove(sakura.sidebar_model, &iter);
+		sakura_sidebar_free_node(task->sidebar_node);
+		task->sidebar_node = NULL;
+	}
+	g_assert_true(sakura_workspace_model_remove_task(sakura.workspace, task));
+	test_sidebar_remove_group(group->sidebar_node);
+	teardown_workspace();
+}
+
+
+static void
 test_workspace_model_restores_hierarchy_without_view(void)
 {
 	SakuraWorkspaceModel *model = sakura_workspace_model_new();
@@ -2373,6 +2489,10 @@ main(int argc, char **argv)
 	                test_sidebar_drag_policy_rejects_invalid_targets);
 	g_test_add_func("/workspace/model-instance-ownership",
 	                test_workspace_model_instance_ownership);
+	g_test_add_func("/workspace/model-archive-subtrees",
+	                test_workspace_model_archive_subtrees);
+	g_test_add_func("/workspace/sidebar-archive-filters-projection",
+	                test_sidebar_archive_filters_projection);
 	g_test_add_func("/workspace/model-restores-without-view",
 	                test_workspace_model_restores_hierarchy_without_view);
 	g_test_add_func("/workspace/model-snapshots-without-view",

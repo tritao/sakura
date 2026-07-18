@@ -7,7 +7,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: sakura 1.0.4\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-07-17 19:48+0100\n"
+"POT-Creation-Date: 2026-07-18 00:01+0100\n"
 "PO-Revision-Date: 2019-08-12 17:06+0000\n"
 "Last-Translator: David Gómez <david@pleyades.net>\n"
 "Language-Team: Chinese/Simplified <i18n-translation@lists.linux.net.cn>\n"
@@ -383,8 +383,16 @@ msgstr ""
 msgid "Rename task..."
 msgstr "设置标签页名称..."
 
-msgid "Delete task"
+#, fuzzy
+msgid "Restore task"
+msgstr "设置标签页名称..."
+
+msgid "Delete permanently"
 msgstr ""
+
+#, fuzzy
+msgid "Archive task"
+msgstr "新建标签"
 
 #, fuzzy
 msgid "New Codex session with reasoning"
@@ -447,10 +455,16 @@ msgstr "设置工作目录"
 msgid "Clear working directory"
 msgstr "设置工作目录"
 
+msgid "Show archived"
+msgstr ""
+
 msgid "Rename group..."
 msgstr ""
 
-msgid "Delete group"
+msgid "Restore group"
+msgstr ""
+
+msgid "Archive group"
 msgstr ""
 
 msgid "New group"
@@ -469,7 +483,13 @@ msgstr ""
 msgid "Rename task"
 msgstr "设置标签页名称..."
 
-msgid "Only empty tasks can be deleted."
+msgid "Only empty archived tasks can be deleted permanently."
+msgstr ""
+
+msgid "Delete this archived task permanently?"
+msgstr ""
+
+msgid "This action cannot be undone."
 msgstr ""
 
 #, fuzzy
@@ -482,7 +502,10 @@ msgstr "选择"
 msgid "Rename group"
 msgstr ""
 
-msgid "Only empty terminal groups can be deleted."
+msgid "Only empty archived groups can be deleted permanently."
+msgstr ""
+
+msgid "Delete this archived group permanently?"
 msgstr ""
 
 msgid "Workspace"

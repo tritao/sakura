@@ -7,7 +7,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: sakura 3.1.4\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-07-17 19:48+0100\n"
+"POT-Creation-Date: 2026-07-18 00:01+0100\n"
 "PO-Revision-Date: 2018-04-29 13:18+0000\n"
 "Last-Translator: David Gómez <david@pleyades.net>\n"
 "Language-Team: Rahut <genghiskhan@gmx.ca>\n"
@@ -390,8 +390,16 @@ msgstr ""
 msgid "Rename task..."
 msgstr "קבע שם כרטיסייה..."
 
-msgid "Delete task"
+#, fuzzy
+msgid "Restore task"
+msgstr "קבע שם כרטיסייה..."
+
+msgid "Delete permanently"
 msgstr ""
+
+#, fuzzy
+msgid "Archive task"
+msgstr "כרטיסייה חדשה"
 
 #, fuzzy
 msgid "New Codex session with reasoning"
@@ -456,10 +464,16 @@ msgstr "Set working directory"
 msgid "Clear working directory"
 msgstr "Set working directory"
 
+msgid "Show archived"
+msgstr ""
+
 msgid "Rename group..."
 msgstr ""
 
-msgid "Delete group"
+msgid "Restore group"
+msgstr ""
+
+msgid "Archive group"
 msgstr ""
 
 msgid "New group"
@@ -478,7 +492,13 @@ msgstr ""
 msgid "Rename task"
 msgstr "קבע שם כרטיסייה..."
 
-msgid "Only empty tasks can be deleted."
+msgid "Only empty archived tasks can be deleted permanently."
+msgstr ""
+
+msgid "Delete this archived task permanently?"
+msgstr ""
+
+msgid "This action cannot be undone."
 msgstr ""
 
 # CLI: Do not translate!
@@ -492,7 +512,10 @@ msgstr "ב_חר"
 msgid "Rename group"
 msgstr ""
 
-msgid "Only empty terminal groups can be deleted."
+msgid "Only empty archived groups can be deleted permanently."
+msgstr ""
+
+msgid "Delete this archived group permanently?"
 msgstr ""
 
 msgid "Workspace"

@@ -11,7 +11,7 @@
 
 #include "sakura-private.h"
 
-#define SAKURA_SESSION_VERSION 6
+#define SAKURA_SESSION_VERSION 7
 #define _(String) gettext(String)
 
 
@@ -139,6 +139,8 @@ sakura_session_flush(void)
 		sakura.sidebar_paned != NULL
 		? gtk_paned_get_position(GTK_PANED(sakura.sidebar_paned))
 		: sakura.sidebar_width);
+	if (snapshot != NULL)
+		snapshot->show_archived = sakura.show_archived;
 	saved = sakura_session_write_snapshot(&sakura, snapshot);
 	sakura_session_snapshot_free(snapshot);
 	if (saved)
@@ -303,6 +305,7 @@ sakura_session_load_file(SakuraApp *app, gboolean restore_session)
 	}
 
 	app->sidebar_visible = snapshot->sidebar_visible;
+	app->show_archived = snapshot->show_archived;
 	if (snapshot->sidebar_width >= 160 && snapshot->sidebar_width <= 500)
 		app->sidebar_width = snapshot->sidebar_width;
 	sakura_session_snapshot_free(app->session_snapshot);
@@ -457,6 +460,7 @@ sakura_session_snapshot_new(void)
 	snapshot->active_group_id = g_strdup("root");
 	snapshot->sidebar_visible = TRUE;
 	snapshot->sidebar_width = 200;
+	snapshot->show_archived = FALSE;
 	return snapshot;
 }
 
@@ -985,6 +989,9 @@ sakura_session_snapshot_load_into(GKeyFile *key_file,
 	if (g_key_file_has_key(key_file, "Session", "sidebar_width", NULL))
 		snapshot->sidebar_width = g_key_file_get_integer(key_file, "Session",
                                                  "sidebar_width", NULL);
+	if (version >= 7 && g_key_file_has_key(key_file, "Session", "show_archived", NULL))
+		snapshot->show_archived = g_key_file_get_boolean(key_file, "Session",
+	                                                   "show_archived", NULL);
 
 	g_ptr_array_set_size(snapshot->groups, 0);
 	g_ptr_array_set_size(snapshot->tasks, 0);
@@ -998,6 +1005,8 @@ sakura_session_snapshot_load_into(GKeyFile *key_file,
 		group->parent_id = g_key_file_get_string(key_file, section, "parent", NULL);
 		group->title = g_key_file_get_string(key_file, section, "title", NULL);
 		group->directory = g_key_file_get_string(key_file, section, "directory", NULL);
+		if (version >= 7 && g_key_file_has_key(key_file, section, "archived", NULL))
+			group->archived = g_key_file_get_boolean(key_file, section, "archived", NULL);
 		group->order = index;
 		if (g_key_file_has_key(key_file, section, "order", NULL)) {
 			gint order = g_key_file_get_integer(key_file, section, "order", NULL);
@@ -1023,6 +1032,8 @@ sakura_session_snapshot_load_into(GKeyFile *key_file,
 		task->provider = g_key_file_get_string(key_file, section, "provider", NULL);
 		task->external_id = g_key_file_get_string(key_file, section, "external_id", NULL);
 		task->url = g_key_file_get_string(key_file, section, "url", NULL);
+		if (version >= 7 && g_key_file_has_key(key_file, section, "archived", NULL))
+			task->archived = g_key_file_get_boolean(key_file, section, "archived", NULL);
 		task->order = index;
 		if (g_key_file_has_key(key_file, section, "order", NULL)) {
 			gint order = g_key_file_get_integer(key_file, section, "order", NULL);
@@ -1198,6 +1209,7 @@ sakura_session_snapshot_save(const SakuraSessionSnapshot *snapshot,
 		g_key_file_remove_key(key_file, "Session", "root_directory", NULL);
 	g_key_file_set_boolean(key_file, "Session", "sidebar_visible", snapshot->sidebar_visible);
 	g_key_file_set_integer(key_file, "Session", "sidebar_width", snapshot->sidebar_width);
+	g_key_file_set_boolean(key_file, "Session", "show_archived", snapshot->show_archived);
 
 	for (index = 0; index < snapshot->groups->len; index++) {
 		SakuraSessionGroupRecord *group = g_ptr_array_index(snapshot->groups, index);
@@ -1211,6 +1223,7 @@ sakura_session_snapshot_save(const SakuraSessionSnapshot *snapshot,
 			g_key_file_set_string(key_file, section, "directory", group->directory);
 		else
 			g_key_file_remove_key(key_file, section, "directory", NULL);
+		g_key_file_set_boolean(key_file, section, "archived", group->archived);
 		g_free(section);
 	}
 	for (index = 0; index < snapshot->tasks->len; index++) {
@@ -1230,6 +1243,7 @@ sakura_session_snapshot_save(const SakuraSessionSnapshot *snapshot,
 		if (task->url != NULL && task->url[0] != '\0')
 			g_key_file_set_string(key_file, section, "url", task->url);
 		g_key_file_set_integer(key_file, section, "status", task->status);
+		g_key_file_set_boolean(key_file, section, "archived", task->archived);
 		g_free(section);
 	}
 	for (index = 0; index < snapshot->pages->len; index++) {
