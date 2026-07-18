@@ -5,7 +5,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: sakura\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-07-18 19:11+0100\n"
+"POT-Creation-Date: 2026-07-18 21:37+0100\n"
 "PO-Revision-Date: 2018-04-29 13:18+0000\n"
 "Last-Translator: David Gómez <david@pleyades.net>\n"
 "Language-Team: sakura-it <nicola@entidi.it>\n"
@@ -263,7 +263,7 @@ msgstr ""
 msgid "_Launch new instance"
 msgstr ""
 
-msgid "Starting saved terminal sessions…"
+msgid "Starting selected terminal sessions…"
 msgstr ""
 
 msgid "Restoring saved workspace…"
@@ -291,6 +291,18 @@ msgid "Interrupted"
 msgstr ""
 
 msgid "Error"
+msgstr ""
+
+msgid "Could not start terminal — click to retry"
+msgstr ""
+
+msgid "Click to retry"
+msgstr ""
+
+msgid "Starting terminal…"
+msgstr ""
+
+msgid "Click to resume"
 msgstr ""
 
 #, fuzzy

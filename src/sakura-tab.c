@@ -237,6 +237,7 @@ sakura_spawn_callback(VteTerminal *vte, GPid pid, GError *error,
                       gpointer user_data)
 {
 	SakuraTab *tab;
+	gboolean deferred_start;
 
 	(void)user_data;
 	/* VTE invokes this asynchronously. The tab can be closed before the
@@ -247,6 +248,9 @@ sakura_spawn_callback(VteTerminal *vte, GPid pid, GError *error,
 	tab = sakura_tab_for_vte(vte);
 	if (tab == NULL)
 		return;
+	deferred_start = tab->runtime_start_pending;
+	if (deferred_start)
+		tab->runtime_start_pending = FALSE;
 	if (pid == -1) {
 		if (tab->kind == SAKURA_TAB_CODEX && tab->codex_start_pending) {
 			tab->codex_start_pending = FALSE;
@@ -254,9 +258,26 @@ sakura_spawn_callback(VteTerminal *vte, GPid pid, GError *error,
 		}
 		g_warning("Could not spawn terminal child: %s",
 		          error != NULL ? error->message : "unknown error");
+		if (deferred_start)
+			tab->runtime_deferred = TRUE;
+		if (deferred_start && tab->runtime_placeholder != NULL) {
+			gtk_label_set_text(GTK_LABEL(tab->runtime_placeholder),
+			                   _("Could not start terminal — click to retry"));
+			gtk_widget_show(tab->runtime_placeholder);
+		}
+		if (deferred_start && tab->spinner != NULL)
+			gtk_widget_set_tooltip_text(tab->spinner, _("Click to retry"));
 		sakura_tab_set_status(tab, SAKURA_TAB_STATUS_ERROR, TRUE);
 	} else if (tab != NULL) {
 		tab->pid = pid;
+		if (deferred_start) {
+			tab->runtime_deferred = FALSE;
+			if (tab->runtime_placeholder != NULL)
+				gtk_widget_hide(tab->runtime_placeholder);
+			if (tab->spinner != NULL)
+				gtk_widget_set_tooltip_text(tab->spinner, _("Working"));
+			sakura_sidebar_update_tab(tab);
+		}
 		if (tab->kind == SAKURA_TAB_CODEX && tab->codex_start_pending) {
 			tab->codex_start_pending = FALSE;
 			sakura_startup_terminal_start_pending(&sakura, FALSE);
@@ -343,9 +364,10 @@ sakura_tab_spawn_codex(SakuraTab *tab, const gchar *cwd, gchar **env)
 		}
 	}
 	codex_env = g_environ_unsetenv(codex_env, "NO_COLOR");
-	if (sakura.session_restoring) {
+	if (sakura.session_restoring || tab->runtime_start_pending) {
 		tab->codex_start_pending = TRUE;
-		sakura_startup_terminal_start_pending(&sakura, TRUE);
+		if (sakura.session_restoring)
+			sakura_startup_terminal_start_pending(&sakura, TRUE);
 		if (tab->spinner != NULL) {
 			gtk_widget_show(tab->spinner);
 			gtk_spinner_start(GTK_SPINNER(tab->spinner));
@@ -596,6 +618,12 @@ sakura_tab_finish_agent_terminal_start(
 	tab->agent_backed = TRUE;
 	tab->agent_terminal_exited = FALSE;
 	tab->agent_terminal_lost = FALSE;
+	tab->runtime_deferred = FALSE;
+	tab->runtime_start_pending = FALSE;
+	if (tab->runtime_placeholder != NULL)
+		gtk_widget_hide(tab->runtime_placeholder);
+	if (tab->spinner != NULL)
+		gtk_widget_set_tooltip_text(tab->spinner, _("Working"));
 	if (attached) {
 		if (attached_cols != 0)
 			tab->agent_cols = attached_cols;
@@ -630,6 +658,8 @@ sakura_tab_set_agent_start_pending(SakuraTab *tab, gboolean pending)
 		return;
 	tab->agent_start_pending = pending;
 	if (tab->spinner != NULL) {
+		gtk_widget_set_tooltip_text(tab->spinner,
+		                            pending ? _("Starting terminal…") : _("Working"));
 		if (pending) {
 			gtk_widget_show(tab->spinner);
 			gtk_spinner_start(GTK_SPINNER(tab->spinner));
@@ -688,10 +718,14 @@ sakura_tab_agent_start_async_done(SakuraAgentTerminalStartResult *result,
 		          tab->terminal_id, result->error->message);
 	g_clear_error(&error);
 	if (!sakura.session_shutting_down) {
+		tab->runtime_start_pending = TRUE;
 		gchar **env = sakura_tab_build_environment(tab, FALSE);
 		sakura_tab_spawn_shell(tab, tab->cwd, env, FALSE);
 		g_strfreev(env);
+	} else {
+		tab->runtime_start_pending = FALSE;
 	}
+	tab->runtime_deferred = FALSE;
 	sakura_tab_set_status(tab, SAKURA_TAB_STATUS_ERROR, TRUE);
 }
 
@@ -726,12 +760,13 @@ sakura_tab_start_agent_terminal(SakuraTab *tab, const gchar *cwd)
 	if (rows == 0)
 		rows = sakura.rows > 0 ? sakura.rows : 24;
 
-	if (sakura.session_restoring &&
+	if ((sakura.session_restoring || tab->runtime_start_pending) &&
 	    sakura_agent_start_terminal_async(
 			&sakura, tab->terminal_id, group_id, task_id, cwd, cols, rows,
 			sakura_tab_agent_start_async_done, NULL, &error)) {
 		sakura_tab_set_agent_start_pending(tab, TRUE);
-		sakura_startup_terminal_start_pending(&sakura, TRUE);
+		if (sakura.session_restoring)
+			sakura_startup_terminal_start_pending(&sakura, TRUE);
 		g_clear_error(&error);
 		return TRUE;
 	}
@@ -760,6 +795,73 @@ sakura_tab_start_agent_terminal(SakuraTab *tab, const gchar *cwd)
 	}
 	g_free(created_terminal_id);
 	g_free(replay_data);
+	return TRUE;
+}
+
+
+gboolean
+sakura_tab_start_deferred_runtime(SakuraTab *tab)
+{
+	gchar **env;
+	gboolean child_started = FALSE;
+
+	if (tab == NULL || !tab->runtime_deferred ||
+	    tab->runtime_start_pending || sakura.session_shutting_down)
+		return tab != NULL && !tab->runtime_deferred;
+
+	tab->runtime_deferred = FALSE;
+	tab->runtime_start_pending = TRUE;
+	if (tab->runtime_placeholder != NULL) {
+		gtk_label_set_text(GTK_LABEL(tab->runtime_placeholder),
+		                   _("Starting terminal…"));
+		gtk_widget_show(tab->runtime_placeholder);
+	}
+	if (tab->spinner != NULL) {
+		gtk_widget_set_tooltip_text(tab->spinner, _("Starting terminal…"));
+		gtk_widget_show(tab->spinner);
+		gtk_spinner_start(GTK_SPINNER(tab->spinner));
+	}
+	sakura_sidebar_update_tab(tab);
+
+	env = sakura_tab_build_environment(tab, FALSE);
+	if (tab->kind == SAKURA_TAB_SHELL && !tab->hold) {
+		child_started = sakura_tab_start_agent_terminal(tab, tab->cwd);
+	} else {
+		child_started = sakura_tab_start_process(
+			tab, tab->cwd, env, tab->kind, tab->tool, NULL, NULL, FALSE);
+		/* Browser-backed tools do not have a child-exited callback. Their
+		 * WebKit surface is ready as soon as the view is constructed. */
+#ifdef HAVE_WEBKITGTK
+		if (child_started && tab->browser != NULL) {
+			tab->runtime_start_pending = FALSE;
+			if (tab->runtime_placeholder != NULL)
+				gtk_widget_hide(tab->runtime_placeholder);
+			if (tab->spinner != NULL) {
+				gtk_widget_set_tooltip_text(tab->spinner, _("Working"));
+				gtk_spinner_stop(GTK_SPINNER(tab->spinner));
+				gtk_widget_hide(tab->spinner);
+			}
+			sakura_sidebar_update_tab(tab);
+		}
+#endif
+	}
+	if (!child_started && tab->kind != SAKURA_TAB_CODEX &&
+	    tab->kind != SAKURA_TAB_TOOL) {
+		sakura_tab_spawn_shell(tab, tab->cwd, env, FALSE);
+		child_started = TRUE;
+	}
+	g_strfreev(env);
+	if (!child_started) {
+		tab->runtime_start_pending = FALSE;
+		tab->runtime_deferred = TRUE;
+		if (tab->runtime_placeholder != NULL) {
+			gtk_label_set_text(GTK_LABEL(tab->runtime_placeholder),
+			                   _("Could not start terminal — click to retry"));
+			gtk_widget_show(tab->runtime_placeholder);
+		}
+		sakura_tab_set_status(tab, SAKURA_TAB_STATUS_ERROR, TRUE);
+		return FALSE;
+	}
 	return TRUE;
 }
 
@@ -929,6 +1031,7 @@ sakura_tab_add_with_options (const gchar *restore_cwd,
 		.hold = FALSE,
 		.execute_on_existing_tabs = FALSE,
 		.suppress_current_cwd_fallback = FALSE,
+		.defer_process_start = FALSE,
 		.target_page = NULL,
 		.target_layout = NULL,
 		.target_ratio = SAKURA_LAYOUT_DEFAULT_RATIO,
@@ -968,6 +1071,7 @@ sakura_tab_add_with_options (const gchar *restore_cwd,
 	sk_tab->kind = restore_kind;
 	sk_tab->tool = restore_kind == SAKURA_TAB_TOOL ? restore_tool : SAKURA_TOOL_NONE;
 	sk_tab->hold = hold_option;
+	sk_tab->runtime_deferred = config->defer_process_start;
 	sk_tab->tool_target = restore_kind == SAKURA_TAB_TOOL
 	                   ? g_strdup(restore_tool_target) : NULL;
 	/* A restored Codex tab has no persisted status yet. Start from a known
@@ -991,6 +1095,11 @@ sakura_tab_add_with_options (const gchar *restore_cwd,
 	/* Tab widgets and the VTE are created together so the tab module owns the
 	 * complete terminal surface. */
 	sakura_tab_create_widgets(sk_tab);
+	if (sk_tab->runtime_deferred && sk_tab->runtime_placeholder != NULL) {
+		gtk_label_set_text(GTK_LABEL(sk_tab->runtime_placeholder),
+		                   _("Click to resume"));
+		gtk_widget_show(sk_tab->runtime_placeholder);
+	}
 	if (!split_into_page) {
 		/* The first leaf is created before its GTK surface exists. Complete the
 		 * model/widget link now so later split operations can replace this leaf
@@ -1134,7 +1243,7 @@ sakura_tab_add_with_options (const gchar *restore_cwd,
 		}
 
 		/* During restore, keep the window undiscoverable until the complete
-		 * workspace projection and all initial tab spawns have been assembled.
+		 * workspace projection and the selected page's initial spawns have been assembled.
 		 * Showing the first tab here exposes a partially-restored window and
 		 * allows a close request to race the remaining restore callbacks. */
 		if (!sakura.session_restoring)
@@ -1156,26 +1265,28 @@ sakura_tab_add_with_options (const gchar *restore_cwd,
 		}
 #endif
 
-		gboolean child_started;
+		if (!config->defer_process_start) {
+			gboolean child_started;
 
-		if (restore_kind == SAKURA_TAB_SHELL && !config->login_shell &&
-		    !hold_option && config->execute_command == NULL &&
-		    config->xterm_args == NULL)
-			child_started = sakura_tab_start_agent_terminal(sk_tab, cwd);
-		else
-			child_started = sakura_tab_start_process(
-				sk_tab, cwd, command_env, restore_kind, restore_tool,
-				config->execute_command, config->xterm_args, TRUE);
+			if (restore_kind == SAKURA_TAB_SHELL && !config->login_shell &&
+			    !hold_option && config->execute_command == NULL &&
+			    config->xterm_args == NULL)
+				child_started = sakura_tab_start_agent_terminal(sk_tab, cwd);
+			else
+				child_started = sakura_tab_start_process(
+					sk_tab, cwd, command_env, restore_kind, restore_tool,
+					config->execute_command, config->xterm_args, TRUE);
 
-		/* Fork shell if there is no execute option or if the command is not valid */
-		if (restore_kind != SAKURA_TAB_CODEX && restore_kind != SAKURA_TAB_TOOL &&
-		    !child_started) {
-			if (hold_option == TRUE) {
-				sakura_error("Hold option given without any command");
-				hold_option = FALSE;
-				sk_tab->hold = FALSE;
+			/* Fork shell if there is no execute option or if the command is not valid */
+			if (restore_kind != SAKURA_TAB_CODEX && restore_kind != SAKURA_TAB_TOOL &&
+			    !child_started) {
+				if (hold_option == TRUE) {
+					sakura_error("Hold option given without any command");
+					hold_option = FALSE;
+					sk_tab->hold = FALSE;
+				}
+				sakura_tab_spawn_shell(sk_tab, cwd, command_env, config->login_shell);
 			}
-			sakura_tab_spawn_shell(sk_tab, cwd, command_env, config->login_shell);
 		}
 
 	/********** Not the first tab ************/
@@ -1203,27 +1314,29 @@ sakura_tab_add_with_options (const gchar *restore_cwd,
 			tab_page->active_tab = sk_tab;
 		}
 
-		gboolean child_started;
+		if (!config->defer_process_start) {
+			gboolean child_started;
 
-		if (restore_kind == SAKURA_TAB_SHELL && !config->login_shell &&
-		    !hold_option && config->execute_command == NULL &&
-		    config->xterm_args == NULL)
-			child_started = sakura_tab_start_agent_terminal(sk_tab, cwd);
-		else
-			child_started = sakura_tab_start_process(
-				sk_tab, cwd, command_env, restore_kind, restore_tool,
-				config->execute_command, config->xterm_args,
-				config->execute_on_existing_tabs);
+			if (restore_kind == SAKURA_TAB_SHELL && !config->login_shell &&
+			    !hold_option && config->execute_command == NULL &&
+			    config->xterm_args == NULL)
+				child_started = sakura_tab_start_agent_terminal(sk_tab, cwd);
+			else
+				child_started = sakura_tab_start_process(
+					sk_tab, cwd, command_env, restore_kind, restore_tool,
+					config->execute_command, config->xterm_args,
+					config->execute_on_existing_tabs);
 
-		/* Fork shell if there is no execute option or if the command is not valid */
-		if (restore_kind != SAKURA_TAB_CODEX && restore_kind != SAKURA_TAB_TOOL &&
-		    !child_started) {
-			if (hold_option == TRUE) {
-				sakura_error("Hold option given without any command");
-				hold_option = FALSE;
-				sk_tab->hold = FALSE;
+			/* Fork shell if there is no execute option or if the command is not valid */
+			if (restore_kind != SAKURA_TAB_CODEX && restore_kind != SAKURA_TAB_TOOL &&
+			    !child_started) {
+				if (hold_option == TRUE) {
+					sakura_error("Hold option given without any command");
+					hold_option = FALSE;
+					sk_tab->hold = FALSE;
+				}
+				sakura_tab_spawn_shell(sk_tab, cwd, command_env, config->login_shell);
 			}
-			sakura_tab_spawn_shell(sk_tab, cwd, command_env, config->login_shell);
 		}
 	}
 
@@ -1414,6 +1527,8 @@ void
 sakura_tab_create_widgets(SakuraTab *tab)
 {
 	GtkWidget *tab_label_box;
+	GtkWidget *terminal_overlay;
+	GtkWidget *runtime_placeholder;
 	GtkWidget *image;
 
 	if (tab == NULL)
@@ -1458,8 +1573,19 @@ sakura_tab_create_widgets(SakuraTab *tab)
 	tab->scrollbar = gtk_scrollbar_new(
 		GTK_ORIENTATION_VERTICAL,
 		gtk_scrollable_get_vadjustment(GTK_SCROLLABLE(tab->vte)));
+	terminal_overlay = gtk_overlay_new();
+	runtime_placeholder = gtk_label_new(_("Click to resume"));
+	gtk_widget_set_halign(runtime_placeholder, GTK_ALIGN_CENTER);
+	gtk_widget_set_valign(runtime_placeholder, GTK_ALIGN_CENTER);
+	gtk_widget_set_no_show_all(runtime_placeholder, TRUE);
+	gtk_widget_set_margin_start(runtime_placeholder, 24);
+	gtk_widget_set_margin_end(runtime_placeholder, 24);
+	gtk_label_set_line_wrap(GTK_LABEL(runtime_placeholder), TRUE);
+	gtk_container_add(GTK_CONTAINER(terminal_overlay), tab->vte);
+	gtk_overlay_add_overlay(GTK_OVERLAY(terminal_overlay), runtime_placeholder);
+	tab->runtime_placeholder = runtime_placeholder;
 	tab->hbox = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
-	gtk_box_pack_start(GTK_BOX(tab->hbox), tab->vte, TRUE, TRUE, 0);
+	gtk_box_pack_start(GTK_BOX(tab->hbox), terminal_overlay, TRUE, TRUE, 0);
 	gtk_box_pack_start(GTK_BOX(tab->hbox), tab->scrollbar, FALSE, FALSE, 0);
 }
 
@@ -2352,8 +2478,9 @@ sakura_tab_set_status(SakuraTab *tab, SakuraTabStatus status, gboolean attention
 	tab->status = status;
 	tab->attention = visible_attention;
 	if (tab->spinner != NULL) {
-		if (status == SAKURA_TAB_STATUS_RUNNING ||
-		    tab->agent_start_pending || tab->codex_start_pending) {
+		if ((!tab->runtime_deferred && status == SAKURA_TAB_STATUS_RUNNING) ||
+		    tab->agent_start_pending || tab->codex_start_pending ||
+		    tab->runtime_start_pending) {
 			gtk_widget_show(tab->spinner);
 			gtk_spinner_start(GTK_SPINNER(tab->spinner));
 		} else {
@@ -2395,8 +2522,9 @@ sakura_tab_restore_state(SakuraTab *tab, SakuraTabStatus status,
 	tab->attention = attention;
 	tab->attention_timestamp = attention_timestamp > 0 ? attention_timestamp : 0;
 	if (tab->spinner != NULL) {
-		if (status == SAKURA_TAB_STATUS_RUNNING ||
-		    tab->agent_start_pending || tab->codex_start_pending) {
+		if ((!tab->runtime_deferred && status == SAKURA_TAB_STATUS_RUNNING) ||
+		    tab->agent_start_pending || tab->codex_start_pending ||
+		    tab->runtime_start_pending) {
 			gtk_widget_show(tab->spinner);
 			gtk_spinner_start(GTK_SPINNER(tab->spinner));
 		} else {
@@ -2597,11 +2725,16 @@ sakura_tab_bar_update_tab(SakuraTab *tab)
 
 	status_color = sakura_tab_status_color(tab->status);
 	status_symbol = sakura_tab_status_symbol(tab->status);
-	if (tab->status == SAKURA_TAB_STATUS_RUNNING) {
+	if (tab->runtime_start_pending ||
+	    (!tab->runtime_deferred && tab->status == SAKURA_TAB_STATUS_RUNNING)) {
 		gtk_widget_show(status_slot);
 		gtk_widget_hide(tab->tab_button_status);
 		gtk_widget_show(tab->tab_button_spinner);
 		gtk_spinner_start(GTK_SPINNER(tab->tab_button_spinner));
+	} else if (tab->runtime_deferred) {
+		gtk_label_set_text(GTK_LABEL(tab->tab_button_status), "▶");
+		gtk_widget_show(status_slot);
+		gtk_widget_show(tab->tab_button_status);
 	} else {
 		gtk_spinner_stop(GTK_SPINNER(tab->tab_button_spinner));
 		gtk_widget_hide(tab->tab_button_spinner);

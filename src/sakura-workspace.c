@@ -1123,6 +1123,7 @@ sakura_select_pane (struct sakura_tab *sk_tab, gboolean focus)
 	sakura.workspace->active_page = sk_tab->page;
 	if (sk_tab->page != NULL)
 		sk_tab->page->active_tab = sk_tab;
+	sakura_workspace_start_page_runtime(sk_tab->page);
 	/* Selection can happen inside a workspace mutation, where the notebook's
 	 * switch-page signal is intentionally suppressed. Keep scope history
 	 * authoritative at the selection primitive instead of relying on that
@@ -1165,6 +1166,19 @@ sakura_select_session (SakuraSession *session, gboolean focus)
 
 	if (pane != NULL)
 		sakura_select_pane(pane, focus);
+}
+
+
+void
+sakura_workspace_start_page_runtime(SakuraPage *page)
+{
+	if (page == NULL || page->panes == NULL || sakura.session_shutting_down)
+		return;
+	for (guint index = 0; index < page->panes->len; index++) {
+		SakuraTab *tab = g_ptr_array_index(page->panes, index);
+		if (tab != NULL && tab->runtime_deferred)
+			sakura_tab_start_deferred_runtime(tab);
+	}
 }
 
 
@@ -3434,6 +3448,27 @@ sakura_workspace_restore_tab_state(SakuraTab *tab,
 }
 
 
+static gboolean
+sakura_workspace_restore_should_defer(const gchar *page_id,
+                                       const gchar *terminal_id)
+{
+	if (!sakura.session_restoring)
+		return FALSE;
+	if (sakura.session_snapshot != NULL &&
+	    sakura.session_snapshot->selected_page_id != NULL &&
+	    sakura.session_snapshot->selected_page_id[0] != '\0' &&
+	    page_id != NULL && page_id[0] != '\0')
+		return g_strcmp0(page_id, sakura.session_snapshot->selected_page_id) != 0;
+	if (sakura.session_snapshot != NULL &&
+	    sakura.session_snapshot->selected_terminal_id != NULL &&
+	    sakura.session_snapshot->selected_terminal_id[0] != '\0' &&
+	    terminal_id != NULL && terminal_id[0] != '\0')
+		return g_strcmp0(terminal_id,
+	                  sakura.session_snapshot->selected_terminal_id) != 0;
+	return FALSE;
+}
+
+
 void
 sakura_workspace_finish_restore(void)
 {
@@ -3508,6 +3543,8 @@ sakura_workspace_restore_layout_subtree(SakuraPage *page,
 	config.target_layout = first;
 	config.target_ratio = record->ratio;
 	config.split_direction = record->direction;
+	config.defer_process_start = sakura_workspace_restore_should_defer(
+		page->id, second_tab_record->terminal_id);
 	parent = sakura_sidebar_find_container_by_id(second_tab_record->parent_id);
 		sakura_tab_add_with_options(second_tab_record->cwd, parent,
 		                            second_tab_record->title,
@@ -3571,6 +3608,7 @@ sakura_workspace_restore_layout_snapshot(SakuraSessionSnapshot *snapshot)
 		SakuraSessionTabRecord *tab_record;
 		SakuraTab *tab;
 		SakuraSidebarNode *parent;
+		SakuraTabLaunchConfig config = { 0 };
 
 		if (root_leaf == NULL || root_leaf->terminal_id == NULL) {
 			failed = TRUE;
@@ -3584,6 +3622,8 @@ sakura_workspace_restore_layout_snapshot(SakuraSessionSnapshot *snapshot)
 		parent = sakura_sidebar_find_container_by_id(
 			page_record->task_id != NULL && page_record->task_id[0] != '\0'
 			? page_record->task_id : tab_record->parent_id);
+		config.defer_process_start = sakura_workspace_restore_should_defer(
+			page_record->id, tab_record->terminal_id);
 		sakura_tab_add_with_options(tab_record->cwd, parent,
 		                            tab_record->title,
 		                            tab_record->title_set_by_user,
@@ -3594,7 +3634,7 @@ sakura_workspace_restore_layout_snapshot(SakuraSessionSnapshot *snapshot)
 		                            tab_record->codex_reasoning_effort,
 		                            tab_record->tool_target,
 		                            tab_record->terminal_id,
-		                            tab_record->colorset, NULL);
+		                            tab_record->colorset, &config);
 		tab = sakura_find_pane_by_terminal_id(tab_record->terminal_id);
 		if (tab == NULL || tab->page == NULL) {
 			failed = TRUE;
@@ -3719,6 +3759,7 @@ sakura_workspace_restore_snapshot (SakuraSessionSnapshot *snapshot)
 		gint restored_page;
 		gboolean title_set = record->title_set_by_user &&
 		                     record->title != NULL && record->title[0] != '\0';
+		SakuraTabLaunchConfig config = { 0 };
 
 		if (tab_kind == SAKURA_TAB_CODEX &&
 		    (record->codex_session_id == NULL || record->codex_session_id[0] == '\0'))
@@ -3735,7 +3776,10 @@ sakura_workspace_restore_snapshot (SakuraSessionSnapshot *snapshot)
 			g_free(cwd);
 			cwd = NULL;
 		}
-		sakura_add_tab_with_options(cwd, parent, title_set ? record->title : NULL,
+		config.defer_process_start = sakura_workspace_restore_should_defer(
+			NULL, record->terminal_id);
+		sakura_workspace_begin_mutation();
+		sakura_tab_add_with_options(cwd, parent, title_set ? record->title : NULL,
 		                            title_set, tab_kind, tool_kind,
 		                            tab_kind == SAKURA_TAB_CODEX ? record->codex_session_id : NULL,
 		                            tab_kind == SAKURA_TAB_CODEX ? record->codex_session_name : NULL,
@@ -3743,7 +3787,8 @@ sakura_workspace_restore_snapshot (SakuraSessionSnapshot *snapshot)
 		                            tab_kind == SAKURA_TAB_TOOL ? record->tool_target : NULL,
 		                            sakura_terminal_id_is_valid(record->terminal_id)
 		                            ? record->terminal_id : NULL,
-		                            record->colorset);
+		                            record->colorset, &config);
+		sakura_workspace_end_mutation();
 		SakuraTab *restored_tab = sakura_find_pane_by_terminal_id(record->terminal_id);
 		restored_page = restored_tab != NULL ? sakura_page_for_tab(restored_tab) : -1;
 		if (restored_page >= 0)
@@ -3826,6 +3871,7 @@ sakura_workspace_restore_layout_page(SakuraWorkspaceRestoreJob *job,
 	SakuraSessionTabRecord *tab_record;
 	SakuraTab *tab;
 	SakuraSidebarNode *parent;
+	SakuraTabLaunchConfig config = { 0 };
 
 	if (job == NULL || page_record == NULL)
 		return FALSE;
@@ -3841,6 +3887,8 @@ sakura_workspace_restore_layout_page(SakuraWorkspaceRestoreJob *job,
 	parent = sakura_sidebar_find_container_by_id(
 		page_record->task_id != NULL && page_record->task_id[0] != '\0'
 		? page_record->task_id : tab_record->parent_id);
+	config.defer_process_start = sakura_workspace_restore_should_defer(
+		page_record->id, tab_record->terminal_id);
 	sakura_tab_add_with_options(tab_record->cwd, parent,
 	                            tab_record->title,
 	                            tab_record->title_set_by_user,
@@ -3851,7 +3899,7 @@ sakura_workspace_restore_layout_page(SakuraWorkspaceRestoreJob *job,
 	                            tab_record->codex_reasoning_effort,
 	                            tab_record->tool_target,
 	                            tab_record->terminal_id,
-	                            tab_record->colorset, NULL);
+	                            tab_record->colorset, &config);
 	tab = sakura_find_pane_by_terminal_id(tab_record->terminal_id);
 	if (tab == NULL || tab->page == NULL)
 		return FALSE;
@@ -3885,6 +3933,7 @@ sakura_workspace_restore_tab_record(SakuraWorkspaceRestoreJob *job,
 	gchar *cwd;
 	gboolean title_set;
 	SakuraTab *restored_tab;
+	SakuraTabLaunchConfig config = { 0 };
 
 	if (job == NULL || record == NULL)
 		return FALSE;
@@ -3907,7 +3956,10 @@ sakura_workspace_restore_tab_record(SakuraWorkspaceRestoreJob *job,
 		g_free(cwd);
 		cwd = NULL;
 	}
-	sakura_add_tab_with_options(cwd, parent, title_set ? record->title : NULL,
+	config.defer_process_start = sakura_workspace_restore_should_defer(
+		NULL, record->terminal_id);
+	sakura_workspace_begin_mutation();
+	sakura_tab_add_with_options(cwd, parent, title_set ? record->title : NULL,
 	                            title_set, tab_kind, tool_kind,
 	                            tab_kind == SAKURA_TAB_CODEX
 	                            ? record->codex_session_id : NULL,
@@ -3919,7 +3971,8 @@ sakura_workspace_restore_tab_record(SakuraWorkspaceRestoreJob *job,
 	                            ? record->tool_target : NULL,
 	                            sakura_terminal_id_is_valid(record->terminal_id)
 	                            ? record->terminal_id : NULL,
-	                            record->colorset);
+	                            record->colorset, &config);
+	sakura_workspace_end_mutation();
 	restored_tab = sakura_find_pane_by_terminal_id(record->terminal_id);
 	if (restored_tab != NULL)
 		sakura_workspace_restore_tab_state(restored_tab, record);
@@ -4524,6 +4577,7 @@ sakura_switch_page_cb (GtkWidget *widget, GtkWidget *widget_page,
 		tab = page->active_tab;
 	sakura.workspace->active_tab = tab;
 	sakura.workspace->active_page = page;
+	sakura_workspace_start_page_runtime(page);
 	sakura_remember_current_scope_tab(tab);
 	sakura_tab_clear_attention(tab);
 	/* A notebook switch can be triggered while a sidebar click is still being
@@ -4697,6 +4751,7 @@ sakura_sidebar_set_node_row(SakuraSidebarNode *node, GtkTreeIter *iter)
 	                            ? node->task->status : SAKURA_TASK_READY;
 	gboolean task_row = node != NULL && node->type == SAKURA_SIDEBAR_TASK;
 	SakuraPage *page = node != NULL ? node->page : NULL;
+	SakuraTab *status_tab = node != NULL ? node->tab : NULL;
 	guint index;
 
 	icon_name = "utilities-terminal";
@@ -4716,24 +4771,39 @@ sakura_sidebar_set_node_row(SakuraSidebarNode *node, GtkTreeIter *iter)
 	} else {
 		icon_name = sakura_sidebar_tab_icon_name(node->tab);
 	}
+	if (status_tab == NULL && node->type == SAKURA_SIDEBAR_PAGE && page != NULL &&
+	    page->panes != NULL && page->panes->len == 1)
+		status_tab = g_ptr_array_index(page->panes, 0);
 
 	escaped_title = g_markup_escape_text(node->title != NULL ? node->title : "", -1);
 	escaped_subtitle = g_markup_escape_text(node->subtitle != NULL ? node->subtitle : "", -1);
-	status_label = task_row ? sakura_task_status_label(task_status) :
-	               (status != SAKURA_TAB_STATUS_NONE ? sakura_tab_status_label(status) : NULL);
+	if (!task_row && status_tab != NULL &&
+	    (status_tab->runtime_deferred || status_tab->runtime_start_pending))
+		status_label = status_tab->runtime_start_pending
+	                   ? _("Starting terminal…") : _("Click to resume");
+	else
+		status_label = task_row ? sakura_task_status_label(task_status) :
+		               (status != SAKURA_TAB_STATUS_NONE ? sakura_tab_status_label(status) : NULL);
 	if (node->tab != NULL && node->tab->kind == SAKURA_TAB_CODEX &&
 	    sakura_codex_reasoning_effort_is_valid(node->tab->codex_reasoning_effort))
 		reasoning_effort = sakura_codex_reasoning_effort_label(
 			node->tab->codex_reasoning_effort);
 	status_running = task_row ? task_status == SAKURA_TASK_WORKING
-	                            : status == SAKURA_TAB_STATUS_RUNNING ||
-	                              (node->tab != NULL &&
-	                               (node->tab->agent_start_pending ||
-	                                node->tab->codex_start_pending));
+	                            : (((status_tab == NULL || !status_tab->runtime_deferred) &&
+                                status == SAKURA_TAB_STATUS_RUNNING) ||
+	                              (status_tab != NULL &&
+	                               (status_tab->agent_start_pending ||
+	                                status_tab->codex_start_pending ||
+	                                status_tab->runtime_start_pending)));
 	status_color = task_row ? sakura_task_status_color(task_status) :
 	              (status != SAKURA_TAB_STATUS_NONE ? sakura_tab_status_color(status) : NULL);
 	status_symbol = task_row ? sakura_task_status_symbol(task_status) :
 	               (status != SAKURA_TAB_STATUS_NONE ? sakura_tab_status_symbol(status) : NULL);
+	if (!task_row && status_tab != NULL && status_tab->runtime_deferred &&
+	    !status_tab->runtime_start_pending) {
+		status_color = "#8c8c8c";
+		status_symbol = "▶";
+	}
 	if (!status_running && status_color != NULL && status_symbol != NULL)
 		status_markup = g_strdup_printf("<span foreground=\"%s\">%s</span>",
 		                                status_color, status_symbol);

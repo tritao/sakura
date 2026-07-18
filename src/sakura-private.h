@@ -104,6 +104,7 @@ typedef struct {
 	gboolean hold;
 	gboolean execute_on_existing_tabs;
 	gboolean suppress_current_cwd_fallback;
+	gboolean defer_process_start;
 	SakuraPage *target_page;
 	SakuraLayoutNode *target_layout;
 	gdouble target_ratio;
@@ -466,6 +467,7 @@ struct sakura_tab {
 	GtkWidget *tab_button_spinner;
 	GtkWidget *tab_button_close;
 	GtkWidget *vte;      /* Reference to VTE terminal */
+	GtkWidget *runtime_placeholder;
 	GtkWidget *scrollbar;
 	VtePty *agent_pty;  /* VTE's local proxy for an agent-owned PTY */
 	int agent_proxy_slave_fd;
@@ -476,6 +478,8 @@ struct sakura_tab {
 	gboolean agent_start_pending;
 	gboolean agent_terminal_exited;
 	gboolean agent_terminal_lost;
+	gboolean runtime_deferred;
+	gboolean runtime_start_pending;
 #ifdef HAVE_WEBKITGTK
 	GtkWidget *browser;
 	GtkWidget *browser_back;
@@ -560,6 +564,7 @@ void sakura_tab_disconnect_exit_handler(SakuraTab *tab);
 SakuraTab *sakura_tab_for_vte(VteTerminal *vte);
 SakuraTab *sakura_find_pane_by_terminal_id(const gchar *terminal_id);
 gboolean sakura_tab_start_agent_terminal(SakuraTab *tab, const gchar *cwd);
+gboolean sakura_tab_start_deferred_runtime(SakuraTab *tab);
 gboolean sakura_tab_restart_agent_terminal(SakuraTab *tab);
 void sakura_tab_agent_feed_output(SakuraTab *tab, const guint8 *data,
                                   gsize data_length);
@@ -777,6 +782,7 @@ void sakura_add_tab_with_options(const gchar *restore_cwd,
                                  const gchar *restore_terminal_id,
                                  gint restore_colorset);
 void sakura_sidebar_update_tab(SakuraTab *tab);
+void sakura_workspace_start_page_runtime(SakuraPage *page);
 void sakura_sidebar_update_attention_count(void);
 gboolean sakura_sidebar_get_iter(SakuraSidebarNode *node, GtkTreeIter *iter);
 void sakura_sidebar_free_node(SakuraSidebarNode *node);

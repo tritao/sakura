@@ -94,7 +94,7 @@ sakura_startup_restore_complete(gboolean success, gpointer data)
 		for (guint index = 0; index < sakura.startup.options.ntabs; index++)
 			sakura_add_tab();
 	}
-	sakura_startup_set_status(_("Starting saved terminal sessions…"));
+	sakura_startup_set_status(_("Starting selected terminal sessions…"));
 	sakura_startup_finish();
 }
 
