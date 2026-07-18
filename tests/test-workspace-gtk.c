@@ -1447,6 +1447,66 @@ test_sidebar_collapses_all_groups(void)
 
 
 static void
+test_sidebar_expansion_survives_rebuild(void)
+{
+	SakuraPage *page;
+	SakuraTab *pane;
+	SakuraSidebarNode *group_node;
+	SakuraGroup *group;
+	SakuraSessionSnapshot *snapshot;
+	GtkTreeIter iter;
+	GtkTreePath *path;
+
+	setup_workspace();
+	page = sakura_page_at_page(1);
+	pane = g_new0(SakuraTab, 1);
+	pane->terminal_id = g_strdup("terminal-expansion-pane");
+	pane->hbox = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
+	pane->label = gtk_label_new("Terminal");
+	g_assert_true(sakura_layout_split_node_widgets(
+		page->active_tab->layout_leaf, SAKURA_SPLIT_DOWN, pane));
+	test_workspace_register_page_panes(page);
+	setup_sidebar_fixture();
+
+	/* Establish the live projection state before changing expansion manually. */
+	sakura_sidebar_rebuild_projection();
+	group_node = test_sidebar_add_group("group-expansion", "Group", sakura.sidebar_root);
+	test_sidebar_add_group("nested-expansion", "Nested", group_node);
+	group = group_node->group;
+	sakura_sidebar_apply_default_expansion();
+
+	g_assert_true(sakura_sidebar_get_iter(group_node, &iter));
+	path = gtk_tree_model_get_path(GTK_TREE_MODEL(sakura.sidebar_model), &iter);
+	g_assert_true(gtk_tree_view_collapse_row(GTK_TREE_VIEW(sakura.sidebar_tree), path));
+	gtk_tree_path_free(path);
+	g_assert_true(sakura_sidebar_get_iter(page->sidebar_node, &iter));
+	path = gtk_tree_model_get_path(GTK_TREE_MODEL(sakura.sidebar_model), &iter);
+	g_assert_true(gtk_tree_view_expand_row(GTK_TREE_VIEW(sakura.sidebar_tree), path, FALSE));
+	gtk_tree_path_free(path);
+
+	snapshot = test_workspace_snapshot_new();
+	sakura_sidebar_capture_expansion(snapshot);
+	sakura_session_snapshot_free(sakura.session_snapshot);
+	sakura.session_snapshot = snapshot;
+	sakura.sidebar_expansion_initialized = FALSE;
+	sakura_sidebar_rebuild_projection();
+
+	g_assert_true(sakura_sidebar_get_iter(group->sidebar_node, &iter));
+	path = gtk_tree_model_get_path(GTK_TREE_MODEL(sakura.sidebar_model), &iter);
+	g_assert_false(gtk_tree_view_row_expanded(GTK_TREE_VIEW(sakura.sidebar_tree), path));
+	gtk_tree_path_free(path);
+	g_assert_true(sakura_sidebar_get_iter(page->sidebar_node, &iter));
+	path = gtk_tree_model_get_path(GTK_TREE_MODEL(sakura.sidebar_model), &iter);
+	g_assert_true(gtk_tree_view_row_expanded(GTK_TREE_VIEW(sakura.sidebar_tree), path));
+	gtk_tree_path_free(path);
+
+	sakura_session_snapshot_free(sakura.session_snapshot);
+	sakura.session_snapshot = NULL;
+	teardown_workspace();
+}
+
+
+static void
 test_sidebar_task_owns_page(void)
 {
 	SakuraTask *task;
@@ -2794,6 +2854,8 @@ main(int argc, char **argv)
 	                test_sidebar_collapses_split_session_panes);
 	g_test_add_func("/workspace/sidebar-collapses-all-groups",
 	                test_sidebar_collapses_all_groups);
+	g_test_add_func("/workspace/sidebar-expansion-survives-rebuild",
+	                test_sidebar_expansion_survives_rebuild);
 	g_test_add_func("/workspace/sidebar-task-owns-page",
 	                test_sidebar_task_owns_page);
 	g_test_add_func("/workspace/task-model-survives-sidebar-projection",

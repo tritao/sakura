@@ -69,6 +69,10 @@ test_session_snapshot_round_trip(void)
 	SakuraSessionGroupRecord *group = g_new0(SakuraSessionGroupRecord, 1);
 	SakuraSessionTaskRecord *task_record = g_new0(SakuraSessionTaskRecord, 1);
 	SakuraSessionTabRecord *tab = g_new0(SakuraSessionTabRecord, 1);
+	SakuraSessionSidebarExpansionRecord *expanded_group = g_new0(
+		SakuraSessionSidebarExpansionRecord, 1);
+	SakuraSessionSidebarExpansionRecord *expanded_session = g_new0(
+		SakuraSessionSidebarExpansionRecord, 1);
 	GKeyFile *key_file = g_key_file_new();
 	GError *error = NULL;
 
@@ -111,6 +115,13 @@ test_session_snapshot_round_trip(void)
 	source->sidebar_visible = FALSE;
 	source->sidebar_width = 280;
 	source->show_archived = TRUE;
+	source->sidebar_expansion_saved = TRUE;
+	expanded_group->id = g_strdup("group-a");
+	expanded_group->kind = SAKURA_SIDEBAR_EXPANSION_GROUP;
+	g_ptr_array_add(source->expanded_sidebar_nodes, expanded_group);
+	expanded_session->id = g_strdup("page-a");
+	expanded_session->kind = SAKURA_SIDEBAR_EXPANSION_SESSION;
+	g_ptr_array_add(source->expanded_sidebar_nodes, expanded_session);
 
 	sakura_session_snapshot_save(source, key_file);
 	g_assert_true(sakura_session_snapshot_load(key_file, loaded, &error));
@@ -126,6 +137,8 @@ test_session_snapshot_round_trip(void)
 	g_assert_false(loaded->sidebar_visible);
 	g_assert_cmpint(loaded->sidebar_width, ==, 280);
 	g_assert_true(loaded->show_archived);
+	g_assert_true(loaded->sidebar_expansion_saved);
+	g_assert_cmpuint(loaded->expanded_sidebar_nodes->len, ==, 2);
 
 	{
 		SakuraSessionGroupRecord *loaded_group = g_ptr_array_index(loaded->groups, 0);
@@ -148,6 +161,18 @@ test_session_snapshot_round_trip(void)
 		g_assert_cmpint(loaded_tab->status, ==, SAKURA_TAB_STATUS_READY);
 		g_assert_true(loaded_tab->attention);
 		g_assert_cmpint(loaded_tab->attention_timestamp, ==, 123456789);
+		{
+			SakuraSessionSidebarExpansionRecord *loaded_group_expansion =
+				g_ptr_array_index(loaded->expanded_sidebar_nodes, 0);
+			SakuraSessionSidebarExpansionRecord *loaded_session_expansion =
+				g_ptr_array_index(loaded->expanded_sidebar_nodes, 1);
+			g_assert_cmpstr(loaded_group_expansion->id, ==, "group-a");
+			g_assert_cmpint(loaded_group_expansion->kind, ==,
+			                SAKURA_SIDEBAR_EXPANSION_GROUP);
+			g_assert_cmpstr(loaded_session_expansion->id, ==, "page-a");
+			g_assert_cmpint(loaded_session_expansion->kind, ==,
+			                SAKURA_SIDEBAR_EXPANSION_SESSION);
+		}
 	}
 
 	g_key_file_free(key_file);

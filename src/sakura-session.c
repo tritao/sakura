@@ -138,8 +138,10 @@ sakura_session_flush(void)
 		sakura.sidebar_paned != NULL
 		? gtk_paned_get_position(GTK_PANED(sakura.sidebar_paned))
 		: sakura.sidebar_width);
-	if (snapshot != NULL)
+	if (snapshot != NULL) {
 		snapshot->show_archived = sakura.show_archived;
+		sakura_sidebar_capture_expansion(snapshot);
+	}
 	saved = sakura_session_write_snapshot(&sakura, snapshot);
 	sakura_session_snapshot_free(snapshot);
 	if (saved)

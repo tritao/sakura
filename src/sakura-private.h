@@ -190,6 +190,7 @@ struct sakura_app {
 	SakuraWorkspaceModel *workspace;
 	SakuraSidebarNode *sidebar_pending_insert_after;
 	gboolean sidebar_syncing;
+	gboolean sidebar_expansion_initialized;
 	GtkTreeRowReference *sidebar_pending_selection;
 	SakuraSidebarSelectionReason sidebar_pending_selection_reason;
 	guint sidebar_selection_source_id;
@@ -808,6 +809,7 @@ void sakura_sidebar_cancel_pending_selection(void);
 void sakura_sidebar_apply_default_expansion(void);
 void sakura_sidebar_collapse_all(void);
 void sakura_sidebar_rebuild_projection(void);
+void sakura_sidebar_capture_expansion(SakuraSessionSnapshot *snapshot);
 void sakura_workspace_begin_mutation(void);
 void sakura_workspace_end_mutation(void);
 gboolean sakura_workspace_is_mutating(void);

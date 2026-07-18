@@ -505,7 +505,8 @@ sakura_session_snapshot_load_into(GKeyFile *key_file,
                                    SakuraSessionSnapshot *snapshot,
                                    GError **error)
 {
-	gint version, group_count, task_count = 0, terminal_count, page_count = 0, layout_count = 0;
+	gint version, group_count, task_count = 0, terminal_count, page_count = 0,
+	     layout_count = 0, expanded_sidebar_count = 0;
 	gint index;
 
 	if (key_file == NULL || snapshot == NULL)
@@ -547,6 +548,19 @@ sakura_session_snapshot_load_into(GKeyFile *key_file,
 			return sakura_session_error(error, G_KEY_FILE_ERROR_INVALID_VALUE,
 			                            g_strdup("task count cannot be negative"));
 	}
+	if (version >= 9 &&
+	    g_key_file_has_key(key_file, "Session", "expanded_sidebar_count", NULL)) {
+		expanded_sidebar_count = g_key_file_get_integer(
+			key_file, "Session", "expanded_sidebar_count", error);
+		if (error != NULL && *error != NULL)
+			return FALSE;
+		if (expanded_sidebar_count < 0)
+			return sakura_session_error(error, G_KEY_FILE_ERROR_INVALID_VALUE,
+			                            g_strdup("expanded sidebar count cannot be negative"));
+		snapshot->sidebar_expansion_saved = TRUE;
+	} else {
+		snapshot->sidebar_expansion_saved = FALSE;
+	}
 
 	if (g_key_file_has_key(key_file, "Session", "selected_terminal", NULL))
 		snapshot->selected_terminal = g_key_file_get_integer(key_file, "Session",
@@ -585,6 +599,7 @@ sakura_session_snapshot_load_into(GKeyFile *key_file,
 	g_ptr_array_set_size(snapshot->tabs, 0);
 	g_ptr_array_set_size(snapshot->pages, 0);
 	g_ptr_array_set_size(snapshot->layouts, 0);
+	g_ptr_array_set_size(snapshot->expanded_sidebar_nodes, 0);
 	for (index = 0; index < group_count; index++) {
 		gchar *section = g_strdup_printf("Group%d", index);
 		SakuraSessionGroupRecord *group = g_new0(SakuraSessionGroupRecord, 1);
@@ -679,6 +694,35 @@ sakura_session_snapshot_load_into(GKeyFile *key_file,
 		layout->second_id = g_key_file_get_string(key_file, section, "second", NULL);
 		layout->terminal_id = g_key_file_get_string(key_file, section, "terminal_id", NULL);
 		g_ptr_array_add(snapshot->layouts, layout);
+		g_free(section);
+	}
+	for (index = 0; index < expanded_sidebar_count; index++) {
+		gchar *section = g_strdup_printf("ExpandedSidebar%d", index);
+		gchar *kind = g_key_file_get_string(key_file, section, "kind", NULL);
+		SakuraSessionSidebarExpansionRecord *record = g_new0(
+			SakuraSessionSidebarExpansionRecord, 1);
+		const gchar *id = NULL;
+
+		record->id = g_key_file_get_string(key_file, section, "id", NULL);
+		if (g_strcmp0(kind, "group") == 0) {
+			record->kind = SAKURA_SIDEBAR_EXPANSION_GROUP;
+			id = record->id;
+		} else if (g_strcmp0(kind, "task") == 0) {
+			record->kind = SAKURA_SIDEBAR_EXPANSION_TASK;
+			id = record->id;
+		} else if (g_strcmp0(kind, "session") == 0) {
+			record->kind = SAKURA_SIDEBAR_EXPANSION_SESSION;
+			id = record->id;
+		}
+		/* Unknown or incomplete rows are ignored so a stale view-only entry
+		 * cannot make an otherwise valid workspace fail to restore. */
+		if (id != NULL && id[0] != '\0')
+			g_ptr_array_add(snapshot->expanded_sidebar_nodes, record);
+		else {
+			g_free(record->id);
+			g_free(record);
+		}
+		g_free(kind);
 		g_free(section);
 	}
 
@@ -799,6 +843,28 @@ sakura_session_snapshot_save(const SakuraSessionSnapshot *snapshot,
 	g_key_file_set_boolean(key_file, "Session", "sidebar_visible", snapshot->sidebar_visible);
 	g_key_file_set_integer(key_file, "Session", "sidebar_width", snapshot->sidebar_width);
 	g_key_file_set_boolean(key_file, "Session", "show_archived", snapshot->show_archived);
+	if (snapshot->sidebar_expansion_saved) {
+		g_key_file_set_integer(key_file, "Session", "expanded_sidebar_count",
+		                      snapshot->expanded_sidebar_nodes != NULL
+		                      ? snapshot->expanded_sidebar_nodes->len : 0);
+		for (index = 0; snapshot->expanded_sidebar_nodes != NULL &&
+		              index < snapshot->expanded_sidebar_nodes->len; index++) {
+			SakuraSessionSidebarExpansionRecord *record = g_ptr_array_index(
+				snapshot->expanded_sidebar_nodes, index);
+			gchar *section = g_strdup_printf("ExpandedSidebar%u", index);
+			const gchar *kind = record->kind == SAKURA_SIDEBAR_EXPANSION_GROUP
+			                  ? "group"
+			                  : record->kind == SAKURA_SIDEBAR_EXPANSION_TASK
+			                  ? "task" : "session";
+
+			g_key_file_set_string(key_file, section, "kind", kind);
+			g_key_file_set_string(key_file, section, "id",
+			                      record->id != NULL ? record->id : "");
+			g_free(section);
+		}
+	} else {
+		g_key_file_remove_key(key_file, "Session", "expanded_sidebar_count", NULL);
+	}
 
 	for (index = 0; index < snapshot->groups->len; index++) {
 		SakuraSessionGroupRecord *group = g_ptr_array_index(snapshot->groups, index);

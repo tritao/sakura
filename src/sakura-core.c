@@ -87,6 +87,18 @@ sakura_session_layout_record_free(gpointer data)
 }
 
 
+static void
+sakura_session_sidebar_expansion_record_free(gpointer data)
+{
+	SakuraSessionSidebarExpansionRecord *record = data;
+
+	if (record == NULL)
+		return;
+	g_free(record->id);
+	g_free(record);
+}
+
+
 SakuraSessionSnapshot *
 sakura_session_snapshot_new(void)
 {
@@ -97,11 +109,14 @@ sakura_session_snapshot_new(void)
 	snapshot->tabs = g_ptr_array_new_with_free_func(sakura_session_tab_record_free);
 	snapshot->pages = g_ptr_array_new_with_free_func(sakura_session_page_record_free);
 	snapshot->layouts = g_ptr_array_new_with_free_func(sakura_session_layout_record_free);
+	snapshot->expanded_sidebar_nodes = g_ptr_array_new_with_free_func(
+		sakura_session_sidebar_expansion_record_free);
 	snapshot->selected_terminal = -1;
 	snapshot->active_group_id = g_strdup("root");
 	snapshot->sidebar_visible = TRUE;
 	snapshot->sidebar_width = 200;
 	snapshot->show_archived = FALSE;
+	snapshot->sidebar_expansion_saved = FALSE;
 	return snapshot;
 }
 
@@ -116,6 +131,7 @@ sakura_session_snapshot_free(SakuraSessionSnapshot *snapshot)
 	g_clear_pointer(&snapshot->tabs, g_ptr_array_unref);
 	g_clear_pointer(&snapshot->pages, g_ptr_array_unref);
 	g_clear_pointer(&snapshot->layouts, g_ptr_array_unref);
+	g_clear_pointer(&snapshot->expanded_sidebar_nodes, g_ptr_array_unref);
 	g_free(snapshot->selected_terminal_id);
 	g_free(snapshot->selected_page_id);
 	g_free(snapshot->selected_task_id);

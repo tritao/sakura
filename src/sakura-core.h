@@ -3,7 +3,7 @@
 
 #include <glib.h>
 
-#define SAKURA_SESSION_VERSION 8
+#define SAKURA_SESSION_VERSION 9
 #define NUM_COLORSETS 6
 
 /* The domain layer owns these bounds. GTK rendering and persistence must
@@ -131,12 +131,24 @@ typedef struct {
 	gchar *terminal_id;
 } SakuraSessionLayoutRecord;
 
+typedef enum {
+	SAKURA_SIDEBAR_EXPANSION_GROUP,
+	SAKURA_SIDEBAR_EXPANSION_TASK,
+	SAKURA_SIDEBAR_EXPANSION_SESSION
+} SakuraSidebarExpansionKind;
+
+typedef struct {
+	gchar *id;
+	SakuraSidebarExpansionKind kind;
+} SakuraSessionSidebarExpansionRecord;
+
 struct sakura_session_snapshot {
 	GPtrArray *groups;
 	GPtrArray *tasks;
 	GPtrArray *tabs;
 	GPtrArray *pages;
 	GPtrArray *layouts;
+	GPtrArray *expanded_sidebar_nodes;
 	gint selected_terminal;
 	gchar *selected_terminal_id;
 	gchar *selected_page_id;
@@ -146,6 +158,7 @@ struct sakura_session_snapshot {
 	gboolean sidebar_visible;
 	gint sidebar_width;
 	gboolean show_archived;
+	gboolean sidebar_expansion_saved;
 };
 
 /* GTK-free workspace state. These objects deliberately contain no widgets,
