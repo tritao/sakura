@@ -10,9 +10,23 @@
 #define SAKURA_CONTROL_PROTOCOL_VERSION 1
 #define SAKURA_CONTROL_MAX_FRAME (1024 * 1024)
 
+typedef enum {
+	SAKURA_CONTROL_REQUEST_NONE,
+	SAKURA_CONTROL_REQUEST_GET_SNAPSHOT,
+	SAKURA_CONTROL_REQUEST_CREATE_GROUP,
+	SAKURA_CONTROL_REQUEST_CREATE_TASK
+} SakuraControlRequestKind;
+
 typedef struct {
 	gchar *request_id;
-	gboolean get_snapshot;
+	SakuraControlRequestKind kind;
+	gchar *parent_id;
+	gchar *title;
+	gchar *directory;
+	gchar *group_id;
+	gchar *provider;
+	gchar *external_id;
+	gchar *url;
 } SakuraControlRequest;
 
 typedef struct {
@@ -35,6 +49,13 @@ gboolean sakura_control_frame_write(GOutputStream *output,
 
 gboolean sakura_control_encode_get_snapshot_request(const gchar *request_id,
 	                                                  GByteArray *payload);
+gboolean sakura_control_encode_create_group_request(
+	const gchar *request_id, const gchar *parent_id, const gchar *title,
+	const gchar *directory, GByteArray *payload);
+gboolean sakura_control_encode_create_task_request(
+	const gchar *request_id, const gchar *group_id, const gchar *parent_id,
+	const gchar *title, const gchar *provider, const gchar *external_id,
+	const gchar *url, GByteArray *payload);
 gboolean sakura_control_decode_request(const guint8 *payload,
 	                                     gsize payload_length,
 	                                     SakuraControlRequest *request,

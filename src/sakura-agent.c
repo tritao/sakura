@@ -3,23 +3,267 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <sys/stat.h>
+#include <unistd.h>
 
 #include <gio/gio.h>
 #include <glib-unix.h>
+#include <glib/gstdio.h>
 
 #include "sakura-control-transport.h"
 
 
-typedef struct {
-	GSocketConnection *connection;
-	SakuraCoreWorkspace *workspace;
-} SakuraAgentConnection;
+typedef struct _SakuraAgent SakuraAgent;
 
 typedef struct {
+	GSocketConnection *connection;
+	SakuraAgent *agent;
+} SakuraAgentConnection;
+
+struct _SakuraAgent {
 	GMainLoop *loop;
 	SakuraCoreWorkspace *workspace;
+	SakuraSessionSnapshot *session_snapshot;
+	GMutex state_mutex;
 	gchar *socket_path;
-} SakuraAgent;
+	gchar *session_path;
+};
+
+
+static gboolean
+sakura_agent_error(GError **error, const gchar *message)
+{
+	g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT, message);
+	return FALSE;
+}
+
+
+static SakuraSessionSnapshot *
+sakura_agent_load_session(const gchar *session_path, GError **error)
+{
+	SakuraSessionSnapshot *snapshot;
+	GKeyFile *key_file;
+
+	snapshot = sakura_session_snapshot_new();
+	if (session_path == NULL ||
+	    !g_file_test(session_path, G_FILE_TEST_IS_REGULAR))
+		return snapshot;
+	key_file = g_key_file_new();
+	if (!g_key_file_load_from_file(key_file, session_path, 0, error) ||
+	    !sakura_session_snapshot_load(key_file, snapshot, error)) {
+		g_key_file_free(key_file);
+		sakura_session_snapshot_free(snapshot);
+		return NULL;
+	}
+	g_key_file_free(key_file);
+	return snapshot;
+}
+
+
+static gboolean
+sakura_agent_save_session(SakuraAgent *agent, GError **error)
+{
+	GKeyFile *key_file;
+	gchar *data;
+	gchar *directory;
+	gchar *temporary_file;
+	gsize data_length;
+
+	if (agent == NULL || agent->session_snapshot == NULL ||
+	    agent->session_path == NULL || agent->session_path[0] == '\0')
+		return TRUE;
+	key_file = g_key_file_new();
+	sakura_session_snapshot_save(agent->session_snapshot, key_file);
+	data = g_key_file_to_data(key_file, &data_length, error);
+	g_key_file_free(key_file);
+	if (data == NULL)
+		return FALSE;
+	directory = g_path_get_dirname(agent->session_path);
+	if (g_mkdir_with_parents(directory, 0700) != 0) {
+		g_set_error(error, G_FILE_ERROR, g_file_error_from_errno(errno),
+		            "Could not create session directory %s: %s", directory,
+		            g_strerror(errno));
+		g_free(directory);
+		g_free(data);
+		return FALSE;
+	}
+	temporary_file = g_strdup_printf("%s.tmp.%d", agent->session_path,
+	                                  (int)getpid());
+	if (!g_file_set_contents(temporary_file, data, data_length, error) ||
+	    g_chmod(temporary_file, 0600) != 0 ||
+	    g_rename(temporary_file, agent->session_path) != 0) {
+		if (error == NULL || *error == NULL)
+			g_set_error(error, G_FILE_ERROR, g_file_error_from_errno(errno),
+			            "Could not save session %s: %s", agent->session_path,
+			            g_strerror(errno));
+		g_remove(temporary_file);
+		g_free(temporary_file);
+		g_free(directory);
+		g_free(data);
+		return FALSE;
+	}
+	g_free(temporary_file);
+	g_free(directory);
+	g_free(data);
+	return TRUE;
+}
+
+
+static guint
+sakura_agent_next_group_order(const SakuraCoreWorkspace *workspace,
+	                            const SakuraCoreGroup *parent)
+{
+	guint order = 0;
+
+	for (guint index = 0; workspace != NULL && workspace->groups != NULL &&
+	                       index < workspace->groups->len; index++) {
+		SakuraCoreGroup *group = g_ptr_array_index(workspace->groups, index);
+
+		if (group != NULL && group != workspace->root_group &&
+		    group->parent == parent && group->order >= order)
+			order = group->order + 1;
+	}
+	return order;
+}
+
+
+static guint
+sakura_agent_next_task_order(const SakuraCoreWorkspace *workspace,
+	                           const SakuraCoreGroup *group,
+	                           const SakuraCoreTask *parent)
+{
+	guint order = 0;
+
+	for (guint index = 0; workspace != NULL && workspace->tasks != NULL &&
+	                       index < workspace->tasks->len; index++) {
+		SakuraCoreTask *task = g_ptr_array_index(workspace->tasks, index);
+
+		if (task != NULL && task->group == group && task->parent == parent &&
+		    task->order >= order)
+			order = task->order + 1;
+	}
+	return order;
+}
+
+
+static SakuraCoreGroup *
+sakura_agent_request_group(SakuraAgent *agent, const gchar *group_id,
+	                         GError **error)
+{
+	if (group_id == NULL || group_id[0] == '\0' ||
+	    g_strcmp0(group_id, "root") == 0)
+		return agent->workspace->root_group;
+	if (sakura_core_workspace_find_group(agent->workspace, group_id) == NULL) {
+		g_set_error(error, G_IO_ERROR, G_IO_ERROR_NOT_FOUND,
+		            "group %s was not found", group_id);
+		return NULL;
+	}
+	return sakura_core_workspace_find_group(agent->workspace, group_id);
+}
+
+
+static gboolean
+sakura_agent_create_group(SakuraAgent *agent,
+	                        const SakuraControlRequest *request,
+	                        GError **error)
+{
+	SakuraCoreGroup *parent;
+	SakuraCoreGroup *group;
+	gchar *id;
+
+	if (request->title == NULL || request->title[0] == '\0')
+		return sakura_agent_error(error, "group title is required");
+	parent = sakura_agent_request_group(agent, request->parent_id, error);
+	if (parent == NULL)
+		return FALSE;
+	id = g_uuid_string_random();
+	group = sakura_core_group_new(id, request->title, parent);
+	group->directory = g_strdup(request->directory != NULL &&
+	                            request->directory[0] != '\0'
+	                            ? request->directory : NULL);
+	group->order = sakura_agent_next_group_order(agent->workspace, parent);
+	g_free(id);
+	if (!sakura_core_workspace_add_group(agent->workspace, group)) {
+		sakura_core_group_free(group);
+		return sakura_agent_error(error, "could not create group");
+	}
+	return TRUE;
+}
+
+
+static gboolean
+sakura_agent_create_task(SakuraAgent *agent,
+	                       const SakuraControlRequest *request,
+	                       GError **error)
+{
+	SakuraCoreGroup *group;
+	SakuraCoreTask *parent = NULL;
+	SakuraCoreTask *task;
+	gchar *id;
+
+	if (request->title == NULL || request->title[0] == '\0')
+		return sakura_agent_error(error, "task title is required");
+	if (request->parent_id != NULL && request->parent_id[0] != '\0' &&
+	    g_strcmp0(request->parent_id, "root") != 0) {
+		parent = sakura_core_workspace_find_task(agent->workspace,
+		                                         request->parent_id);
+		if (parent == NULL) {
+			g_set_error(error, G_IO_ERROR, G_IO_ERROR_NOT_FOUND,
+			            "parent task %s was not found", request->parent_id);
+			return FALSE;
+		}
+	}
+	group = sakura_agent_request_group(agent, request->group_id, error);
+	if (group == NULL)
+		return FALSE;
+	if (parent != NULL && parent->group != group)
+		return sakura_agent_error(error, "task parent belongs to another group");
+	if (parent != NULL)
+		group = parent->group;
+	id = g_uuid_string_random();
+	task = sakura_core_task_new(id, request->title, group, parent);
+	g_free(id);
+	if (request->provider != NULL && request->provider[0] != '\0') {
+		g_free(task->provider);
+		task->provider = g_strdup(request->provider);
+	}
+	task->external_id = g_strdup(request->external_id != NULL &&
+	                             request->external_id[0] != '\0'
+	                             ? request->external_id : NULL);
+	task->url = g_strdup(request->url != NULL && request->url[0] != '\0'
+	                     ? request->url : NULL);
+	task->order = sakura_agent_next_task_order(agent->workspace, group, parent);
+	if (!sakura_core_workspace_add_task(agent->workspace, task)) {
+		sakura_core_task_free(task);
+		return sakura_agent_error(error, "could not create task");
+	}
+	return TRUE;
+}
+
+
+static gboolean
+sakura_agent_apply_request(SakuraAgent *agent,
+	                         const SakuraControlRequest *request,
+	                         GError **error)
+{
+	gboolean changed = FALSE;
+
+	switch (request->kind) {
+	case SAKURA_CONTROL_REQUEST_CREATE_GROUP:
+		changed = sakura_agent_create_group(agent, request, error);
+		break;
+	case SAKURA_CONTROL_REQUEST_CREATE_TASK:
+		changed = sakura_agent_create_task(agent, request, error);
+		break;
+	default:
+		return TRUE;
+	}
+	if (!changed)
+		return FALSE;
+	if (!sakura_core_workspace_sync_snapshot(agent->workspace,
+	                                         agent->session_snapshot))
+		return sakura_agent_error(error, "could not update session snapshot");
+	return sakura_agent_save_session(agent, error);
+}
 
 
 static gpointer
@@ -32,24 +276,30 @@ sakura_agent_connection_thread(gpointer data)
 	GByteArray *response = NULL;
 	SakuraControlRequest decoded = { 0 };
 	GError *error = NULL;
+	const gchar *request_id = "unknown";
 
 	input = g_io_stream_get_input_stream(G_IO_STREAM(request->connection));
 	output = g_io_stream_get_output_stream(G_IO_STREAM(request->connection));
+	response = g_byte_array_new();
+	g_mutex_lock(&request->agent->state_mutex);
 	if (sakura_control_frame_read(input, &payload, NULL, &error) &&
 	    sakura_control_decode_request(payload->data, payload->len, &decoded,
 	                                   &error)) {
-		response = g_byte_array_new();
-		if (decoded.get_snapshot)
-			sakura_control_encode_snapshot_response(decoded.request_id,
-			                                       request->workspace, response);
-	} else {
+		request_id = decoded.request_id != NULL ? decoded.request_id : "unknown";
+		if (decoded.kind == SAKURA_CONTROL_REQUEST_GET_SNAPSHOT ||
+		    sakura_agent_apply_request(request->agent, &decoded, &error)) {
+			sakura_control_encode_snapshot_response(request_id,
+			                                       request->agent->workspace,
+			                                       response);
+		}
+	}
+	if (response->len == 0) {
 		const gchar *message = error != NULL ? error->message : "invalid request";
 
-		response = g_byte_array_new();
-		sakura_control_encode_error_response(
-			decoded.request_id != NULL ? decoded.request_id : "unknown",
-			"invalid_request", message, response);
+		sakura_control_encode_error_response(request_id, "invalid_request",
+		                                    message, response);
 	}
+	g_mutex_unlock(&request->agent->state_mutex);
 	if (response != NULL && response->len != 0)
 		sakura_control_frame_write(output, response->data, response->len,
 		                           NULL, NULL);
@@ -77,7 +327,7 @@ sakura_agent_incoming_cb(GSocketService *service,
 	(void)source_object;
 	request = g_new0(SakuraAgentConnection, 1);
 	request->connection = g_object_ref(connection);
-	request->workspace = agent->workspace;
+	request->agent = agent;
 	g_thread_unref(g_thread_new("sakura-agent-client",
 	                            sakura_agent_connection_thread, request));
 	return TRUE;
@@ -144,14 +394,17 @@ main(int argc, char **argv)
 	GSocketAddress *address;
 	GMainLoop *loop;
 	SakuraCoreWorkspace *workspace;
-	SakuraCoreGroup *root;
+	SakuraSessionSnapshot *session_snapshot;
 	SakuraAgent agent = { 0 };
 	GError *error = NULL;
 	gchar *socket_path = NULL;
+	gchar *session_path = NULL;
 	GOptionContext *context;
 	GOptionEntry entries[] = {
 		{ "socket", 's', 0, G_OPTION_ARG_STRING, &socket_path,
 		  "Unix socket path", "PATH" },
+		{ "session", 'f', 0, G_OPTION_ARG_STRING, &session_path,
+		  "Session file path", "PATH" },
 		{ NULL }
 	};
 
@@ -174,16 +427,25 @@ main(int argc, char **argv)
 	}
 
 	signal(SIGPIPE, SIG_IGN);
-	workspace = sakura_core_workspace_new();
-	root = sakura_core_group_new("root", "All terminals", NULL);
-	if (!sakura_core_workspace_set_root(workspace, root)) {
-		g_printerr("Could not initialize agent workspace\n");
-		sakura_core_group_free(root);
-		sakura_core_workspace_free(workspace);
+	session_snapshot = sakura_agent_load_session(session_path, &error);
+	if (session_snapshot == NULL) {
+		g_printerr("Could not load agent session: %s\n",
+		           error != NULL ? error->message : "unknown error");
+		g_clear_error(&error);
 		g_free(socket_path);
+		g_free(session_path);
 		return EXIT_FAILURE;
 	}
-	workspace->active_group = workspace->root_group;
+	workspace = sakura_core_workspace_from_snapshot(session_snapshot, &error);
+	if (workspace == NULL) {
+		g_printerr("Could not initialize agent workspace: %s\n",
+		           error != NULL ? error->message : "unknown error");
+		g_clear_error(&error);
+		sakura_session_snapshot_free(session_snapshot);
+		g_free(socket_path);
+		g_free(session_path);
+		return EXIT_FAILURE;
+	}
 
 	service = g_socket_service_new();
 	address = g_unix_socket_address_new(socket_path);
@@ -197,8 +459,10 @@ main(int argc, char **argv)
 		g_object_unref(address);
 		g_object_unref(service);
 		sakura_core_workspace_free(workspace);
+		sakura_session_snapshot_free(session_snapshot);
 		g_remove(socket_path);
 		g_free(socket_path);
+		g_free(session_path);
 		return EXIT_FAILURE;
 	}
 	g_object_unref(address);
@@ -209,7 +473,10 @@ main(int argc, char **argv)
 	loop = g_main_loop_new(NULL, FALSE);
 	agent.loop = loop;
 	agent.workspace = workspace;
+	agent.session_snapshot = session_snapshot;
 	agent.socket_path = socket_path;
+	agent.session_path = session_path;
+	g_mutex_init(&agent.state_mutex);
 	g_signal_connect(service, "incoming", G_CALLBACK(sakura_agent_incoming_cb),
 	                 &agent);
 	g_unix_signal_add(SIGINT, sakura_agent_quit_cb, loop);
@@ -219,8 +486,11 @@ main(int argc, char **argv)
 	g_socket_service_stop(service);
 	g_main_loop_unref(loop);
 	g_object_unref(service);
+	g_mutex_clear(&agent.state_mutex);
 	sakura_core_workspace_free(workspace);
+	sakura_session_snapshot_free(session_snapshot);
 	g_remove(socket_path);
 	g_free(socket_path);
+	g_free(session_path);
 	return EXIT_SUCCESS;
 }

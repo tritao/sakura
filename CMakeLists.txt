@@ -198,12 +198,15 @@ IF (BUILD_TESTING)
 		${SAKURA_PROTO_GENERATED_DIR})
 	TARGET_COMPILE_OPTIONS (sakura-control-test PRIVATE
 		${SAKURA_WARNING_FLAGS})
+	TARGET_COMPILE_DEFINITIONS (sakura-control-test PRIVATE
+		SAKURA_AGENT_BUILD_PATH="${CMAKE_BINARY_DIR}/src/sakura-agent")
 	TARGET_LINK_LIBRARIES (sakura-control-test PRIVATE
 		sakura-core
 		PkgConfig::GLIB
 		PkgConfig::GIO_UNIX
 		PkgConfig::PROTOBUF_C)
 	ADD_DEPENDENCIES (sakura-control-test sakura-proto-generated)
+	ADD_DEPENDENCIES (sakura-control-test sakura-agent)
 	ADD_TEST (NAME control COMMAND sakura-control-test)
 
 	ADD_EXECUTABLE (sakura-core-test)

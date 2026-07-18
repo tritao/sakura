@@ -225,5 +225,7 @@ void sakura_core_workspace_set_task_archived(SakuraCoreWorkspace *workspace,
                                              gboolean archived);
 SakuraCoreWorkspace *sakura_core_workspace_from_snapshot(
 	const SakuraSessionSnapshot *snapshot, GError **error);
+gboolean sakura_core_workspace_sync_snapshot(
+	const SakuraCoreWorkspace *workspace, SakuraSessionSnapshot *snapshot);
 
 #endif /* SAKURA_CORE_H */

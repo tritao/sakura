@@ -1,5 +1,3 @@
-#include <string.h>
-
 #include "sakura-control-transport.h"
 #include "sakura/control.pb-c.h"
 
@@ -42,7 +40,14 @@ sakura_control_request_clear(SakuraControlRequest *request)
 	if (request == NULL)
 		return;
 	g_clear_pointer(&request->request_id, g_free);
-	request->get_snapshot = FALSE;
+	g_clear_pointer(&request->parent_id, g_free);
+	g_clear_pointer(&request->title, g_free);
+	g_clear_pointer(&request->directory, g_free);
+	g_clear_pointer(&request->group_id, g_free);
+	g_clear_pointer(&request->provider, g_free);
+	g_clear_pointer(&request->external_id, g_free);
+	g_clear_pointer(&request->url, g_free);
+	request->kind = SAKURA_CONTROL_REQUEST_NONE;
 }
 
 
@@ -141,6 +146,60 @@ sakura_control_encode_get_snapshot_request(const gchar *request_id,
 
 
 gboolean
+sakura_control_encode_create_group_request(const gchar *request_id,
+	                                         const gchar *parent_id,
+	                                         const gchar *title,
+	                                         const gchar *directory,
+	                                         GByteArray *payload)
+{
+	Sakura__Control__V1__CreateGroupRequest create_group =
+		SAKURA__CONTROL__V1__CREATE_GROUP_REQUEST__INIT;
+	Sakura__Control__V1__Request request =
+		SAKURA__CONTROL__V1__REQUEST__INIT;
+
+	if (payload == NULL || request_id == NULL || request_id[0] == '\0')
+		return FALSE;
+	create_group.parent_id = (gchar *)sakura_control_string(parent_id);
+	create_group.title = (gchar *)sakura_control_string(title);
+	create_group.directory = (gchar *)sakura_control_string(directory);
+	request.request_id = (gchar *)request_id;
+	request.body_case = SAKURA__CONTROL__V1__REQUEST__BODY_CREATE_GROUP;
+	request.create_group = &create_group;
+	return sakura_control_pack_message(&request.base, payload);
+}
+
+
+gboolean
+sakura_control_encode_create_task_request(const gchar *request_id,
+	                                        const gchar *group_id,
+	                                        const gchar *parent_id,
+	                                        const gchar *title,
+	                                        const gchar *provider,
+	                                        const gchar *external_id,
+	                                        const gchar *url,
+	                                        GByteArray *payload)
+{
+	Sakura__Control__V1__CreateTaskRequest create_task =
+		SAKURA__CONTROL__V1__CREATE_TASK_REQUEST__INIT;
+	Sakura__Control__V1__Request request =
+		SAKURA__CONTROL__V1__REQUEST__INIT;
+
+	if (payload == NULL || request_id == NULL || request_id[0] == '\0')
+		return FALSE;
+	create_task.group_id = (gchar *)sakura_control_string(group_id);
+	create_task.parent_id = (gchar *)sakura_control_string(parent_id);
+	create_task.title = (gchar *)sakura_control_string(title);
+	create_task.provider = (gchar *)sakura_control_string(provider);
+	create_task.external_id = (gchar *)sakura_control_string(external_id);
+	create_task.url = (gchar *)sakura_control_string(url);
+	request.request_id = (gchar *)request_id;
+	request.body_case = SAKURA__CONTROL__V1__REQUEST__BODY_CREATE_TASK;
+	request.create_task = &create_task;
+	return sakura_control_pack_message(&request.base, payload);
+}
+
+
+gboolean
 sakura_control_decode_request(const guint8 *payload,
 	                            gsize payload_length,
 	                            SakuraControlRequest *request,
@@ -156,11 +215,36 @@ sakura_control_decode_request(const guint8 *payload,
 		return sakura_control_error(error, "invalid control request");
 	if (decoded->request_id[0] != '\0')
 		request->request_id = g_strdup(decoded->request_id);
-	request->get_snapshot =
-		decoded->body_case == SAKURA__CONTROL__V1__REQUEST__BODY_GET_SNAPSHOT &&
-		decoded->get_snapshot != NULL;
+	switch (decoded->body_case) {
+	case SAKURA__CONTROL__V1__REQUEST__BODY_GET_SNAPSHOT:
+		if (decoded->get_snapshot != NULL)
+			request->kind = SAKURA_CONTROL_REQUEST_GET_SNAPSHOT;
+		break;
+	case SAKURA__CONTROL__V1__REQUEST__BODY_CREATE_GROUP:
+		if (decoded->create_group != NULL) {
+			request->kind = SAKURA_CONTROL_REQUEST_CREATE_GROUP;
+			request->parent_id = g_strdup(decoded->create_group->parent_id);
+			request->title = g_strdup(decoded->create_group->title);
+			request->directory = g_strdup(decoded->create_group->directory);
+		}
+		break;
+	case SAKURA__CONTROL__V1__REQUEST__BODY_CREATE_TASK:
+		if (decoded->create_task != NULL) {
+			request->kind = SAKURA_CONTROL_REQUEST_CREATE_TASK;
+			request->group_id = g_strdup(decoded->create_task->group_id);
+			request->parent_id = g_strdup(decoded->create_task->parent_id);
+			request->title = g_strdup(decoded->create_task->title);
+			request->provider = g_strdup(decoded->create_task->provider);
+			request->external_id = g_strdup(decoded->create_task->external_id);
+			request->url = g_strdup(decoded->create_task->url);
+		}
+		break;
+	default:
+		break;
+	}
 	sakura__control__v1__request__free_unpacked(decoded, NULL);
-	if (request->request_id == NULL || !request->get_snapshot)
+	if (request->request_id == NULL ||
+	    request->kind == SAKURA_CONTROL_REQUEST_NONE)
 		return sakura_control_error(error, "unsupported control request");
 	return TRUE;
 }

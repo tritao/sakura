@@ -718,3 +718,64 @@ sakura_core_workspace_from_snapshot(const SakuraSessionSnapshot *snapshot,
 		workspace, snapshot->selected_task_id);
 	return workspace;
 }
+
+
+gboolean
+sakura_core_workspace_sync_snapshot(const SakuraCoreWorkspace *workspace,
+	                                  SakuraSessionSnapshot *snapshot)
+{
+	GPtrArray *groups;
+	GPtrArray *tasks;
+
+	if (workspace == NULL || snapshot == NULL || snapshot->groups == NULL ||
+	    snapshot->tasks == NULL)
+		return FALSE;
+	g_ptr_array_set_size(snapshot->groups, 0);
+	g_ptr_array_set_size(snapshot->tasks, 0);
+	groups = sakura_core_workspace_ordered_groups(workspace);
+	for (guint index = 0; index < groups->len; index++) {
+		SakuraCoreGroup *model_group = g_ptr_array_index(groups, index);
+		SakuraSessionGroupRecord *group = g_new0(SakuraSessionGroupRecord, 1);
+
+		group->id = g_strdup(model_group->id);
+		group->parent_id = g_strdup(model_group->parent != NULL
+		                            ? model_group->parent->id : "root");
+		group->title = g_strdup(model_group->title);
+		group->directory = g_strdup(model_group->directory);
+		group->order = model_group->order;
+		group->archived = model_group->archived;
+		g_ptr_array_add(snapshot->groups, group);
+	}
+	g_ptr_array_unref(groups);
+
+	tasks = sakura_core_workspace_ordered_tasks(workspace);
+	for (guint index = 0; index < tasks->len; index++) {
+		SakuraCoreTask *model_task = g_ptr_array_index(tasks, index);
+		SakuraSessionTaskRecord *task = g_new0(SakuraSessionTaskRecord, 1);
+		SakuraCoreGroup *group = model_task->group != NULL
+		                       ? model_task->group : workspace->root_group;
+
+		task->id = g_strdup(model_task->id);
+		task->parent_id = g_strdup(model_task->parent != NULL
+		                           ? model_task->parent->id
+		                           : group != NULL ? group->id : "root");
+		task->group_id = g_strdup(group != NULL ? group->id : "root");
+		task->title = g_strdup(model_task->title);
+		task->provider = g_strdup(model_task->provider);
+		task->external_id = g_strdup(model_task->external_id);
+		task->url = g_strdup(model_task->url);
+		task->status = model_task->status;
+		task->order = model_task->order;
+		task->archived = model_task->archived;
+		g_ptr_array_add(snapshot->tasks, task);
+	}
+	g_ptr_array_unref(tasks);
+
+	g_free(snapshot->active_group_id);
+	snapshot->active_group_id = g_strdup(
+		workspace->active_group != NULL ? workspace->active_group->id : "root");
+	g_free(snapshot->root_directory);
+	snapshot->root_directory = g_strdup(workspace->root_group != NULL
+	                                  ? workspace->root_group->directory : NULL);
+	return TRUE;
+}
