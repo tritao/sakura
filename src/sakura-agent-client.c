@@ -198,6 +198,79 @@ out:
 }
 
 
+static gboolean
+sakura_agent_request_mutation(SakuraApp *app, const gchar *request_id,
+	                            GByteArray *request, GError **error)
+{
+	GSocketConnection *connection;
+	GInputStream *input;
+	GOutputStream *output;
+	GByteArray *response_payload = NULL;
+	SakuraControlResponse response = { 0 };
+	gboolean success = FALSE;
+
+	if (app == NULL || app->agent_socket_path == NULL || request_id == NULL ||
+	    request == NULL)
+		return FALSE;
+	connection = sakura_agent_connect(app->agent_socket_path, error);
+	if (connection == NULL)
+		return FALSE;
+	input = g_io_stream_get_input_stream(G_IO_STREAM(connection));
+	output = g_io_stream_get_output_stream(G_IO_STREAM(connection));
+	if (!sakura_control_frame_write(output, request->data, request->len, NULL,
+	                               error) ||
+	    !sakura_control_frame_read(input, &response_payload, NULL, error) ||
+	    !sakura_control_decode_response(response_payload->data,
+	                                    response_payload->len, &response,
+	                                    error))
+		goto out;
+	if (g_strcmp0(response.request_id, request_id) != 0) {
+		g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_INVALID_DATA,
+		                    "agent response id did not match request");
+		goto out;
+	}
+	if (!response.has_snapshot) {
+		g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_INVALID_DATA,
+		                    "agent mutation did not return a snapshot");
+		goto out;
+	}
+	success = TRUE;
+out:
+	g_clear_pointer(&response_payload, g_byte_array_unref);
+	sakura_control_response_clear(&response);
+	g_io_stream_close(G_IO_STREAM(connection), NULL, NULL);
+	g_object_unref(connection);
+	return success;
+}
+
+
+gboolean
+sakura_agent_create_group(SakuraApp *app, const gchar *parent_id,
+	                       const gchar *title, const gchar *directory,
+	                       GError **error)
+{
+	GByteArray *request;
+	gchar *request_id;
+	gboolean result;
+
+	if (app == NULL || app->agent_socket_path == NULL)
+		return FALSE;
+	request_id = g_uuid_string_random();
+	request = g_byte_array_new();
+	if (!sakura_control_encode_create_group_request(request_id, parent_id, title,
+	                                               directory, request)) {
+		g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT,
+		                    "could not encode create group request");
+		result = FALSE;
+	} else {
+		result = sakura_agent_request_mutation(app, request_id, request, error);
+	}
+	g_byte_array_unref(request);
+	g_free(request_id);
+	return result;
+}
+
+
 static gchar *
 sakura_agent_binary_path(void)
 {

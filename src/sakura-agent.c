@@ -164,6 +164,74 @@ sakura_agent_request_group(SakuraAgent *agent, const gchar *group_id,
 
 
 static gboolean
+sakura_agent_update_group(SakuraAgent *agent,
+	                       const SakuraControlRequest *request,
+	                       GError **error)
+{
+	SakuraCoreGroup *group;
+
+	if (request->group_id == NULL || request->group_id[0] == '\0' ||
+	    g_strcmp0(request->group_id, "root") == 0)
+		return sakura_agent_error(error, "a non-root group is required");
+	group = sakura_agent_request_group(agent, request->group_id, error);
+	if (group == NULL)
+		return FALSE;
+	if (request->title == NULL || request->title[0] == '\0')
+		return sakura_agent_error(error, "group title is required");
+	g_free(group->title);
+	group->title = g_strdup(request->title);
+	g_free(group->directory);
+	group->directory = g_strdup(request->directory != NULL &&
+	                            request->directory[0] != '\0'
+	                            ? request->directory : NULL);
+	return TRUE;
+}
+
+
+static gboolean
+sakura_agent_set_group_archived(SakuraAgent *agent,
+	                              const SakuraControlRequest *request,
+	                              GError **error)
+{
+	SakuraCoreGroup *group;
+
+	if (request->group_id == NULL || request->group_id[0] == '\0' ||
+	    g_strcmp0(request->group_id, "root") == 0)
+		return sakura_agent_error(error, "a non-root group is required");
+	group = sakura_agent_request_group(agent, request->group_id, error);
+	if (group == NULL)
+		return FALSE;
+	sakura_core_workspace_set_group_archived(agent->workspace, group,
+	                                          request->archived);
+	return TRUE;
+}
+
+
+static gboolean
+sakura_agent_delete_group(SakuraAgent *agent,
+	                       const SakuraControlRequest *request,
+	                       GError **error)
+{
+	SakuraCoreGroup *group;
+
+	if (request->group_id == NULL || request->group_id[0] == '\0' ||
+	    g_strcmp0(request->group_id, "root") == 0)
+		return sakura_agent_error(error, "a non-root group is required");
+	group = sakura_agent_request_group(agent, request->group_id, error);
+	if (group == NULL)
+		return FALSE;
+	if (!group->archived)
+		return sakura_agent_error(error, "only archived groups can be deleted");
+	if (!sakura_core_workspace_can_remove_group(agent->workspace, group))
+		return sakura_agent_error(error,
+		                          "group must be empty before deletion");
+	if (!sakura_core_workspace_remove_group(agent->workspace, group))
+		return sakura_agent_error(error, "could not delete group");
+	return TRUE;
+}
+
+
+static gboolean
 sakura_agent_create_group(SakuraAgent *agent,
 	                        const SakuraControlRequest *request,
 	                        GError **error)
@@ -255,6 +323,15 @@ sakura_agent_apply_request(SakuraAgent *agent,
 		break;
 	case SAKURA_CONTROL_REQUEST_CREATE_TASK:
 		changed = sakura_agent_create_task(agent, request, error);
+		break;
+	case SAKURA_CONTROL_REQUEST_UPDATE_GROUP:
+		changed = sakura_agent_update_group(agent, request, error);
+		break;
+	case SAKURA_CONTROL_REQUEST_SET_GROUP_ARCHIVED:
+		changed = sakura_agent_set_group_archived(agent, request, error);
+		break;
+	case SAKURA_CONTROL_REQUEST_DELETE_GROUP:
+		changed = sakura_agent_delete_group(agent, request, error);
 		break;
 	default:
 		return TRUE;

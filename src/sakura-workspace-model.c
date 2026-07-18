@@ -311,9 +311,22 @@ sakura_workspace_model_restore_snapshot(SakuraWorkspaceModel *model,
 				g_ptr_array_index(snapshot->groups, index);
 			SakuraGroup *parent, *group;
 
-			if (record == NULL || record->id == NULL ||
-			    sakura_workspace_model_find_group(model, record->id) != NULL)
+			if (record == NULL || record->id == NULL)
 				continue;
+			group = sakura_workspace_model_find_group(model, record->id);
+			if (group != NULL) {
+				g_free(group->title);
+				group->title = g_strdup(record->title != NULL ? record->title : "");
+				g_free(group->directory);
+				group->directory = g_strdup(record->directory);
+				group->order = record->order;
+				group->archived = record->archived;
+				remaining--;
+				progress = TRUE;
+				if (remaining == 0)
+					break;
+				continue;
+			}
 			parent = sakura_workspace_model_find_group(model, record->parent_id);
 			if (parent == NULL)
 				continue;
@@ -328,6 +341,8 @@ sakura_workspace_model_restore_snapshot(SakuraWorkspaceModel *model,
 			sakura_workspace_model_update_group_id(model, group);
 			remaining--;
 			progress = TRUE;
+			if (remaining == 0)
+				break;
 		}
 		if (!progress)
 			break;
@@ -352,6 +367,29 @@ sakura_workspace_model_restore_snapshot(SakuraWorkspaceModel *model,
 			else
 				sakura_group_free(group);
 		}
+	}
+	/* Agent snapshots are authoritative for groups. Remove only groups that
+	 * have no local task/page dependants; those dependants are desktop-only
+	 * state that the GTK-free agent cannot see yet. */
+	for (GList *link = model->groups, *next; link != NULL; link = next) {
+		SakuraGroup *group = link->data;
+		gboolean present = FALSE;
+
+		next = link->next;
+		if (group == NULL || group == model->root_group)
+			continue;
+		for (guint index = 0; snapshot->groups != NULL &&
+		                     index < snapshot->groups->len; index++) {
+			SakuraSessionGroupRecord *record =
+				g_ptr_array_index(snapshot->groups, index);
+
+			if (record != NULL && g_strcmp0(record->id, group->id) == 0) {
+				present = TRUE;
+				break;
+			}
+		}
+		if (!present)
+			sakura_workspace_model_remove_group(model, group);
 	}
 
 	remaining = snapshot->tasks != NULL ? snapshot->tasks->len : 0;

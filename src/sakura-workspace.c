@@ -2498,6 +2498,19 @@ sakura_sidebar_new_group_cb (GtkWidget *widget, void *data)
 			SakuraGroup *model_group;
 			SakuraGroup *parent_group = parent != NULL && parent->group != NULL
 			                         ? parent->group : sakura.workspace->root_group;
+			if (sakura.agent_socket_path != NULL) {
+				GError *error = NULL;
+
+				if (sakura_agent_create_group(&sakura, parent_group->id, title,
+				                              NULL, &error)) {
+					gtk_widget_destroy(dialog);
+					return;
+				}
+				if (error != NULL)
+					g_warning("Could not create group through sakura-agent: %s",
+					          error->message);
+				g_clear_error(&error);
+			}
 			gchar *id = g_strdup_printf("group-%u", sakura.workspace->next_group_id++);
 
 			sakura_workspace_begin_mutation();

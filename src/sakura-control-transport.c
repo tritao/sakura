@@ -48,6 +48,7 @@ sakura_control_request_clear(SakuraControlRequest *request)
 	g_clear_pointer(&request->external_id, g_free);
 	g_clear_pointer(&request->url, g_free);
 	request->kind = SAKURA_CONTROL_REQUEST_NONE;
+	request->archived = FALSE;
 	request->after_sequence = 0;
 }
 
@@ -202,6 +203,76 @@ sakura_control_encode_create_task_request(const gchar *request_id,
 
 
 gboolean
+sakura_control_encode_update_group_request(const gchar *request_id,
+	                                           const gchar *group_id,
+	                                           const gchar *title,
+	                                           const gchar *directory,
+	                                           GByteArray *payload)
+{
+	Sakura__Control__V1__UpdateGroupRequest update_group =
+		SAKURA__CONTROL__V1__UPDATE_GROUP_REQUEST__INIT;
+	Sakura__Control__V1__Request request =
+		SAKURA__CONTROL__V1__REQUEST__INIT;
+
+	if (payload == NULL || request_id == NULL || request_id[0] == '\0' ||
+	    group_id == NULL || group_id[0] == '\0')
+		return FALSE;
+	update_group.group_id = (gchar *)group_id;
+	update_group.title = (gchar *)sakura_control_string(title);
+	update_group.directory = (gchar *)sakura_control_string(directory);
+	request.request_id = (gchar *)request_id;
+	request.body_case = SAKURA__CONTROL__V1__REQUEST__BODY_UPDATE_GROUP;
+	request.update_group = &update_group;
+	return sakura_control_pack_message(&request.base, payload);
+}
+
+
+gboolean
+sakura_control_encode_set_group_archived_request(const gchar *request_id,
+	                                                const gchar *group_id,
+	                                                gboolean archived,
+	                                                GByteArray *payload)
+{
+	Sakura__Control__V1__SetGroupArchivedRequest set_archived =
+		SAKURA__CONTROL__V1__SET_GROUP_ARCHIVED_REQUEST__INIT;
+	Sakura__Control__V1__Request request =
+		SAKURA__CONTROL__V1__REQUEST__INIT;
+
+	if (payload == NULL || request_id == NULL || request_id[0] == '\0' ||
+	    group_id == NULL || group_id[0] == '\0')
+		return FALSE;
+	set_archived.group_id = (gchar *)group_id;
+	set_archived.archived = archived;
+	request.request_id = (gchar *)request_id;
+	request.body_case =
+		SAKURA__CONTROL__V1__REQUEST__BODY_SET_GROUP_ARCHIVED;
+	request.set_group_archived = &set_archived;
+	return sakura_control_pack_message(&request.base, payload);
+}
+
+
+gboolean
+sakura_control_encode_delete_group_request(const gchar *request_id,
+	                                           const gchar *group_id,
+	                                           GByteArray *payload)
+{
+	Sakura__Control__V1__DeleteGroupRequest delete_group =
+		SAKURA__CONTROL__V1__DELETE_GROUP_REQUEST__INIT;
+	Sakura__Control__V1__Request request =
+		SAKURA__CONTROL__V1__REQUEST__INIT;
+
+	if (payload == NULL || request_id == NULL || request_id[0] == '\0' ||
+	    group_id == NULL || group_id[0] == '\0')
+		return FALSE;
+	delete_group.group_id = (gchar *)group_id;
+	request.request_id = (gchar *)request_id;
+	request.body_case = SAKURA__CONTROL__V1__REQUEST__BODY_DELETE_GROUP;
+	request.delete_group = &delete_group;
+	return sakura_control_pack_message(&request.base, payload);
+}
+
+
+gboolean
 sakura_control_encode_subscribe_events_request(const gchar *request_id,
 	                                             guint64 after_sequence,
 	                                             GByteArray *payload)
@@ -259,6 +330,28 @@ sakura_control_decode_request(const guint8 *payload,
 			request->provider = g_strdup(decoded->create_task->provider);
 			request->external_id = g_strdup(decoded->create_task->external_id);
 			request->url = g_strdup(decoded->create_task->url);
+		}
+		break;
+	case SAKURA__CONTROL__V1__REQUEST__BODY_UPDATE_GROUP:
+		if (decoded->update_group != NULL) {
+			request->kind = SAKURA_CONTROL_REQUEST_UPDATE_GROUP;
+			request->group_id = g_strdup(decoded->update_group->group_id);
+			request->title = g_strdup(decoded->update_group->title);
+			request->directory = g_strdup(decoded->update_group->directory);
+		}
+		break;
+	case SAKURA__CONTROL__V1__REQUEST__BODY_SET_GROUP_ARCHIVED:
+		if (decoded->set_group_archived != NULL) {
+			request->kind = SAKURA_CONTROL_REQUEST_SET_GROUP_ARCHIVED;
+			request->group_id = g_strdup(
+				decoded->set_group_archived->group_id);
+			request->archived = decoded->set_group_archived->archived;
+		}
+		break;
+	case SAKURA__CONTROL__V1__REQUEST__BODY_DELETE_GROUP:
+		if (decoded->delete_group != NULL) {
+			request->kind = SAKURA_CONTROL_REQUEST_DELETE_GROUP;
+			request->group_id = g_strdup(decoded->delete_group->group_id);
 		}
 		break;
 	case SAKURA__CONTROL__V1__REQUEST__BODY_SUBSCRIBE_EVENTS:

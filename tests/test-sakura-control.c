@@ -100,6 +100,40 @@ test_mutation_request_roundtrip(void)
 	sakura_control_request_clear(&request);
 	g_byte_array_set_size(encoded, 0);
 
+	g_assert_true(sakura_control_encode_update_group_request(
+		"update-group", "group-1", "Renamed", "/tmp/renamed", encoded));
+	g_assert_true(sakura_control_decode_request(encoded->data, encoded->len,
+	                                           &request, &error));
+	g_assert_no_error(error);
+	g_assert_cmpint(request.kind, ==, SAKURA_CONTROL_REQUEST_UPDATE_GROUP);
+	g_assert_cmpstr(request.group_id, ==, "group-1");
+	g_assert_cmpstr(request.title, ==, "Renamed");
+	g_assert_cmpstr(request.directory, ==, "/tmp/renamed");
+	sakura_control_request_clear(&request);
+	g_byte_array_set_size(encoded, 0);
+
+	g_assert_true(sakura_control_encode_set_group_archived_request(
+		"archive-group", "group-1", TRUE, encoded));
+	g_assert_true(sakura_control_decode_request(encoded->data, encoded->len,
+	                                           &request, &error));
+	g_assert_no_error(error);
+	g_assert_cmpint(request.kind, ==,
+	               SAKURA_CONTROL_REQUEST_SET_GROUP_ARCHIVED);
+	g_assert_cmpstr(request.group_id, ==, "group-1");
+	g_assert_true(request.archived);
+	sakura_control_request_clear(&request);
+	g_byte_array_set_size(encoded, 0);
+
+	g_assert_true(sakura_control_encode_delete_group_request(
+		"delete-group", "group-1", encoded));
+	g_assert_true(sakura_control_decode_request(encoded->data, encoded->len,
+	                                           &request, &error));
+	g_assert_no_error(error);
+	g_assert_cmpint(request.kind, ==, SAKURA_CONTROL_REQUEST_DELETE_GROUP);
+	g_assert_cmpstr(request.group_id, ==, "group-1");
+	sakura_control_request_clear(&request);
+	g_byte_array_set_size(encoded, 0);
+
 	g_assert_true(sakura_control_encode_create_task_request(
 		"task-request", "group-1", "", "Build", "local", "42", "",
 		encoded));
@@ -263,6 +297,7 @@ test_agent_create_and_reload(void)
 	gchar *socket_path;
 	gchar *session_path;
 	gchar *group_id;
+	gchar *second_group_id = NULL;
 
 	directory = g_dir_make_tmp("sakura-agent-test-XXXXXX", &error);
 	g_assert_no_error(error);
@@ -352,6 +387,81 @@ test_agent_create_and_reload(void)
 	g_assert_cmpuint(event_sequence, ==, 1);
 	g_assert_cmpuint(event_snapshot->groups->len, ==, 2);
 	sakura_session_snapshot_free(event_snapshot);
+	event_snapshot = NULL;
+	g_clear_pointer(&event_payload, g_byte_array_unref);
+
+	snapshot = test_load_agent_session(session_path);
+	for (guint index = 0; index < snapshot->groups->len; index++) {
+		group = g_ptr_array_index(snapshot->groups, index);
+		if (g_strcmp0(group->title, "Archive") == 0)
+			second_group_id = g_strdup(group->id);
+	}
+	g_assert_nonnull(second_group_id);
+	sakura_session_snapshot_free(snapshot);
+
+	g_byte_array_set_size(request, 0);
+	g_assert_true(sakura_control_encode_update_group_request(
+		"update-group", second_group_id, "Renamed", "/tmp/renamed", request));
+	test_agent_call(socket_path, "update-group", request, &response);
+	sakura_control_response_clear(&response);
+	g_assert_true(sakura_control_frame_read(subscriber_input, &event_payload,
+	                                        NULL, &error));
+	g_assert_no_error(error);
+	g_assert_true(sakura_control_decode_workspace_changed_event(
+		event_payload->data, event_payload->len, &event_sequence,
+		&event_snapshot, &error));
+	g_assert_no_error(error);
+	g_assert_cmpuint(event_sequence, ==, 2);
+	g_assert_cmpuint(event_snapshot->groups->len, ==, 2);
+	for (guint index = 0; index < event_snapshot->groups->len; index++) {
+		group = g_ptr_array_index(event_snapshot->groups, index);
+		if (g_strcmp0(group->id, second_group_id) == 0) {
+			g_assert_cmpstr(group->title, ==, "Renamed");
+			g_assert_cmpstr(group->directory, ==, "/tmp/renamed");
+		}
+	}
+	sakura_session_snapshot_free(event_snapshot);
+	event_snapshot = NULL;
+	g_clear_pointer(&event_payload, g_byte_array_unref);
+
+	g_byte_array_set_size(request, 0);
+	g_assert_true(sakura_control_encode_set_group_archived_request(
+		"archive-group", second_group_id, TRUE, request));
+	test_agent_call(socket_path, "archive-group", request, &response);
+	sakura_control_response_clear(&response);
+	g_assert_true(sakura_control_frame_read(subscriber_input, &event_payload,
+	                                        NULL, &error));
+	g_assert_no_error(error);
+	g_assert_true(sakura_control_decode_workspace_changed_event(
+		event_payload->data, event_payload->len, &event_sequence,
+		&event_snapshot, &error));
+	g_assert_no_error(error);
+	g_assert_cmpuint(event_sequence, ==, 3);
+	for (guint index = 0; index < event_snapshot->groups->len; index++) {
+		group = g_ptr_array_index(event_snapshot->groups, index);
+		if (g_strcmp0(group->id, second_group_id) == 0)
+			g_assert_true(group->archived);
+	}
+	sakura_session_snapshot_free(event_snapshot);
+	event_snapshot = NULL;
+	g_clear_pointer(&event_payload, g_byte_array_unref);
+
+	g_byte_array_set_size(request, 0);
+	g_assert_true(sakura_control_encode_delete_group_request(
+		"delete-group", second_group_id, request));
+	test_agent_call(socket_path, "delete-group", request, &response);
+	sakura_control_response_clear(&response);
+	g_assert_true(sakura_control_frame_read(subscriber_input, &event_payload,
+	                                        NULL, &error));
+	g_assert_no_error(error);
+	g_assert_true(sakura_control_decode_workspace_changed_event(
+		event_payload->data, event_payload->len, &event_sequence,
+		&event_snapshot, &error));
+	g_assert_no_error(error);
+	g_assert_cmpuint(event_sequence, ==, 4);
+	g_assert_cmpuint(event_snapshot->groups->len, ==, 1);
+	sakura_session_snapshot_free(event_snapshot);
+	event_snapshot = NULL;
 	g_clear_pointer(&event_payload, g_byte_array_unref);
 	g_io_stream_close(G_IO_STREAM(subscriber), NULL, NULL);
 	g_object_unref(subscriber);
@@ -359,6 +469,7 @@ test_agent_create_and_reload(void)
 
 	g_byte_array_unref(request);
 	g_free(group_id);
+	g_free(second_group_id);
 	g_remove(session_path);
 	g_remove(socket_path);
 	g_rmdir(directory);

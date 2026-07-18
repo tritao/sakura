@@ -798,6 +798,9 @@ gboolean sakura_session_write_snapshot(SakuraApp *app,
 gboolean sakura_session_load_file(SakuraApp *app, gboolean restore_session);
 void sakura_session_prepare_bash_integration(SakuraApp *app);
 gboolean sakura_agent_start(SakuraApp *app);
+gboolean sakura_agent_create_group(SakuraApp *app, const gchar *parent_id,
+                                   const gchar *title, const gchar *directory,
+                                   GError **error);
 void sakura_agent_stop(SakuraApp *app);
 
 const gchar *sakura_tool_label(SakuraToolKind tool);
