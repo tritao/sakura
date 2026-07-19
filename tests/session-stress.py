@@ -410,6 +410,34 @@ def read_session(session_file):
     return groups, terminals, terminal_id_list
 
 
+def read_expanded_sidebar(session_file):
+    parser = configparser.ConfigParser(interpolation=None)
+    parser.read(session_file, encoding="utf-8")
+    count = parser.getint("Session", "expanded_sidebar_count", fallback=-1)
+    if count < 0:
+        return None
+    expanded = set()
+    for index in range(count):
+        section = f"ExpandedSidebar{index}"
+        if not parser.has_section(section):
+            raise AssertionError(f"missing {section}")
+        kind = parser.get(section, "kind")
+        item_id = parser.get(section, "id")
+        if kind not in ("group", "task", "session") or not item_id:
+            raise AssertionError(f"invalid expanded sidebar record in {section}")
+        expanded.add((kind, item_id))
+    return expanded
+
+
+def sidebar_expansion_is(session_file, expected):
+    actual = read_expanded_sidebar(session_file)
+    if (actual != expected and
+            os.environ.get("SAKURA_STRESS_VERBOSE")):
+        print(f"sidebar expansion is {actual}, expected {expected}",
+              file=sys.stderr)
+    return actual == expected
+
+
 def read_task_state(session_file):
     parser = configparser.ConfigParser(interpolation=None)
     parser.read(session_file, encoding="utf-8")
@@ -547,6 +575,28 @@ def visible_rows(groups, terminals):
                 # A single-pane page is represented by its page row. The
                 # underlying terminal remains the drag target for metadata
                 # and session assertions.
+                rows.append(("page", index))
+
+    visit("root")
+    return rows
+
+
+def visible_rows_for_expansion(groups, terminals, expanded):
+    children = {"root": []}
+    for group_id, parent in groups.items():
+        children.setdefault(parent, []).append(group_id)
+        children.setdefault(group_id, [])
+
+    rows = [("group", "root")]
+
+    def visit(group_id):
+        if ("group", group_id) not in expanded:
+            return
+        for child in children.get(group_id, []):
+            rows.append(("group", child))
+            visit(child)
+        for index, parent in enumerate(terminals):
+            if parent == group_id:
                 rows.append(("page", index))
 
     visit("root")
@@ -694,7 +744,15 @@ def sidebar_row_center(window, env, rows, row_index, row_top=73,
     return window_x + 100, window_y + y + height // 2
 
 
+def sidebar_scroll_to_top(window, env, row_top=73):
+    window_x, window_y, _, _ = window_geometry(window, env)
+    run(["xdotool", "mousemove", "--sync", str(window_x + 80),
+         str(window_y + row_top + 10)], env)
+    run(["xdotool", "click", "--repeat", "30", "--delay", "10", "4"], env)
+
+
 def sidebar_click_row(window, env, rows, row_index, button):
+    sidebar_scroll_to_top(window, env)
     x, y = sidebar_row_center(window, env, rows, row_index)
     # A submenu activation can leave a transient GTK menu grab alive for one
     # event-loop turn. Escape makes the next pointer action deterministic.
@@ -703,6 +761,16 @@ def sidebar_click_row(window, env, rows, row_index, button):
     time.sleep(0.15)
     run(["xdotool", "click", str(button)], env)
     time.sleep(0.25)
+
+
+def sidebar_toggle_group(window, env, rows, row_index):
+    sidebar_scroll_to_top(window, env)
+    x, y = sidebar_row_center(window, env, rows, row_index)
+    run(["xdotool", "key", "Escape"], env, check=False)
+    run(["xdotool", "mousemove", "--sync", str(x), str(y)], env)
+    time.sleep(0.15)
+    run(["xdotool", "click", "--repeat", "2", "--delay", "80", "1"], env)
+    time.sleep(0.4)
 
 
 def open_task_context_menu(window, env, rows, row_index):
@@ -832,6 +900,66 @@ def visual_rows_after_page_move(rows, value, source_id, target_group):
            target_depth):
         insert_index += 1
     rows.insert(insert_index, ("page", source_id))
+
+
+def run_sidebar_expansion_case(binary, config_file, session_file, env, log_file):
+    """Exercise group toggles, selection, projection restore, and restart."""
+    write_fixture(config_file, session_file, active_group_id="group-c")
+    process, window = launch_sakura(binary, config_file, env, log_file)
+    collapsed_group = ("group", "group-a")
+    try:
+        def initial_expansion_ready(value):
+            expanded = read_expanded_sidebar(session_file)
+            return expanded is not None and (
+                ("group", "root") in expanded and
+                collapsed_group in expanded
+            )
+
+        current = wait_for_session_ready(
+            session_file,
+            initial_expansion_ready,
+        )
+        all_expanded = read_expanded_sidebar(session_file)
+        collapsed = all_expanded - {collapsed_group}
+        groups, terminals, _ = current
+        rows = visible_rows_for_expansion(groups, terminals, all_expanded)
+        sidebar_toggle_group(window, env, rows, rows.index(collapsed_group))
+        wait_for_session_ready(
+            session_file,
+            lambda value: sidebar_expansion_is(session_file, collapsed),
+        )
+
+        # Selection of another visible group must not rebuild the tree into an
+        # all-expanded state as a side effect.
+        current = read_session(session_file)
+        rows = visible_rows_for_expansion(current[0], current[1], collapsed)
+        sidebar_click_row(window, env, rows, rows.index(("group", "group-c")), 1)
+        wait_for_session_ready(
+            session_file,
+            lambda value: sidebar_expansion_is(session_file, collapsed) and
+            read_active_group_id(session_file) == "group-c",
+        )
+
+        # A clean restart must preserve the same stable-ID expansion state.
+        close_window(process, window, env)
+        process = None
+        window = None
+        process, window = launch_sakura(binary, config_file, env, log_file)
+        wait_for_session_ready(
+            session_file,
+            lambda value: sidebar_expansion_is(session_file, collapsed),
+        )
+
+        current = read_session(session_file)
+        rows = visible_rows_for_expansion(current[0], current[1], collapsed)
+        sidebar_toggle_group(window, env, rows, rows.index(collapsed_group))
+        wait_for_session_ready(
+            session_file,
+            lambda value: sidebar_expansion_is(session_file, all_expanded),
+        )
+    finally:
+        if process is not None:
+            close_window(process, window, env)
 
 
 def run_drag_regression_case(binary, config_file, session_file, env, log_file):
@@ -1422,12 +1550,16 @@ def main():
                         help="only stress restore/save cycles")
     parser.add_argument("--drag-only", action="store_true",
                         help="run the deterministic nested-group drag regression")
+    parser.add_argument("--expansion-only", action="store_true",
+                        help="run the deterministic sidebar expansion regression")
     parser.add_argument("--screenshot", metavar="PATH",
                         help="capture the sidebar window before dragging")
     args = parser.parse_args()
 
     if args.iterations < 1:
         parser.error("--iterations must be positive")
+    if args.drag_only and args.expansion_only:
+        parser.error("--drag-only and --expansion-only are mutually exclusive")
     binary = Path(args.binary).resolve()
     if not binary.is_file():
         raise SystemExit(f"binary not found: {binary}")
@@ -1477,6 +1609,11 @@ def main():
         expected_terminals = fixture_terminals
         expected_terminal_ids = fixture_terminal_ids
         try:
+            if args.expansion_only:
+                run_sidebar_expansion_case(binary, config_file, session_file,
+                                           env, log_file)
+                print("sidebar expansion regression: passed")
+                return
             if args.drag_only:
                 run_drag_regression_case(binary, config_file, session_file,
                                          env, log_file)
@@ -1564,6 +1701,8 @@ def main():
             print("create/delete lifecycle: passed")
             run_group_close_selection_case(binary, config_file, session_file, env, log_file)
             print("group-aware close selection: passed")
+            run_sidebar_expansion_case(binary, config_file, session_file, env, log_file)
+            print("sidebar expansion regression: passed")
             run_task_workflow_case(binary, config_file, session_file, env, log_file)
             print("task workflow actions: passed")
             run_visible_terminal_case(binary, config_file, session_file, env, log_file)

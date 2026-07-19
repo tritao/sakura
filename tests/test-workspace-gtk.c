@@ -1448,6 +1448,77 @@ test_sidebar_collapses_all_groups(void)
 
 
 static void
+test_sidebar_collapsed_group_preserves_live_state(void)
+{
+	SakuraSidebarNode *group, *nested, *inserted;
+	SakuraGroup *group_model, *nested_model;
+	SakuraSessionSnapshot *snapshot;
+	GtkTreeIter iter;
+	GtkTreePath *path;
+
+	setup_workspace();
+	setup_sidebar_fixture();
+	group = test_sidebar_add_group("group-live-expansion", "Group",
+	                              sakura.sidebar_root);
+	nested = test_sidebar_add_group("nested-live-expansion", "Nested", group);
+	group_model = group->group;
+	nested_model = nested->group;
+	sakura_sidebar_apply_default_expansion();
+
+	g_assert_true(sakura_sidebar_get_iter(group, &iter));
+	path = gtk_tree_model_get_path(GTK_TREE_MODEL(sakura.sidebar_model), &iter);
+	g_assert_true(gtk_tree_view_collapse_row(GTK_TREE_VIEW(sakura.sidebar_tree),
+	                                        path));
+	g_assert_false(gtk_tree_view_row_expanded(GTK_TREE_VIEW(sakura.sidebar_tree),
+	                                         path));
+	gtk_tree_path_free(path);
+
+	/* A real selection must not rebuild the projection or reopen the group. */
+	g_signal_connect(sakura.sidebar_selection, "changed",
+	                G_CALLBACK(sakura_sidebar_selection_changed_cb), NULL);
+	g_assert_true(sakura_sidebar_get_iter(sakura.sidebar_root, &iter));
+	path = gtk_tree_model_get_path(GTK_TREE_MODEL(sakura.sidebar_model), &iter);
+	gtk_tree_selection_select_path(sakura.sidebar_selection, path);
+	gtk_tree_path_free(path);
+	g_assert_true(sakura_sidebar_get_iter(group, &iter));
+	path = gtk_tree_model_get_path(GTK_TREE_MODEL(sakura.sidebar_model), &iter);
+	g_assert_false(gtk_tree_view_row_expanded(GTK_TREE_VIEW(sakura.sidebar_tree),
+	                                         path));
+	gtk_tree_path_free(path);
+
+	/* Persist the live state, then force the normal projection path. */
+	snapshot = test_workspace_snapshot_new();
+	sakura_sidebar_capture_expansion(snapshot);
+	sakura_sidebar_rebuild_projection();
+	group = group_model->sidebar_node;
+	nested = nested_model->sidebar_node;
+	g_assert_nonnull(group);
+	g_assert_nonnull(nested);
+	g_assert_true(sakura_sidebar_get_iter(group, &iter));
+	path = gtk_tree_model_get_path(GTK_TREE_MODEL(sakura.sidebar_model), &iter);
+	g_assert_false(gtk_tree_view_row_expanded(GTK_TREE_VIEW(sakura.sidebar_tree),
+	                                         path));
+	gtk_tree_path_free(path);
+
+	/* Inserting below a collapsed group is allowed, but does not implicitly
+	 * change the user's expansion choice. */
+	inserted = test_sidebar_add_group("inserted-live-expansion", "Inserted",
+	                                 group);
+	g_assert_true(sakura_sidebar_get_iter(group, &iter));
+	path = gtk_tree_model_get_path(GTK_TREE_MODEL(sakura.sidebar_model), &iter);
+	g_assert_false(gtk_tree_view_row_expanded(GTK_TREE_VIEW(sakura.sidebar_tree),
+	                                         path));
+	gtk_tree_path_free(path);
+
+	sakura_session_snapshot_free(snapshot);
+	test_sidebar_remove_group(inserted);
+	test_sidebar_remove_group(nested);
+	test_sidebar_remove_group(group);
+	teardown_workspace();
+}
+
+
+static void
 test_sidebar_expansion_survives_rebuild(void)
 {
 	SakuraPage *page;
@@ -1487,6 +1558,17 @@ test_sidebar_expansion_survives_rebuild(void)
 
 	snapshot = test_workspace_snapshot_new();
 	sakura_sidebar_capture_expansion(snapshot);
+	sakura_sidebar_rebuild_projection();
+
+	g_assert_true(sakura_sidebar_get_iter(group->sidebar_node, &iter));
+	path = gtk_tree_model_get_path(GTK_TREE_MODEL(sakura.sidebar_model), &iter);
+	g_assert_false(gtk_tree_view_row_expanded(GTK_TREE_VIEW(sakura.sidebar_tree), path));
+	gtk_tree_path_free(path);
+	g_assert_true(sakura_sidebar_get_iter(page->sidebar_node, &iter));
+	path = gtk_tree_model_get_path(GTK_TREE_MODEL(sakura.sidebar_model), &iter);
+	g_assert_true(gtk_tree_view_row_expanded(GTK_TREE_VIEW(sakura.sidebar_tree), path));
+	gtk_tree_path_free(path);
+
 	sakura_session_snapshot_free(sakura.session_snapshot);
 	sakura.session_snapshot = snapshot;
 	sakura.sidebar_expansion_initialized = FALSE;
@@ -2856,6 +2938,8 @@ main(int argc, char **argv)
 	                test_sidebar_collapses_split_session_panes);
 	g_test_add_func("/workspace/sidebar-collapses-all-groups",
 	                test_sidebar_collapses_all_groups);
+	g_test_add_func("/workspace/sidebar-collapsed-group-preserves-live-state",
+	                test_sidebar_collapsed_group_preserves_live_state);
 	g_test_add_func("/workspace/sidebar-expansion-survives-rebuild",
 	                test_sidebar_expansion_survives_rebuild);
 	g_test_add_func("/workspace/sidebar-task-owns-page",

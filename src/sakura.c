@@ -3231,6 +3231,7 @@ sakura_destroy_cleanup(void)
 	}
 	sakura.sidebar_root = NULL;
 	sakura.active_group_scope = NULL;
+	g_clear_pointer(&sakura.sidebar_expansion_keys, g_hash_table_destroy);
 	sakura_codex_name_helper_shutdown();
 	sakura_agent_stop(&sakura);
 
