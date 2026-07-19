@@ -7,6 +7,12 @@
 #include "sakura-control-transport.h"
 #include "sakura/control.pb-c.h"
 
+static gchar *test_agent_workspace_id;
+
+static SakuraSessionSnapshot *test_load_agent_session(const gchar *session_path);
+static void test_save_agent_session(const gchar *session_path,
+                                    const SakuraSessionSnapshot *snapshot);
+
 
 static SakuraCoreWorkspace *
 test_workspace_new(void)
@@ -93,6 +99,7 @@ test_hello_roundtrip(void)
 
 	g_assert_true(sakura_control_encode_hello_request(
 		"hello-request", SAKURA_CONTROL_PROTOCOL_VERSION, "test-client",
+		"workspace-test",
 		request_payload));
 	g_assert_true(sakura_control_decode_request(
 		request_payload->data, request_payload->len, &request, &error));
@@ -101,12 +108,13 @@ test_hello_roundtrip(void)
 	g_assert_cmpuint(request.protocol_version, ==,
 	                SAKURA_CONTROL_PROTOCOL_VERSION);
 	g_assert_cmpstr(request.client_name, ==, "test-client");
+	g_assert_cmpstr(request.workspace_id, ==, "workspace-test");
 	sakura_control_request_clear(&request);
 
 	g_assert_true(sakura_control_encode_hello_response(
 		"hello-request", SAKURA_CONTROL_PROTOCOL_VERSION, "0.1",
 		SAKURA_CONTROL_CAPABILITY_WORKSPACE |
-		SAKURA_CONTROL_CAPABILITY_TERMINALS, response_payload));
+		SAKURA_CONTROL_CAPABILITY_TERMINALS, "workspace-test", response_payload));
 	g_assert_true(sakura_control_decode_response(
 		response_payload->data, response_payload->len, &response, &error));
 	g_assert_no_error(error);
@@ -115,6 +123,7 @@ test_hello_roundtrip(void)
 	g_assert_cmpuint(response.hello_protocol_version, ==,
 	                SAKURA_CONTROL_PROTOCOL_VERSION);
 	g_assert_cmpstr(response.agent_version, ==, "0.1");
+	g_assert_cmpstr(response.workspace_id, ==, "workspace-test");
 	g_assert_cmpuint(response.capabilities,
 	                ==,
 	                SAKURA_CONTROL_CAPABILITY_WORKSPACE |
@@ -349,17 +358,29 @@ test_agent_start(const gchar *socket_path, const gchar *session_path)
 	GSubprocess *process;
 	GError *error = NULL;
 	GSocketConnection *connection;
+	SakuraSessionSnapshot *snapshot;
+
+	if (!g_file_test(session_path, G_FILE_TEST_IS_REGULAR)) {
+		snapshot = sakura_session_snapshot_new();
+		test_save_agent_session(session_path, snapshot);
+		sakura_session_snapshot_free(snapshot);
+	}
+	snapshot = test_load_agent_session(session_path);
+	g_free(test_agent_workspace_id);
+	test_agent_workspace_id = g_strdup(snapshot->workspace_id);
+	sakura_session_snapshot_free(snapshot);
 
 #ifdef SAKURA_AGENT_BUILD_PATH
 	process = g_subprocess_new(
 		G_SUBPROCESS_FLAGS_STDOUT_SILENCE | G_SUBPROCESS_FLAGS_STDERR_SILENCE,
 		&error, SAKURA_AGENT_BUILD_PATH, "--socket", socket_path,
-		"--session", session_path, NULL);
+		"--workspace-id", test_agent_workspace_id, "--session", session_path, NULL);
 #else
 	process = g_subprocess_new(
 		G_SUBPROCESS_FLAGS_STDOUT_SILENCE | G_SUBPROCESS_FLAGS_STDERR_SILENCE,
-		&error, "sakura-agent", "--socket", socket_path, "--session",
-		session_path, NULL);
+		&error, "sakura-agent", "--socket", socket_path,
+		"--workspace-id", test_agent_workspace_id, "--session", session_path,
+		NULL);
 #endif
 	g_assert_no_error(error);
 	g_assert_nonnull(process);
@@ -396,6 +417,7 @@ test_agent_handshake_on_connection(GSocketConnection *connection)
 	output = g_io_stream_get_output_stream(G_IO_STREAM(connection));
 	g_assert_true(sakura_control_encode_hello_request(
 		"test-hello", SAKURA_CONTROL_PROTOCOL_VERSION, "sakura-test",
+		test_agent_workspace_id,
 		hello_payload));
 	g_assert_true(sakura_control_frame_write(output, hello_payload->data,
 	                                         hello_payload->len, NULL, &error));
@@ -408,9 +430,59 @@ test_agent_handshake_on_connection(GSocketConnection *connection)
 		&hello_response, &error));
 	g_assert_no_error(error);
 	g_assert_true(hello_response.hello);
+	g_assert_cmpstr(hello_response.workspace_id, ==, test_agent_workspace_id);
 	sakura_control_response_clear(&hello_response);
 	g_clear_pointer(&hello_response_payload, g_byte_array_unref);
 	g_byte_array_unref(hello_payload);
+}
+
+
+static void
+test_agent_rejects_wrong_workspace(void)
+{
+	GSubprocess *process;
+	GSocketConnection *connection;
+	GByteArray *hello_payload = g_byte_array_new();
+	GByteArray *response_payload = NULL;
+	SakuraControlResponse response = { 0 };
+	GError *error = NULL;
+	gchar *directory;
+	gchar *socket_path;
+	gchar *session_path;
+
+	directory = g_dir_make_tmp("sakura-agent-identity-XXXXXX", &error);
+	g_assert_no_error(error);
+	socket_path = g_build_filename(directory, "agent.sock", NULL);
+	session_path = g_build_filename(directory, "workspace.session", NULL);
+	process = test_agent_start(socket_path, session_path);
+	connection = test_agent_connect_wait(socket_path);
+	g_assert_true(sakura_control_encode_hello_request(
+		"wrong-hello", SAKURA_CONTROL_PROTOCOL_VERSION, "sakura-test",
+		"wrong-workspace", hello_payload));
+	g_assert_true(sakura_control_frame_write(
+		g_io_stream_get_output_stream(G_IO_STREAM(connection)),
+		hello_payload->data, hello_payload->len, NULL, &error));
+	g_assert_no_error(error);
+	g_assert_true(sakura_control_frame_read(
+		g_io_stream_get_input_stream(G_IO_STREAM(connection)),
+		&response_payload, NULL, &error));
+	g_assert_no_error(error);
+	g_assert_false(sakura_control_decode_response(
+		response_payload->data, response_payload->len, &response, &error));
+	g_assert_error(error, G_IO_ERROR, G_IO_ERROR_INVALID_DATA);
+	g_clear_error(&error);
+	sakura_control_response_clear(&response);
+	g_clear_pointer(&response_payload, g_byte_array_unref);
+	g_byte_array_unref(hello_payload);
+	g_io_stream_close(G_IO_STREAM(connection), NULL, NULL);
+	g_object_unref(connection);
+	test_agent_stop(process);
+	g_remove(session_path);
+	g_remove(socket_path);
+	g_rmdir(directory);
+	g_free(session_path);
+	g_free(socket_path);
+	g_free(directory);
 }
 
 
@@ -1135,6 +1207,7 @@ test_agent_terminal_lifecycle(void)
 int
 main(int argc, char **argv)
 {
+	int result;
 	g_test_init(&argc, &argv, NULL);
 	g_test_add_func("/control/request-frame-roundtrip",
 	                test_request_frame_roundtrip);
@@ -1146,7 +1219,11 @@ main(int argc, char **argv)
 	                test_mutation_request_roundtrip);
 	g_test_add_func("/control/agent-create-and-reload",
 	                test_agent_create_and_reload);
+	g_test_add_func("/control/agent-rejects-wrong-workspace",
+	                test_agent_rejects_wrong_workspace);
 	g_test_add_func("/control/agent-terminal-lifecycle",
 	                test_agent_terminal_lifecycle);
-	return g_test_run();
+	result = g_test_run();
+	g_clear_pointer(&test_agent_workspace_id, g_free);
+	return result;
 }

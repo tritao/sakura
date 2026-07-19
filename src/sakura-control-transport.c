@@ -53,6 +53,7 @@ sakura_control_request_clear(SakuraControlRequest *request)
 	g_clear_pointer(&request->external_id, g_free);
 	g_clear_pointer(&request->url, g_free);
 	g_clear_pointer(&request->client_name, g_free);
+	g_clear_pointer(&request->workspace_id, g_free);
 	request->kind = SAKURA_CONTROL_REQUEST_NONE;
 	request->archived = FALSE;
 	request->protocol_version = 0;
@@ -73,6 +74,7 @@ sakura_control_response_clear(SakuraControlResponse *response)
 	g_clear_pointer(&response->accepted_kind, g_free);
 	g_clear_pointer(&response->accepted_id, g_free);
 	g_clear_pointer(&response->agent_version, g_free);
+	g_clear_pointer(&response->workspace_id, g_free);
 	g_clear_pointer(&response->attached_terminal_id, g_free);
 	g_clear_pointer(&response->attached_output, g_free);
 	response->has_snapshot = FALSE;
@@ -176,6 +178,7 @@ gboolean
 sakura_control_encode_hello_request(const gchar *request_id,
 	                                   guint protocol_version,
 	                                   const gchar *client_name,
+	                                   const gchar *workspace_id,
 	                                   GByteArray *payload)
 {
 	Sakura__Control__V1__HelloRequest hello =
@@ -187,6 +190,7 @@ sakura_control_encode_hello_request(const gchar *request_id,
 		return FALSE;
 	hello.protocol_version = protocol_version;
 	hello.client_name = (gchar *)sakura_control_string(client_name);
+	hello.workspace_id = (gchar *)sakura_control_string(workspace_id);
 	request.request_id = (gchar *)request_id;
 	request.body_case = SAKURA__CONTROL__V1__REQUEST__BODY_HELLO;
 	request.hello = &hello;
@@ -607,6 +611,7 @@ sakura_control_decode_request(const guint8 *payload,
 			request->kind = SAKURA_CONTROL_REQUEST_HELLO;
 			request->protocol_version = decoded->hello->protocol_version;
 			request->client_name = g_strdup(decoded->hello->client_name);
+			request->workspace_id = g_strdup(decoded->hello->workspace_id);
 		}
 		break;
 	case SAKURA__CONTROL__V1__REQUEST__BODY_CREATE_GROUP:
@@ -967,6 +972,7 @@ sakura_control_encode_hello_response(const gchar *request_id,
 	                                    guint protocol_version,
 	                                    const gchar *agent_version,
 	                                    guint64 capabilities,
+	                                    const gchar *workspace_id,
 	                                    GByteArray *payload)
 {
 	Sakura__Control__V1__HelloResponse hello =
@@ -979,6 +985,7 @@ sakura_control_encode_hello_response(const gchar *request_id,
 	hello.protocol_version = protocol_version;
 	hello.agent_version = (gchar *)sakura_control_string(agent_version);
 	hello.capabilities = capabilities;
+	hello.workspace_id = (gchar *)sakura_control_string(workspace_id);
 	response.request_id = (gchar *)request_id;
 	response.body_case = SAKURA__CONTROL__V1__RESPONSE__BODY_HELLO;
 	response.hello = &hello;
@@ -1140,6 +1147,7 @@ sakura_control_decode_response(const guint8 *payload,
 		response->hello_protocol_version = decoded->hello->protocol_version;
 		response->agent_version = g_strdup(decoded->hello->agent_version);
 		response->capabilities = decoded->hello->capabilities;
+		response->workspace_id = g_strdup(decoded->hello->workspace_id);
 	}
 	if (attached) {
 		Sakura__Control__V1__TerminalAttachment *attachment =

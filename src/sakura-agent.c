@@ -48,6 +48,7 @@ struct _SakuraAgent {
 	GMainLoop *loop;
 	SakuraCoreWorkspace *workspace;
 	SakuraSessionSnapshot *session_snapshot;
+	gchar *workspace_id;
 	GMutex state_mutex;
 	GPtrArray *subscribers; /* GSocketConnection *, owned references. */
 	GPtrArray *terminals; /* SakuraAgentTerminal *, owned. */
@@ -973,9 +974,14 @@ sakura_agent_connection_thread(gpointer data)
 				g_set_error(&error, G_IO_ERROR, G_IO_ERROR_NOT_SUPPORTED,
 				            "unsupported control protocol version %u",
 				            decoded.protocol_version);
+			} else if (decoded.workspace_id == NULL || decoded.workspace_id[0] == '\0' ||
+			           g_strcmp0(decoded.workspace_id, request->agent->workspace_id) != 0) {
+				g_set_error_literal(&error, G_IO_ERROR, G_IO_ERROR_PERMISSION_DENIED,
+				                    "control workspace identity did not match");
 			} else if (sakura_control_encode_hello_response(
 					request_id, SAKURA_CONTROL_PROTOCOL_VERSION,
-					SAKURA_AGENT_VERSION, SAKURA_AGENT_CAPABILITIES, response)) {
+					SAKURA_AGENT_VERSION, SAKURA_AGENT_CAPABILITIES,
+					request->agent->workspace_id, response)) {
 				handshaken = TRUE;
 			}
 		} else if (!handshaken) {
@@ -1166,12 +1172,15 @@ main(int argc, char **argv)
 	GError *error = NULL;
 	gchar *socket_path = NULL;
 	gchar *session_path = NULL;
+	gchar *workspace_id = NULL;
 	GOptionContext *context;
 	GOptionEntry entries[] = {
 		{ "socket", 's', 0, G_OPTION_ARG_STRING, &socket_path,
 		  "Unix socket path", "PATH" },
 		{ "session", 'f', 0, G_OPTION_ARG_STRING, &session_path,
 		  "Session file path", "PATH" },
+		{ "workspace-id", 0, 0, G_OPTION_ARG_STRING, &workspace_id,
+		  "Workspace identity", "ID" },
 		{ NULL }
 	};
 
@@ -1190,6 +1199,7 @@ main(int argc, char **argv)
 		g_printerr("%s\n", error->message);
 		g_clear_error(&error);
 		g_free(socket_path);
+		g_free(workspace_id);
 		return EXIT_FAILURE;
 	}
 
@@ -1201,7 +1211,12 @@ main(int argc, char **argv)
 		g_clear_error(&error);
 		g_free(socket_path);
 		g_free(session_path);
+		g_free(workspace_id);
 		return EXIT_FAILURE;
+	}
+	if (workspace_id != NULL && workspace_id[0] != '\0') {
+		g_free(session_snapshot->workspace_id);
+		session_snapshot->workspace_id = g_strdup(workspace_id);
 	}
 	workspace = sakura_core_workspace_from_snapshot(session_snapshot, &error);
 	if (workspace == NULL) {
@@ -1211,6 +1226,7 @@ main(int argc, char **argv)
 		sakura_session_snapshot_free(session_snapshot);
 		g_free(socket_path);
 		g_free(session_path);
+		g_free(workspace_id);
 		return EXIT_FAILURE;
 	}
 
@@ -1230,6 +1246,7 @@ main(int argc, char **argv)
 		g_remove(socket_path);
 		g_free(socket_path);
 		g_free(session_path);
+		g_free(workspace_id);
 		return EXIT_FAILURE;
 	}
 	g_object_unref(address);
@@ -1241,6 +1258,7 @@ main(int argc, char **argv)
 	agent.loop = loop;
 	agent.workspace = workspace;
 	agent.session_snapshot = session_snapshot;
+	agent.workspace_id = g_strdup(session_snapshot->workspace_id);
 	agent.subscribers = g_ptr_array_new_with_free_func(g_object_unref);
 	agent.terminals = g_ptr_array_new_with_free_func(
 		(GDestroyNotify)sakura_agent_terminal_free);
@@ -1260,8 +1278,10 @@ main(int argc, char **argv)
 	g_clear_pointer(&agent.terminals, g_ptr_array_unref);
 	sakura_core_workspace_free(workspace);
 	sakura_session_snapshot_free(session_snapshot);
+	g_free(agent.workspace_id);
 	g_remove(socket_path);
 	g_free(socket_path);
 	g_free(session_path);
+	g_free(workspace_id);
 	return EXIT_SUCCESS;
 }

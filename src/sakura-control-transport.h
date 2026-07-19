@@ -7,7 +7,7 @@
 
 /* The protobuf payload is framed separately so the same generated messages
  * can later be carried by an HTTP or WebSocket adapter. */
-#define SAKURA_CONTROL_PROTOCOL_VERSION 1
+#define SAKURA_CONTROL_PROTOCOL_VERSION 2
 #define SAKURA_CONTROL_MAX_FRAME (1024 * 1024)
 #define SAKURA_CONTROL_CAPABILITY_WORKSPACE G_GUINT64_CONSTANT(1)
 #define SAKURA_CONTROL_CAPABILITY_TERMINALS G_GUINT64_CONSTANT(2)
@@ -51,6 +51,7 @@ typedef struct {
 	gchar *external_id;
 	gchar *url;
 	gchar *client_name;
+	gchar *workspace_id;
 	gboolean archived;
 	guint protocol_version;
 	guint8 *input_data;
@@ -69,6 +70,7 @@ typedef struct {
 	gboolean hello;
 	guint hello_protocol_version;
 	gchar *agent_version;
+	gchar *workspace_id;
 	guint64 capabilities;
 	gboolean attached;
 	gchar *attached_terminal_id;
@@ -97,6 +99,7 @@ gboolean sakura_control_encode_get_snapshot_request(const gchar *request_id,
 gboolean sakura_control_encode_hello_request(const gchar *request_id,
 	                                           guint protocol_version,
 	                                           const gchar *client_name,
+	                                           const gchar *workspace_id,
 	                                           GByteArray *payload);
 gboolean sakura_control_encode_create_group_request(
 	const gchar *request_id, const gchar *parent_id, const gchar *title,
@@ -161,10 +164,11 @@ gboolean sakura_control_encode_accepted_response(const gchar *request_id,
 	                                               const gchar *id,
 	                                               GByteArray *payload);
 gboolean sakura_control_encode_hello_response(const gchar *request_id,
-	                                            guint protocol_version,
-	                                            const gchar *agent_version,
-	                                            guint64 capabilities,
-	                                            GByteArray *payload);
+	                                    guint protocol_version,
+	                                    const gchar *agent_version,
+	                                    guint64 capabilities,
+	                                    const gchar *workspace_id,
+	                                    GByteArray *payload);
 gboolean sakura_control_encode_terminal_attachment_response(
 	const gchar *request_id, const SakuraCoreTerminal *terminal,
 	const guint8 *replay_data, gsize replay_data_length, GByteArray *payload);

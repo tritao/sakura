@@ -133,6 +133,7 @@ test_session_snapshot_round_trip(void)
 	g_assert_cmpstr(loaded->selected_terminal_id, ==, "terminal-1");
 	g_assert_cmpstr(loaded->selected_task_id, ==, "task-a");
 	g_assert_cmpstr(loaded->active_group_id, ==, "group-a");
+	g_assert_cmpstr(loaded->workspace_id, ==, source->workspace_id);
 	g_assert_cmpstr(loaded->root_directory, ==, "/tmp");
 	g_assert_false(loaded->sidebar_visible);
 	g_assert_cmpint(loaded->sidebar_width, ==, 280);
@@ -514,6 +515,7 @@ test_session_snapshot_uses_safe_optional_defaults(void)
 	g_assert_cmpstr(snapshot->active_group_id, ==, "root");
 	g_assert_true(snapshot->sidebar_visible);
 	g_assert_cmpint(snapshot->sidebar_width, ==, 200);
+	g_assert_nonnull(snapshot->workspace_id);
 
 	g_key_file_free(key_file);
 	sakura_session_snapshot_free(snapshot);

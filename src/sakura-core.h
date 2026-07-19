@@ -3,7 +3,7 @@
 
 #include <glib.h>
 
-#define SAKURA_SESSION_VERSION 9
+#define SAKURA_SESSION_VERSION 10
 #define NUM_COLORSETS 6
 
 /* The domain layer owns these bounds. GTK rendering and persistence must
@@ -149,6 +149,7 @@ struct sakura_session_snapshot {
 	GPtrArray *pages;
 	GPtrArray *layouts;
 	GPtrArray *expanded_sidebar_nodes;
+	gchar *workspace_id;
 	gint selected_terminal;
 	gchar *selected_terminal_id;
 	gchar *selected_page_id;

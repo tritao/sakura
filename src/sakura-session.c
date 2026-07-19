@@ -139,6 +139,8 @@ sakura_session_flush(void)
 		? gtk_paned_get_position(GTK_PANED(sakura.sidebar_paned))
 		: sakura.sidebar_width);
 	if (snapshot != NULL) {
+		g_free(snapshot->workspace_id);
+		snapshot->workspace_id = g_strdup(sakura.workspace_id);
 		snapshot->show_archived = sakura.show_archived;
 		sakura_sidebar_capture_expansion(snapshot);
 	}
@@ -307,6 +309,8 @@ sakura_session_load_file(SakuraApp *app, gboolean restore_session)
 
 	app->sidebar_visible = snapshot->sidebar_visible;
 	app->show_archived = snapshot->show_archived;
+	g_free(app->workspace_id);
+	app->workspace_id = g_strdup(snapshot->workspace_id);
 	if (snapshot->sidebar_width >= 160 && snapshot->sidebar_width <= 500)
 		app->sidebar_width = snapshot->sidebar_width;
 	sakura_session_snapshot_free(app->session_snapshot);

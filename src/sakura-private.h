@@ -191,6 +191,7 @@ struct sakura_app {
 	SakuraSidebarNode *sidebar_pending_insert_after;
 	gboolean sidebar_syncing;
 	gboolean sidebar_expansion_initialized;
+	GHashTable *sidebar_expansion_keys;
 	GtkTreeRowReference *sidebar_pending_selection;
 	SakuraSidebarSelectionReason sidebar_pending_selection_reason;
 	guint sidebar_selection_source_id;
@@ -310,6 +311,7 @@ struct sakura_app {
 	GKeyFile *session_cfg;
 	SakuraSessionSnapshot *session_snapshot;
 	SakuraSessionSnapshot *agent_pending_snapshot;
+	gchar *workspace_id;
 	char *configfile;
 	char *sessionfile;
 	char *session_lock_path;

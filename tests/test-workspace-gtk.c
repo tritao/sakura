@@ -735,6 +735,7 @@ teardown_workspace(void)
 	g_ptr_array_set_size(sakura.workspace->panes, 0);
 	sakura_workspace_model_free(sakura.workspace);
 	sakura.workspace = NULL;
+	g_clear_pointer(&sakura.sidebar_expansion_keys, g_hash_table_destroy);
 	memset(&sakura, 0, sizeof(sakura));
 }
 
@@ -2806,6 +2807,7 @@ test_embedded_agent_restarts(void)
 	sakura.workspace = NULL;
 	g_free(sakura.sessionfile);
 	sakura.sessionfile = NULL;
+	g_clear_pointer(&sakura.workspace_id, g_free);
 	g_free(sakura.agent_socket_path_override);
 	sakura.agent_socket_path_override = NULL;
 	g_remove(session_path);

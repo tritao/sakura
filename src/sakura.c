@@ -2112,6 +2112,7 @@ sakura_init()
 	int i;
 
 	sakura.workspace = sakura_workspace_model_new();
+	sakura.workspace_id = g_uuid_string_random();
 	sakura.session_new_window = option_new_window;
 
 	/*** Config file initialization ***/
@@ -3239,6 +3240,7 @@ sakura_destroy_cleanup(void)
 	sakura.session_snapshot = NULL;
 	sakura_session_snapshot_free(sakura.agent_pending_snapshot);
 	sakura.agent_pending_snapshot = NULL;
+	g_clear_pointer(&sakura.workspace_id, g_free);
 
 	g_clear_pointer(&sakura.font, pango_font_description_free);
 

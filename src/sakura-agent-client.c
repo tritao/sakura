@@ -10,7 +10,7 @@ static gchar *
 sakura_agent_socket_path_new(SakuraApp *app)
 {
 	const gchar *runtime_dir = g_get_user_runtime_dir();
-	gchar *session_hash;
+	gchar *workspace_hash;
 	gchar *socket_name;
 	gchar *socket_path;
 
@@ -18,31 +18,24 @@ sakura_agent_socket_path_new(SakuraApp *app)
 	    app->agent_socket_path_override[0] != '\0')
 		return g_strdup(app->agent_socket_path_override);
 
-	/* A persistent session owns its workspace agent. Keep all windows that
-	 * share one session on the same socket, but do not let a second persistent
-	 * session attach to the first session's agent. Hashing also keeps the Unix
-	 * socket path short when the config file lives in a deep directory. */
-	if (app != NULL && app->sessionfile != NULL &&
-	    app->sessionfile[0] != '\0') {
-		session_hash = g_compute_checksum_for_string(
-			G_CHECKSUM_SHA256, app->sessionfile, -1);
-		socket_name = g_strdup_printf("sakura-agent-%.*s.sock", 16,
-		                              session_hash);
-		g_free(session_hash);
-		if (runtime_dir != NULL && runtime_dir[0] != '\0') {
-			socket_path = g_build_filename(runtime_dir, socket_name, NULL);
-		} else {
-			socket_path = g_build_filename(g_get_user_cache_dir(), "sakura",
-			                               socket_name, NULL);
-		}
-		g_free(socket_name);
-		return socket_path;
-	}
-
+	/* The endpoint is derived from the persisted workspace identity rather
+	 * than from a mutable path, so renaming or relocating a session does not
+	 * create a second workspace. */
+	if (app == NULL || app->workspace_id == NULL ||
+	    app->workspace_id[0] == '\0')
+		return NULL;
+	workspace_hash = g_compute_checksum_for_string(
+		G_CHECKSUM_SHA256, app->workspace_id, -1);
+	socket_name = g_strdup_printf("sakura-agent-%.*s.sock", 16,
+	                              workspace_hash);
+	g_free(workspace_hash);
 	if (runtime_dir != NULL && runtime_dir[0] != '\0')
-		return g_build_filename(runtime_dir, "sakura-agent.sock", NULL);
-	return g_build_filename(g_get_user_cache_dir(), "sakura", "agent.sock",
-	                        NULL);
+		socket_path = g_build_filename(runtime_dir, socket_name, NULL);
+	else
+		socket_path = g_build_filename(g_get_user_cache_dir(), "sakura",
+		                               socket_name, NULL);
+	g_free(socket_name);
+	return socket_path;
 }
 
 
@@ -74,7 +67,9 @@ sakura_agent_connect(const gchar *socket_path, GError **error)
 
 
 static gboolean
-sakura_agent_handshake(GSocketConnection *connection, GError **error)
+sakura_agent_handshake(GSocketConnection *connection,
+	                     const gchar *workspace_id,
+	                     GError **error)
 {
 	GByteArray *request = g_byte_array_new();
 	GByteArray *response_payload = NULL;
@@ -84,11 +79,11 @@ sakura_agent_handshake(GSocketConnection *connection, GError **error)
 	gchar *request_id = g_uuid_string_random();
 	gboolean success = FALSE;
 
-	if (connection == NULL)
+	if (connection == NULL || workspace_id == NULL || workspace_id[0] == '\0')
 		goto out;
 	if (!sakura_control_encode_hello_request(
 			request_id, SAKURA_CONTROL_PROTOCOL_VERSION,
-			SAKURA_AGENT_CLIENT_NAME, request)) {
+			SAKURA_AGENT_CLIENT_NAME, workspace_id, request)) {
 		g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT,
 		                    "could not encode agent hello request");
 		goto out;
@@ -110,6 +105,11 @@ sakura_agent_handshake(GSocketConnection *connection, GError **error)
 	if (!response.hello) {
 		g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_INVALID_DATA,
 		                    "agent did not return a hello response");
+		goto out;
+	}
+	if (g_strcmp0(response.workspace_id, workspace_id) != 0) {
+		g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_PERMISSION_DENIED,
+		                    "agent workspace identity did not match");
 		goto out;
 	}
 	if (response.hello_protocol_version != SAKURA_CONTROL_PROTOCOL_VERSION) {
@@ -339,7 +339,7 @@ sakura_agent_command_thread(gpointer data)
 				}
 			}
 			if (connection != NULL &&
-			    !sakura_agent_handshake(connection, &error)) {
+			    !sakura_agent_handshake(connection, app->workspace_id, &error)) {
 				g_mutex_lock(&app->agent_command_mutex);
 				if (app->agent_command_connection == connection)
 					g_clear_object(&app->agent_command_connection);
@@ -560,7 +560,7 @@ sakura_agent_event_thread(gpointer data)
 	}
 	app->agent_event_connection = g_object_ref(connection);
 	g_mutex_unlock(&app->agent_event_mutex);
-	if (!sakura_agent_handshake(connection, &error))
+	if (!sakura_agent_handshake(connection, app->workspace_id, &error))
 		goto out;
 
 	request_id = g_uuid_string_random();
@@ -726,7 +726,9 @@ sakura_agent_event_stop(SakuraApp *app)
 
 
 static gboolean
-sakura_agent_request_snapshot(const gchar *socket_path, GError **error)
+sakura_agent_request_snapshot(const gchar *socket_path,
+	                           const gchar *workspace_id,
+	                           GError **error)
 {
 	GSocketConnection *connection;
 	GInputStream *input;
@@ -740,7 +742,7 @@ sakura_agent_request_snapshot(const gchar *socket_path, GError **error)
 	connection = sakura_agent_connect(socket_path, error);
 	if (connection == NULL)
 		return FALSE;
-	if (!sakura_agent_handshake(connection, error))
+	if (!sakura_agent_handshake(connection, workspace_id, error))
 		goto out;
 	request_id = g_uuid_string_random();
 	request = g_byte_array_new();
@@ -788,7 +790,7 @@ sakura_agent_request_mutation(SakuraApp *app, const gchar *request_id,
 	connection = sakura_agent_connect(app->agent_socket_path, error);
 	if (connection == NULL)
 		return FALSE;
-	if (!sakura_agent_handshake(connection, error)) {
+	if (!sakura_agent_handshake(connection, app->workspace_id, error)) {
 		g_io_stream_close(G_IO_STREAM(connection), NULL, NULL);
 		g_object_unref(connection);
 		return FALSE;
@@ -856,7 +858,7 @@ sakura_agent_request_accepted(SakuraApp *app, const gchar *request_id,
 	connection = sakura_agent_connect(app->agent_socket_path, error);
 	if (connection == NULL)
 		return FALSE;
-	if (!sakura_agent_handshake(connection, error)) {
+	if (!sakura_agent_handshake(connection, app->workspace_id, error)) {
 		g_io_stream_close(G_IO_STREAM(connection), NULL, NULL);
 		g_object_unref(connection);
 		return FALSE;
@@ -921,7 +923,7 @@ sakura_agent_request_attached(SakuraApp *app, const gchar *request_id,
 	connection = sakura_agent_connect(app->agent_socket_path, error);
 	if (connection == NULL)
 		return FALSE;
-	if (!sakura_agent_handshake(connection, error)) {
+	if (!sakura_agent_handshake(connection, app->workspace_id, error)) {
 		g_io_stream_close(G_IO_STREAM(connection), NULL, NULL);
 		g_object_unref(connection);
 		return FALSE;
@@ -1578,23 +1580,25 @@ sakura_agent_spawn_process(SakuraApp *app, const gchar *socket_path,
 		process = g_subprocess_new(
 			G_SUBPROCESS_FLAGS_STDOUT_SILENCE |
 			G_SUBPROCESS_FLAGS_STDERR_SILENCE,
-			error, binary, "--socket", socket_path, "--session",
-			app->sessionfile, NULL);
+			error, binary, "--socket", socket_path, "--workspace-id",
+			app->workspace_id, "--session", app->sessionfile, NULL);
 	else
 		process = g_subprocess_new(
 			G_SUBPROCESS_FLAGS_STDOUT_SILENCE |
 			G_SUBPROCESS_FLAGS_STDERR_SILENCE,
-			error, binary, "--socket", socket_path, NULL);
+			error, binary, "--socket", socket_path, "--workspace-id",
+			app->workspace_id, NULL);
 	g_free(binary);
 	return process;
 }
 
 
 static gboolean
-sakura_agent_wait_ready(const gchar *socket_path, GError **error)
+sakura_agent_wait_ready(const gchar *socket_path, const gchar *workspace_id,
+	                     GError **error)
 {
 	for (guint attempt = 0; attempt < 50; attempt++) {
-		if (sakura_agent_request_snapshot(socket_path, error))
+		if (sakura_agent_request_snapshot(socket_path, workspace_id, error))
 			return TRUE;
 		g_clear_error(error);
 		g_usleep(10 * 1000);
@@ -1638,7 +1642,7 @@ sakura_agent_launch_owned(SakuraApp *app, const gchar *socket_path,
 	process = sakura_agent_spawn_process(app, socket_path, error);
 	if (process == NULL)
 		return FALSE;
-	if (!sakura_agent_wait_ready(socket_path, error)) {
+	if (!sakura_agent_wait_ready(socket_path, app->workspace_id, error)) {
 		g_subprocess_force_exit(process);
 		g_subprocess_wait(process, NULL, NULL);
 		g_object_unref(process);
@@ -1686,13 +1690,22 @@ sakura_agent_start(SakuraApp *app)
 
 	if (app == NULL)
 		return FALSE;
+	if (app->workspace_id == NULL || app->workspace_id[0] == '\0')
+		app->workspace_id = g_uuid_string_random();
 	app->agent_supervisor_stopping = FALSE;
 	if (app->agent_socket_path != NULL) {
 		sakura_agent_command_start(app);
 		return TRUE;
 	}
 	socket_path = sakura_agent_socket_path_new(app);
-	if (sakura_agent_request_snapshot(socket_path, &error)) {
+	if (socket_path == NULL) {
+		g_set_error_literal(&error, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT,
+		                    "workspace identity is required for agent startup");
+		g_warning("Could not start sakura-agent: %s", error->message);
+		g_clear_error(&error);
+		return FALSE;
+	}
+	if (sakura_agent_request_snapshot(socket_path, app->workspace_id, &error)) {
 		app->agent_socket_path = socket_path;
 		sakura_agent_subscribe_start(app);
 		sakura_agent_command_start(app);

@@ -67,6 +67,7 @@ message GetSnapshotRequest {}
 message HelloRequest {
   uint32 protocol_version = 1;
   string client_name = 2;
+  string workspace_id = 3;
 }
 
 message CreateGroupRequest {
@@ -199,6 +200,7 @@ message HelloResponse {
   uint32 protocol_version = 1;
   string agent_version = 2;
   uint64 capabilities = 3;
+  string workspace_id = 4;
 }
 
 message TerminalAttachment {

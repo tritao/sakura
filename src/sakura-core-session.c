@@ -519,6 +519,14 @@ sakura_session_snapshot_load_into(GKeyFile *key_file,
 	if (version < 1 || version > SAKURA_SESSION_VERSION)
 		return sakura_session_error(error, G_KEY_FILE_ERROR_INVALID_VALUE,
 		                            g_strdup_printf("unsupported session version: %d", version));
+	g_free(snapshot->workspace_id);
+	snapshot->workspace_id = version >= 10
+	                      ? g_key_file_get_string(key_file, "Session", "workspace_id", NULL)
+	                      : NULL;
+	if (snapshot->workspace_id == NULL || snapshot->workspace_id[0] == '\0') {
+		g_clear_pointer(&snapshot->workspace_id, g_free);
+		snapshot->workspace_id = g_uuid_string_random();
+	}
 
 	group_count = g_key_file_get_integer(key_file, "Session", "group_count", error);
 	if (error != NULL && *error != NULL)
@@ -818,6 +826,10 @@ sakura_session_snapshot_save(const SakuraSessionSnapshot *snapshot,
 	guint index;
 
 	g_key_file_set_integer(key_file, "Session", "version", SAKURA_SESSION_VERSION);
+	if (snapshot->workspace_id != NULL && snapshot->workspace_id[0] != '\0')
+		g_key_file_set_string(key_file, "Session", "workspace_id", snapshot->workspace_id);
+	else
+		g_key_file_remove_key(key_file, "Session", "workspace_id", NULL);
 	g_key_file_set_integer(key_file, "Session", "group_count", snapshot->groups->len);
 	g_key_file_set_integer(key_file, "Session", "task_count", snapshot->tasks->len);
 	g_key_file_set_integer(key_file, "Session", "page_count", snapshot->pages->len);
