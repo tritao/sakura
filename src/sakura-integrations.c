@@ -1626,7 +1626,8 @@ sakura_resume_codex_cb (GtkWidget *widget, void *data)
 {
 	GtkWidget *dialog, *entry;
 	const gchar *session;
-	SakuraSidebarNode *parent = data;
+	SakuraCodexResumeTarget *target = data;
+	SakuraSidebarNode *parent = NULL;
 
 	(void)widget;
 	dialog = gtk_dialog_new_with_buttons(
@@ -1645,6 +1646,20 @@ sakura_resume_codex_cb (GtkWidget *widget, void *data)
 	if (gtk_dialog_run(GTK_DIALOG(dialog)) == GTK_RESPONSE_ACCEPT) {
 		session = gtk_entry_get_text(GTK_ENTRY(entry));
 		if (session != NULL && session[0] != '\0') {
+			if (target != NULL) {
+				if (target->task_id != NULL) {
+					SakuraTask *task = sakura_workspace_model_find_task(
+						sakura.workspace, target->task_id);
+
+					parent = task != NULL ? task->sidebar_node : NULL;
+				} else {
+					parent = sakura_sidebar_find_group_by_id(target->group_id);
+				}
+				if (parent == NULL) {
+					gtk_widget_destroy(dialog);
+					return;
+				}
+			}
 			sakura_session_accept_changes();
 			sakura_add_tab_with_options(NULL, parent, NULL, FALSE,
 			                            SAKURA_TAB_CODEX, SAKURA_TOOL_NONE,
@@ -1659,7 +1674,10 @@ void
 sakura_rename_codex_session_cb (GtkWidget *widget, void *data)
 {
 	GtkWidget *dialog, *entry;
-	SakuraTab *tab = data;
+	const gchar *terminal_id = data;
+	SakuraTab *tab = terminal_id != NULL
+	               ? sakura_find_pane_by_terminal_id(terminal_id) : NULL;
+	gchar *stable_terminal_id = NULL;
 	gint page;
 	gint response;
 	const gchar *current_name;
@@ -1678,6 +1696,7 @@ sakura_rename_codex_session_cb (GtkWidget *widget, void *data)
 		sakura_error(_("The current tab is not attached to a Codex session."));
 		return;
 	}
+	stable_terminal_id = g_strdup(tab->terminal_id);
 
 	dialog = gtk_dialog_new_with_buttons(
 		_("Rename Codex session"), GTK_WINDOW(sakura.main_window),
@@ -1707,12 +1726,19 @@ sakura_rename_codex_session_cb (GtkWidget *widget, void *data)
 		name = g_strdup(gtk_entry_get_text(GTK_ENTRY(entry)));
 		g_strstrip(name);
 		if (name[0] != '\0') {
+			tab = sakura_find_pane_by_terminal_id(stable_terminal_id);
+			if (tab == NULL || tab->kind != SAKURA_TAB_CODEX) {
+				g_free(name);
+				goto out;
+			}
 			sakura_session_accept_changes();
 			sakura_codex_set_name_async(tab, name);
 		}
 		g_free(name);
 	}
+	out:
 	gtk_widget_destroy(dialog);
+	g_free(stable_terminal_id);
 }
 
 

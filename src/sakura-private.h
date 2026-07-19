@@ -77,6 +77,13 @@ typedef enum {
 	SAKURA_SIDEBAR_TERMINAL
 } SakuraSidebarNodeType;
 
+/* Stable context for Codex resume actions. The callback opens a modal dialog,
+ * so it must not retain a projection row while that nested loop is running. */
+typedef struct {
+	gchar *group_id;
+	gchar *task_id;
+} SakuraCodexResumeTarget;
+
 /* Selection requests are coalesced until GTK has finished the current
  * workspace operation. Higher-priority requests must not be overwritten by
  * incidental synchronization from a notebook or sidebar callback. */

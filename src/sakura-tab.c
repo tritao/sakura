@@ -23,6 +23,13 @@
 #define TAB_MAX_SIZE 40
 #define TAB_MIN_SIZE 6
 
+static void
+sakura_tab_string_data_free(gpointer data, GClosure *closure)
+{
+	(void)closure;
+	g_free(data);
+}
+
 void
 sakura_tab_disconnect_exit_handler(SakuraTab *tab)
 {
@@ -2088,7 +2095,10 @@ void
 sakura_set_name_dialog_cb (GtkWidget *widget, void *data)
 {
 	GtkWidget *dialog, *header, *entry, *label, *box;
-	SakuraTab *tab = data;
+	const gchar *terminal_id = data;
+	SakuraTab *tab = terminal_id != NULL
+	               ? sakura_find_pane_by_terminal_id(terminal_id) : NULL;
+	gchar *stable_terminal_id = NULL;
 	gint page;
 	const gchar *text;
 	gint response;
@@ -2103,6 +2113,7 @@ sakura_set_name_dialog_cb (GtkWidget *widget, void *data)
 		tab = sakura_tab_at_page(page);
 	if (tab == NULL)
 		return;
+	stable_terminal_id = g_strdup(tab->terminal_id);
 
 	dialog = gtk_dialog_new_with_buttons(
 		_("Set tab name"), GTK_WINDOW(sakura.main_window),
@@ -2131,6 +2142,10 @@ sakura_set_name_dialog_cb (GtkWidget *widget, void *data)
 
 	response = gtk_dialog_run(GTK_DIALOG(dialog));
 	if (response == GTK_RESPONSE_ACCEPT) {
+		tab = sakura_find_pane_by_terminal_id(stable_terminal_id);
+		page = tab != NULL ? sakura_page_for_tab(tab) : -1;
+		if (tab == NULL || page < 0)
+			goto out;
 		sakura_session_accept_changes();
 		tab->label_set_byuser = TRUE;
 		sakura_set_tab_label_text(gtk_entry_get_text(GTK_ENTRY(entry)), page);
@@ -2138,7 +2153,9 @@ sakura_set_name_dialog_cb (GtkWidget *widget, void *data)
 		sakura_sidebar_update_tab(tab);
 		sakura.main_title = NULL;
 	}
+	out:
 	gtk_widget_destroy(dialog);
+	g_free(stable_terminal_id);
 }
 
 
@@ -2931,7 +2948,9 @@ sakura_tab_button_button_press_cb(GtkWidget *widget, GdkEventButton *event,
 		gtk_menu_shell_append(GTK_MENU_SHELL(menu), gtk_separator_menu_item_new());
 	}
 	item = gtk_menu_item_new_with_label(_("Rename terminal..."));
-	g_signal_connect(item, "activate", G_CALLBACK(sakura_set_name_dialog_cb), tab);
+	g_signal_connect_data(item, "activate", G_CALLBACK(sakura_set_name_dialog_cb),
+	                      g_strdup(tab->terminal_id),
+	                      sakura_tab_string_data_free, 0);
 	gtk_menu_shell_append(GTK_MENU_SHELL(menu), item);
 	gtk_menu_shell_append(GTK_MENU_SHELL(menu), gtk_separator_menu_item_new());
 	item = gtk_menu_item_new_with_label(_("Close terminal"));
