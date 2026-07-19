@@ -57,9 +57,23 @@ ADD_CUSTOM_COMMAND (
 ADD_CUSTOM_TARGET (sakura-proto-generated
 	DEPENDS ${SAKURA_PROTO_GENERATED_C} ${SAKURA_PROTO_GENERATED_H})
 
-SET (SAKURA_CONTROL_SOURCES
+SET (SAKURA_CONTROL_TRANSPORT_SOURCES
 	src/sakura-control-transport.c
 	${SAKURA_PROTO_GENERATED_C})
+
+ADD_LIBRARY (sakura-control-client STATIC
+	src/sakura-control-client.c
+	${SAKURA_CONTROL_TRANSPORT_SOURCES})
+SET_TARGET_PROPERTIES (sakura-control-client PROPERTIES
+	POSITION_INDEPENDENT_CODE ON)
+TARGET_INCLUDE_DIRECTORIES (sakura-control-client PUBLIC
+	${CMAKE_CURRENT_SOURCE_DIR}/src
+	${SAKURA_PROTO_GENERATED_DIR})
+TARGET_LINK_LIBRARIES (sakura-control-client PUBLIC
+	PkgConfig::GLIB
+	PkgConfig::GIO_UNIX
+	PkgConfig::PROTOBUF_C)
+ADD_DEPENDENCIES (sakura-control-client sakura-proto-generated)
 
 pkg_check_modules (GTK REQUIRED IMPORTED_TARGET gtk+-3.0>=3.20)
 IF (NOT GTK_FOUND)
@@ -95,7 +109,6 @@ SET (SAKURA_APP_SOURCES
 	src/sakura-workspace-persistence.c
 	src/sakura-integrations.c
 	src/sakura-startup.c
-	${SAKURA_CONTROL_SOURCES}
 	src/sakura-agent-client.c
 	src/sakura-session.c)
 
@@ -132,18 +145,21 @@ ADD_LIBRARY (sakura-core STATIC
 	src/sakura-core.c
 	src/sakura-core-session.c
 	src/sakura-core-workspace.c)
+SET_TARGET_PROPERTIES (sakura-core PROPERTIES
+	POSITION_INDEPENDENT_CODE ON)
 TARGET_INCLUDE_DIRECTORIES (sakura-core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
 TARGET_COMPILE_OPTIONS (sakura-core PRIVATE ${SAKURA_WARNING_FLAGS})
 TARGET_LINK_LIBRARIES (sakura-core PUBLIC PkgConfig::GLIB m)
+TARGET_LINK_LIBRARIES (sakura-control-client PUBLIC sakura-core)
 
 ADD_EXECUTABLE (sakura-agent
-	src/sakura-agent.c
-	${SAKURA_CONTROL_SOURCES})
+	src/sakura-agent.c)
 TARGET_INCLUDE_DIRECTORIES (sakura-agent PRIVATE
 	${CMAKE_CURRENT_SOURCE_DIR}/src
 	${SAKURA_PROTO_GENERATED_DIR})
 TARGET_COMPILE_OPTIONS (sakura-agent PRIVATE ${SAKURA_WARNING_FLAGS})
 TARGET_LINK_LIBRARIES (sakura-agent PRIVATE
+	sakura-control-client
 	sakura-core
 	PkgConfig::GLIB
 	PkgConfig::GIO_UNIX
@@ -165,6 +181,7 @@ ELSEIF (WEBKIT40_FOUND)
 	TARGET_LINK_LIBRARIES (sakura PRIVATE PkgConfig::WEBKIT40)
 ENDIF ()
 TARGET_LINK_LIBRARIES (sakura PRIVATE
+	sakura-control-client
 	sakura-core
 	PkgConfig::GLIB
 	PkgConfig::GIO_UNIX
@@ -192,8 +209,7 @@ IF (BUILD_TESTING)
 	ADD_TEST (NAME core-model COMMAND sakura-core-model-test)
 
 	ADD_EXECUTABLE (sakura-control-test
-		tests/test-sakura-control.c
-		${SAKURA_CONTROL_SOURCES})
+		tests/test-sakura-control.c)
 	TARGET_INCLUDE_DIRECTORIES (sakura-control-test PRIVATE
 		${CMAKE_CURRENT_SOURCE_DIR}/src
 		${SAKURA_PROTO_GENERATED_DIR})
@@ -202,6 +218,7 @@ IF (BUILD_TESTING)
 	TARGET_COMPILE_DEFINITIONS (sakura-control-test PRIVATE
 		SAKURA_AGENT_BUILD_PATH="${CMAKE_BINARY_DIR}/src/sakura-agent")
 	TARGET_LINK_LIBRARIES (sakura-control-test PRIVATE
+		sakura-control-client
 		sakura-core
 		PkgConfig::GLIB
 		PkgConfig::GIO_UNIX
@@ -255,6 +272,7 @@ IF (BUILD_TESTING)
 		TARGET_LINK_LIBRARIES (sakura-workspace-gtk-test PRIVATE PkgConfig::WEBKIT40)
 	ENDIF ()
 	TARGET_LINK_LIBRARIES (sakura-workspace-gtk-test PRIVATE
+		sakura-control-client
 		sakura-core
 		PkgConfig::GLIB
 		PkgConfig::GIO_UNIX

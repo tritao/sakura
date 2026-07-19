@@ -20,6 +20,7 @@
 typedef struct sakura_app SakuraApp;
 typedef struct sakura_workspace_model SakuraWorkspaceModel;
 typedef struct sakura_agent_terminal_start_result SakuraAgentTerminalStartResult;
+typedef struct _SakuraControlClientConnection SakuraControlClientConnection;
 typedef struct sakura_page SakuraPage;
 typedef struct sakura_startup SakuraStartup;
 /* Semantic vocabulary: a page is the user-facing session container, while a
@@ -259,6 +260,11 @@ struct sakura_app {
 	guint workspace_mutation_depth;
 	guint workspace_pending_changes;
 	gboolean workspace_reconciling;
+	/* Notebook signals can arrive while a workspace mutation is changing the
+	 * model. Keep the latest physical selection until the outer transaction
+	 * reconciles the model and GTK again. */
+	gchar *workspace_pending_notebook_terminal_id;
+	gboolean workspace_selection_cleared;
 	bool session_dirty;
 	bool session_new_window;
 	guint session_save_source_id;
@@ -275,12 +281,12 @@ struct sakura_app {
 	guint agent_restart_source_id;
 	bool agent_supervisor_stopping;
 	GThread *agent_event_thread;
-	GSocketConnection *agent_event_connection;
+	SakuraControlClientConnection *agent_event_connection;
 	GMutex agent_event_mutex;
 	gboolean agent_event_mutex_initialized;
 	gboolean agent_event_stopping;
 	GThread *agent_command_thread;
-	GSocketConnection *agent_command_connection;
+	SakuraControlClientConnection *agent_command_connection;
 	GMutex agent_command_mutex;
 	GCond agent_command_cond;
 	GQueue *agent_command_queue;
@@ -823,6 +829,7 @@ void sakura_workspace_end_mutation(void);
 gboolean sakura_workspace_is_mutating(void);
 void sakura_workspace_mark_changed(SakuraWorkspaceChange changes);
 void sakura_workspace_reconcile(void);
+void sakura_workspace_reconcile_selection(void);
 void sakura_sidebar_set_node_row(SakuraSidebarNode *node, GtkTreeIter *iter);
 const gchar *sakura_task_status_label(SakuraTaskStatus status);
 const gchar *sakura_task_status_symbol(SakuraTaskStatus status);

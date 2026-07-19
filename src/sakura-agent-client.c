@@ -3,6 +3,7 @@
 #include <unistd.h>
 
 #include "sakura-private.h"
+#include "sakura-control-client.h"
 #include "sakura-control-transport.h"
 
 
@@ -39,24 +40,6 @@ sakura_agent_socket_path_new(SakuraApp *app)
 }
 
 
-static GSocketConnection *
-sakura_agent_connect(const gchar *socket_path, GError **error)
-{
-	GSocketClient *client;
-	GSocketAddress *address;
-	GSocketConnection *connection;
-
-	client = g_socket_client_new();
-	address = g_unix_socket_address_new(socket_path);
-	connection = g_socket_client_connect(client,
-	                                     G_SOCKET_CONNECTABLE(address),
-	                                     NULL, error);
-	g_object_unref(address);
-	g_object_unref(client);
-	return connection;
-}
-
-
 #define SAKURA_AGENT_CLIENT_NAME "sakura-gtk"
 #define SAKURA_AGENT_REQUIRED_CAPABILITIES \
 	(SAKURA_CONTROL_CAPABILITY_WORKSPACE | \
@@ -66,71 +49,13 @@ sakura_agent_connect(const gchar *socket_path, GError **error)
 	 SAKURA_CONTROL_CAPABILITY_TERMINAL_RESTART)
 
 
-static gboolean
-sakura_agent_handshake(GSocketConnection *connection,
-	                     const gchar *workspace_id,
-	                     GError **error)
+static SakuraControlClientConnection *
+sakura_agent_connect(const gchar *socket_path, const gchar *workspace_id,
+                     GError **error)
 {
-	GByteArray *request = g_byte_array_new();
-	GByteArray *response_payload = NULL;
-	SakuraControlResponse response = { 0 };
-	GInputStream *input;
-	GOutputStream *output;
-	gchar *request_id = g_uuid_string_random();
-	gboolean success = FALSE;
-
-	if (connection == NULL || workspace_id == NULL || workspace_id[0] == '\0')
-		goto out;
-	if (!sakura_control_encode_hello_request(
-			request_id, SAKURA_CONTROL_PROTOCOL_VERSION,
-			SAKURA_AGENT_CLIENT_NAME, workspace_id, request)) {
-		g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT,
-		                    "could not encode agent hello request");
-		goto out;
-	}
-	input = g_io_stream_get_input_stream(G_IO_STREAM(connection));
-	output = g_io_stream_get_output_stream(G_IO_STREAM(connection));
-	if (!sakura_control_frame_write(output, request->data, request->len, NULL,
-	                               error) ||
-	    !sakura_control_frame_read(input, &response_payload, NULL, error) ||
-	    !sakura_control_decode_response(response_payload->data,
-	                                    response_payload->len, &response,
-	                                    error))
-		goto out;
-	if (g_strcmp0(response.request_id, request_id) != 0) {
-		g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_INVALID_DATA,
-		                    "agent hello response id did not match request");
-		goto out;
-	}
-	if (!response.hello) {
-		g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_INVALID_DATA,
-		                    "agent did not return a hello response");
-		goto out;
-	}
-	if (g_strcmp0(response.workspace_id, workspace_id) != 0) {
-		g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_PERMISSION_DENIED,
-		                    "agent workspace identity did not match");
-		goto out;
-	}
-	if (response.hello_protocol_version != SAKURA_CONTROL_PROTOCOL_VERSION) {
-		g_set_error(error, G_IO_ERROR, G_IO_ERROR_NOT_SUPPORTED,
-		            "unsupported agent protocol version %u",
-		            response.hello_protocol_version);
-		goto out;
-	}
-	if ((response.capabilities & SAKURA_AGENT_REQUIRED_CAPABILITIES) !=
-	    SAKURA_AGENT_REQUIRED_CAPABILITIES) {
-		g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_NOT_SUPPORTED,
-		                    "agent does not support required capabilities");
-		goto out;
-	}
-	success = TRUE;
-out:
-	g_clear_pointer(&response_payload, g_byte_array_unref);
-	sakura_control_response_clear(&response);
-	g_byte_array_unref(request);
-	g_free(request_id);
-	return success;
+	return sakura_control_client_connect(
+		socket_path, workspace_id, SAKURA_AGENT_CLIENT_NAME,
+		SAKURA_AGENT_REQUIRED_CAPABILITIES, error);
 }
 
 
@@ -235,7 +160,7 @@ sakura_agent_report_command_failure(SakuraApp *app,
 
 
 static gboolean
-sakura_agent_send_command(GSocketConnection *connection,
+sakura_agent_send_command(SakuraControlClientConnection *connection,
 	                         SakuraAgentCommand *command, GError **error)
 {
 	GByteArray *request = g_byte_array_new();
@@ -272,12 +197,8 @@ sakura_agent_send_command(GSocketConnection *connection,
 		                    "could not encode terminal command");
 		goto out;
 	}
-	if (!sakura_control_frame_write(
-			g_io_stream_get_output_stream(G_IO_STREAM(connection)),
-			request->data, request->len, NULL, error) ||
-	    !sakura_control_frame_read(
-			g_io_stream_get_input_stream(G_IO_STREAM(connection)),
-			&response_payload, NULL, error) ||
+	if (!sakura_control_client_request(
+			connection, request, &response_payload, error) ||
 	    !sakura_control_decode_response(response_payload->data,
 	                                    response_payload->len, &response,
 	                                    error))
@@ -306,7 +227,7 @@ static gpointer
 sakura_agent_command_thread(gpointer data)
 {
 	SakuraApp *app = data;
-	GSocketConnection *connection = NULL;
+	SakuraControlClientConnection *connection = NULL;
 
 	for (;;) {
 		SakuraAgentCommand *command;
@@ -325,28 +246,20 @@ sakura_agent_command_thread(gpointer data)
 		g_mutex_unlock(&app->agent_command_mutex);
 
 		if (connection == NULL) {
-			connection = sakura_agent_connect(app->agent_socket_path, &error);
+			connection = sakura_agent_connect(
+				app->agent_socket_path, app->workspace_id, &error);
 			if (connection != NULL) {
 				g_mutex_lock(&app->agent_command_mutex);
 				if (app->agent_command_stopping) {
 					g_mutex_unlock(&app->agent_command_mutex);
-					g_io_stream_close(G_IO_STREAM(connection), NULL, NULL);
-					g_object_unref(connection);
+					sakura_control_client_close(connection);
+					sakura_control_client_unref(connection);
 					connection = NULL;
 				} else {
-					app->agent_command_connection = g_object_ref(connection);
+					app->agent_command_connection =
+						sakura_control_client_ref(connection);
 					g_mutex_unlock(&app->agent_command_mutex);
 				}
-			}
-			if (connection != NULL &&
-			    !sakura_agent_handshake(connection, app->workspace_id, &error)) {
-				g_mutex_lock(&app->agent_command_mutex);
-				if (app->agent_command_connection == connection)
-					g_clear_object(&app->agent_command_connection);
-				g_mutex_unlock(&app->agent_command_mutex);
-				g_io_stream_close(G_IO_STREAM(connection), NULL, NULL);
-				g_object_unref(connection);
-				connection = NULL;
 			}
 		}
 		if (connection == NULL) {
@@ -359,22 +272,26 @@ sakura_agent_command_thread(gpointer data)
 			sakura_agent_report_command_failure(app, command, error);
 			g_clear_error(&error);
 			g_mutex_lock(&app->agent_command_mutex);
-			if (app->agent_command_connection == connection)
-				g_clear_object(&app->agent_command_connection);
+			if (app->agent_command_connection == connection) {
+				sakura_control_client_unref(app->agent_command_connection);
+				app->agent_command_connection = NULL;
+			}
 			g_mutex_unlock(&app->agent_command_mutex);
-			g_io_stream_close(G_IO_STREAM(connection), NULL, NULL);
-			g_object_unref(connection);
+			sakura_control_client_close(connection);
+			sakura_control_client_unref(connection);
 			connection = NULL;
 		}
 		sakura_agent_command_free(command);
 	}
 	if (connection != NULL) {
 		g_mutex_lock(&app->agent_command_mutex);
-		if (app->agent_command_connection == connection)
-			g_clear_object(&app->agent_command_connection);
+		if (app->agent_command_connection == connection) {
+			sakura_control_client_unref(app->agent_command_connection);
+			app->agent_command_connection = NULL;
+		}
 		g_mutex_unlock(&app->agent_command_mutex);
-		g_io_stream_close(G_IO_STREAM(connection), NULL, NULL);
-		g_object_unref(connection);
+		sakura_control_client_close(connection);
+		sakura_control_client_unref(connection);
 	}
 	return NULL;
 }
@@ -541,16 +458,12 @@ static gpointer
 sakura_agent_event_thread(gpointer data)
 {
 	SakuraApp *app = data;
-	GSocketConnection *connection = NULL;
-	GInputStream *input;
-	GOutputStream *output;
-	GByteArray *request = NULL;
+	SakuraControlClientConnection *connection = NULL;
 	GByteArray *payload = NULL;
-	SakuraControlResponse response = { 0 };
 	GError *error = NULL;
-	gchar *request_id = NULL;
 
-	connection = sakura_agent_connect(app->agent_socket_path, &error);
+	connection = sakura_agent_connect(
+		app->agent_socket_path, app->workspace_id, &error);
 	if (connection == NULL)
 		goto out;
 	g_mutex_lock(&app->agent_event_mutex);
@@ -558,25 +471,13 @@ sakura_agent_event_thread(gpointer data)
 		g_mutex_unlock(&app->agent_event_mutex);
 		goto out;
 	}
-	app->agent_event_connection = g_object_ref(connection);
+	app->agent_event_connection = sakura_control_client_ref(connection);
 	g_mutex_unlock(&app->agent_event_mutex);
-	if (!sakura_agent_handshake(connection, app->workspace_id, &error))
-		goto out;
-
-	request_id = g_uuid_string_random();
-	request = g_byte_array_new();
-	sakura_control_encode_subscribe_events_request(request_id, 0, request);
-	input = g_io_stream_get_input_stream(G_IO_STREAM(connection));
-	output = g_io_stream_get_output_stream(G_IO_STREAM(connection));
-	if (!sakura_control_frame_write(output, request->data, request->len, NULL,
-	                               &error) ||
-	    !sakura_control_frame_read(input, &payload, NULL, &error) ||
-	    !sakura_control_decode_response(payload->data, payload->len, &response,
-	                                    &error) ||
-	    !response.accepted)
+	if (!sakura_control_client_subscribe_events(connection, 0, &error))
 		goto out;
 	g_clear_pointer(&payload, g_byte_array_unref);
-	while (sakura_control_frame_read(input, &payload, NULL, &error)) {
+	while (sakura_control_client_read_frame(
+		connection, &payload, NULL, &error)) {
 		SakuraAgentEvent *event = g_new0(SakuraAgentEvent, 1);
 		SakuraAgentTerminalEvent *terminal_event;
 		guint64 terminal_sequence;
@@ -631,18 +532,17 @@ out:
 	if (error != NULL && !app->agent_event_stopping)
 		g_debug("Agent event subscription stopped: %s", error->message);
 	g_clear_error(&error);
-	g_clear_pointer(&request, g_byte_array_unref);
 	g_clear_pointer(&payload, g_byte_array_unref);
-	sakura_control_response_clear(&response);
 	if (connection != NULL) {
 		g_mutex_lock(&app->agent_event_mutex);
-		if (app->agent_event_connection == connection)
-			g_clear_object(&app->agent_event_connection);
+		if (app->agent_event_connection == connection) {
+			sakura_control_client_unref(app->agent_event_connection);
+			app->agent_event_connection = NULL;
+		}
 		g_mutex_unlock(&app->agent_event_mutex);
-		g_io_stream_close(G_IO_STREAM(connection), NULL, NULL);
-		g_object_unref(connection);
+		sakura_control_client_close(connection);
+		sakura_control_client_unref(connection);
 	}
-	g_free(request_id);
 	return NULL;
 }
 
@@ -666,24 +566,27 @@ sakura_agent_command_stop(SakuraApp *app)
 {
 	if (app == NULL || !app->agent_command_mutex_initialized)
 		return;
-	GSocketConnection *connection = NULL;
+	SakuraControlClientConnection *connection = NULL;
 
 	g_mutex_lock(&app->agent_command_mutex);
 	app->agent_command_stopping = TRUE;
 	if (app->agent_command_connection != NULL)
-		connection = g_object_ref(app->agent_command_connection);
+		connection = sakura_control_client_ref(app->agent_command_connection);
 	g_cond_broadcast(&app->agent_command_cond);
 	g_mutex_unlock(&app->agent_command_mutex);
 	if (connection != NULL) {
-		g_io_stream_close(G_IO_STREAM(connection), NULL, NULL);
-		g_object_unref(connection);
+		sakura_control_client_close(connection);
+		sakura_control_client_unref(connection);
 	}
 	if (app->agent_command_thread != NULL) {
 		g_thread_join(app->agent_command_thread);
 		app->agent_command_thread = NULL;
 	}
 	g_mutex_lock(&app->agent_command_mutex);
-	g_clear_object(&app->agent_command_connection);
+	if (app->agent_command_connection != NULL) {
+		sakura_control_client_unref(app->agent_command_connection);
+		app->agent_command_connection = NULL;
+	}
 	while (app->agent_command_queue != NULL &&
 	       !g_queue_is_empty(app->agent_command_queue))
 		sakura_agent_command_free(g_queue_pop_head(app->agent_command_queue));
@@ -700,25 +603,26 @@ sakura_agent_event_stop(SakuraApp *app)
 {
 	if (app == NULL || !app->agent_event_mutex_initialized)
 		return;
-	GSocketConnection *connection = NULL;
+	SakuraControlClientConnection *connection = NULL;
 
 	g_mutex_lock(&app->agent_event_mutex);
 	app->agent_event_stopping = TRUE;
 	if (app->agent_event_connection != NULL)
-		connection = g_object_ref(app->agent_event_connection);
+		connection = sakura_control_client_ref(app->agent_event_connection);
 	g_mutex_unlock(&app->agent_event_mutex);
 	if (connection != NULL) {
-		g_socket_shutdown(g_socket_connection_get_socket(connection), TRUE, TRUE,
-		                  NULL);
-		g_io_stream_close(G_IO_STREAM(connection), NULL, NULL);
-		g_object_unref(connection);
+		sakura_control_client_shutdown(connection);
+		sakura_control_client_unref(connection);
 	}
 	if (app->agent_event_thread != NULL) {
 		g_thread_join(app->agent_event_thread);
 		app->agent_event_thread = NULL;
 	}
 	g_mutex_lock(&app->agent_event_mutex);
-	g_clear_object(&app->agent_event_connection);
+	if (app->agent_event_connection != NULL) {
+		sakura_control_client_unref(app->agent_event_connection);
+		app->agent_event_connection = NULL;
+	}
 	g_mutex_unlock(&app->agent_event_mutex);
 	g_mutex_clear(&app->agent_event_mutex);
 	app->agent_event_mutex_initialized = FALSE;
@@ -730,28 +634,21 @@ sakura_agent_request_snapshot(const gchar *socket_path,
 	                           const gchar *workspace_id,
 	                           GError **error)
 {
-	GSocketConnection *connection;
-	GInputStream *input;
-	GOutputStream *output;
+	SakuraControlClientConnection *connection;
 	GByteArray *request = NULL;
 	GByteArray *response_payload = NULL;
 	SakuraControlResponse response = { 0 };
 	gchar *request_id = NULL;
 	gboolean success = FALSE;
 
-	connection = sakura_agent_connect(socket_path, error);
+	connection = sakura_agent_connect(socket_path, workspace_id, error);
 	if (connection == NULL)
 		return FALSE;
-	if (!sakura_agent_handshake(connection, workspace_id, error))
-		goto out;
 	request_id = g_uuid_string_random();
 	request = g_byte_array_new();
 	sakura_control_encode_get_snapshot_request(request_id, request);
-	input = g_io_stream_get_input_stream(G_IO_STREAM(connection));
-	output = g_io_stream_get_output_stream(G_IO_STREAM(connection));
-	if (!sakura_control_frame_write(output, request->data, request->len, NULL,
-	                               error) ||
-	    !sakura_control_frame_read(input, &response_payload, NULL, error) ||
+	if (!sakura_control_client_request(
+			connection, request, &response_payload, error) ||
 	    !sakura_control_decode_response(response_payload->data,
 	                                    response_payload->len, &response,
 	                                    error))
@@ -767,8 +664,8 @@ out:
 	g_clear_pointer(&request, g_byte_array_unref);
 	sakura_control_response_clear(&response);
 	g_clear_pointer(&request_id, g_free);
-	g_io_stream_close(G_IO_STREAM(connection), NULL, NULL);
-	g_object_unref(connection);
+	sakura_control_client_close(connection);
+	sakura_control_client_unref(connection);
 	return success;
 }
 
@@ -777,9 +674,7 @@ static gboolean
 sakura_agent_request_mutation(SakuraApp *app, const gchar *request_id,
 	                            GByteArray *request, GError **error)
 {
-	GSocketConnection *connection;
-	GInputStream *input;
-	GOutputStream *output;
+	SakuraControlClientConnection *connection;
 	GByteArray *response_payload = NULL;
 	SakuraControlResponse response = { 0 };
 	gboolean success = FALSE;
@@ -787,19 +682,12 @@ sakura_agent_request_mutation(SakuraApp *app, const gchar *request_id,
 	if (app == NULL || app->agent_socket_path == NULL || request_id == NULL ||
 	    request == NULL)
 		return FALSE;
-	connection = sakura_agent_connect(app->agent_socket_path, error);
+	connection = sakura_agent_connect(
+		app->agent_socket_path, app->workspace_id, error);
 	if (connection == NULL)
 		return FALSE;
-	if (!sakura_agent_handshake(connection, app->workspace_id, error)) {
-		g_io_stream_close(G_IO_STREAM(connection), NULL, NULL);
-		g_object_unref(connection);
-		return FALSE;
-	}
-	input = g_io_stream_get_input_stream(G_IO_STREAM(connection));
-	output = g_io_stream_get_output_stream(G_IO_STREAM(connection));
-	if (!sakura_control_frame_write(output, request->data, request->len, NULL,
-	                               error) ||
-	    !sakura_control_frame_read(input, &response_payload, NULL, error) ||
+	if (!sakura_control_client_request(
+			connection, request, &response_payload, error) ||
 	    !sakura_control_decode_response(response_payload->data,
 	                                    response_payload->len, &response,
 	                                    error))
@@ -818,8 +706,8 @@ sakura_agent_request_mutation(SakuraApp *app, const gchar *request_id,
 out:
 	g_clear_pointer(&response_payload, g_byte_array_unref);
 	sakura_control_response_clear(&response);
-	g_io_stream_close(G_IO_STREAM(connection), NULL, NULL);
-	g_object_unref(connection);
+	sakura_control_client_close(connection);
+	sakura_control_client_unref(connection);
 	return success;
 }
 
@@ -843,9 +731,7 @@ sakura_agent_request_accepted(SakuraApp *app, const gchar *request_id,
 	                             GByteArray *request, gchar **accepted_id,
 	                             GError **error)
 {
-	GSocketConnection *connection;
-	GInputStream *input;
-	GOutputStream *output;
+	SakuraControlClientConnection *connection;
 	GByteArray *response_payload = NULL;
 	SakuraControlResponse response = { 0 };
 	gboolean success = FALSE;
@@ -855,19 +741,12 @@ sakura_agent_request_accepted(SakuraApp *app, const gchar *request_id,
 	if (app == NULL || app->agent_socket_path == NULL || request_id == NULL ||
 	    request == NULL)
 		return FALSE;
-	connection = sakura_agent_connect(app->agent_socket_path, error);
+	connection = sakura_agent_connect(
+		app->agent_socket_path, app->workspace_id, error);
 	if (connection == NULL)
 		return FALSE;
-	if (!sakura_agent_handshake(connection, app->workspace_id, error)) {
-		g_io_stream_close(G_IO_STREAM(connection), NULL, NULL);
-		g_object_unref(connection);
-		return FALSE;
-	}
-	input = g_io_stream_get_input_stream(G_IO_STREAM(connection));
-	output = g_io_stream_get_output_stream(G_IO_STREAM(connection));
-	if (!sakura_control_frame_write(output, request->data, request->len, NULL,
-	                               error) ||
-	    !sakura_control_frame_read(input, &response_payload, NULL, error) ||
+	if (!sakura_control_client_request(
+			connection, request, &response_payload, error) ||
 	    !sakura_control_decode_response(response_payload->data,
 	                                    response_payload->len, &response,
 	                                    error))
@@ -888,8 +767,8 @@ sakura_agent_request_accepted(SakuraApp *app, const gchar *request_id,
 out:
 	g_clear_pointer(&response_payload, g_byte_array_unref);
 	sakura_control_response_clear(&response);
-	g_io_stream_close(G_IO_STREAM(connection), NULL, NULL);
-	g_object_unref(connection);
+	sakura_control_client_close(connection);
+	sakura_control_client_unref(connection);
 	return success;
 }
 
@@ -900,9 +779,7 @@ sakura_agent_request_attached(SakuraApp *app, const gchar *request_id,
 	                            gsize *replay_length, guint *cols, guint *rows,
 	                            guint *status, GError **error)
 {
-	GSocketConnection *connection;
-	GInputStream *input;
-	GOutputStream *output;
+	SakuraControlClientConnection *connection;
 	GByteArray *response_payload = NULL;
 	SakuraControlResponse response = { 0 };
 	gboolean success = FALSE;
@@ -920,19 +797,12 @@ sakura_agent_request_attached(SakuraApp *app, const gchar *request_id,
 	if (app == NULL || app->agent_socket_path == NULL || request_id == NULL ||
 	    request == NULL)
 		return FALSE;
-	connection = sakura_agent_connect(app->agent_socket_path, error);
+	connection = sakura_agent_connect(
+		app->agent_socket_path, app->workspace_id, error);
 	if (connection == NULL)
 		return FALSE;
-	if (!sakura_agent_handshake(connection, app->workspace_id, error)) {
-		g_io_stream_close(G_IO_STREAM(connection), NULL, NULL);
-		g_object_unref(connection);
-		return FALSE;
-	}
-	input = g_io_stream_get_input_stream(G_IO_STREAM(connection));
-	output = g_io_stream_get_output_stream(G_IO_STREAM(connection));
-	if (!sakura_control_frame_write(output, request->data, request->len, NULL,
-	                               error) ||
-	    !sakura_control_frame_read(input, &response_payload, NULL, error) ||
+	if (!sakura_control_client_request(
+			connection, request, &response_payload, error) ||
 	    !sakura_control_decode_response(response_payload->data,
 	                                    response_payload->len, &response,
 	                                    error))
@@ -963,8 +833,8 @@ sakura_agent_request_attached(SakuraApp *app, const gchar *request_id,
 out:
 	g_clear_pointer(&response_payload, g_byte_array_unref);
 	sakura_control_response_clear(&response);
-	g_io_stream_close(G_IO_STREAM(connection), NULL, NULL);
-	g_object_unref(connection);
+	sakura_control_client_close(connection);
+	sakura_control_client_unref(connection);
 	return success;
 }
 
