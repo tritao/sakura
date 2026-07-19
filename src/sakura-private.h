@@ -509,7 +509,7 @@ struct sakura_tab {
 	gboolean codex_start_pending;
 	gboolean codex_resume_cwd_query_active;
 	gboolean codex_resume_cwd_lookup_done;
-	gboolean codex_name_query_active;
+	gboolean codex_session_query_active;
 	guint codex_name_retry_source_id;
 	guint codex_name_retry_count;
 	gboolean codex_interrupt_requested;
