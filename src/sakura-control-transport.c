@@ -43,6 +43,7 @@ sakura_control_request_clear(SakuraControlRequest *request)
 		return;
 	g_clear_pointer(&request->request_id, g_free);
 	g_clear_pointer(&request->parent_id, g_free);
+	g_clear_pointer(&request->target_id, g_free);
 	g_clear_pointer(&request->title, g_free);
 	g_clear_pointer(&request->directory, g_free);
 	g_clear_pointer(&request->group_id, g_free);
@@ -57,6 +58,7 @@ sakura_control_request_clear(SakuraControlRequest *request)
 	g_clear_pointer(&request->workspace_id, g_free);
 	request->kind = SAKURA_CONTROL_REQUEST_NONE;
 	request->archived = FALSE;
+	request->after = FALSE;
 	request->title_set_by_user = FALSE;
 	request->protocol_version = 0;
 	g_clear_pointer(&request->input_data, g_free);
@@ -275,6 +277,33 @@ sakura_control_encode_update_group_request(const gchar *request_id,
 	request.request_id = (gchar *)request_id;
 	request.body_case = SAKURA__CONTROL__V1__REQUEST__BODY_UPDATE_GROUP;
 	request.update_group = &update_group;
+	return sakura_control_pack_message(&request.base, payload);
+}
+
+
+gboolean
+sakura_control_encode_move_group_request(const gchar *request_id,
+	                                       const gchar *group_id,
+	                                       const gchar *parent_id,
+	                                       const gchar *target_id,
+	                                       gboolean after,
+	                                       GByteArray *payload)
+{
+	Sakura__Control__V1__MoveGroupRequest move_group =
+		SAKURA__CONTROL__V1__MOVE_GROUP_REQUEST__INIT;
+	Sakura__Control__V1__Request request =
+		SAKURA__CONTROL__V1__REQUEST__INIT;
+
+	if (payload == NULL || request_id == NULL || request_id[0] == '\0' ||
+	    group_id == NULL || group_id[0] == '\0')
+		return FALSE;
+	move_group.group_id = (gchar *)group_id;
+	move_group.parent_id = (gchar *)sakura_control_string(parent_id);
+	move_group.target_id = (gchar *)sakura_control_string(target_id);
+	move_group.after = after;
+	request.request_id = (gchar *)request_id;
+	request.body_case = SAKURA__CONTROL__V1__REQUEST__BODY_MOVE_GROUP;
+	request.move_group = &move_group;
 	return sakura_control_pack_message(&request.base, payload);
 }
 
@@ -729,6 +758,15 @@ sakura_control_decode_request(const guint8 *payload,
 			request->group_id = g_strdup(decoded->update_group->group_id);
 			request->title = g_strdup(decoded->update_group->title);
 			request->directory = g_strdup(decoded->update_group->directory);
+		}
+		break;
+	case SAKURA__CONTROL__V1__REQUEST__BODY_MOVE_GROUP:
+		if (decoded->move_group != NULL) {
+			request->kind = SAKURA_CONTROL_REQUEST_MOVE_GROUP;
+			request->group_id = g_strdup(decoded->move_group->group_id);
+			request->parent_id = g_strdup(decoded->move_group->parent_id);
+			request->target_id = g_strdup(decoded->move_group->target_id);
+			request->after = decoded->move_group->after;
 		}
 		break;
 	case SAKURA__CONTROL__V1__REQUEST__BODY_SET_GROUP_ARCHIVED:

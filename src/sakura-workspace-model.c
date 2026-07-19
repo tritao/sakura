@@ -1067,48 +1067,126 @@ sakura_workspace_model_detach_page(SakuraWorkspaceModel *model,
 
 
 gboolean
+sakura_workspace_model_can_move_group(SakuraWorkspaceModel *model,
+                                      SakuraGroup *source,
+                                      SakuraGroup *parent,
+                                      SakuraGroup *target)
+{
+	if (model == NULL || model->root_group == NULL || source == NULL ||
+	    source == model->root_group)
+		return FALSE;
+	if (parent == NULL)
+		parent = model->root_group;
+	if (g_list_find(model->groups, source) == NULL ||
+	    !sakura_workspace_model_can_set_group_parent(model, source, parent))
+		return FALSE;
+	if (target == NULL)
+		return TRUE;
+	if (target == model->root_group || target == source ||
+	    g_list_find(model->groups, target) == NULL ||
+	    !sakura_workspace_model_group_belongs_to(model, target, parent))
+		return FALSE;
+	return TRUE;
+}
+
+
+static GList *
+sakura_workspace_model_ordered_group_children(const SakuraWorkspaceModel *model,
+                                               SakuraGroup *parent,
+                                               SakuraGroup *exclude)
+{
+	GList *ordered = NULL, *link;
+
+	if (model == NULL)
+		return NULL;
+	for (link = model->groups; link != NULL; link = link->next) {
+		SakuraGroup *group = link->data;
+
+		if (group != NULL && group != model->root_group && group != exclude &&
+		    sakura_workspace_model_group_belongs_to(model, group, parent))
+			ordered = g_list_prepend(ordered, group);
+	}
+	ordered = g_list_sort(ordered, sakura_workspace_model_group_order_compare);
+	return ordered;
+}
+
+
+static void
+sakura_workspace_model_normalize_group_orders(GList *ordered)
+{
+	GList *link;
+
+	for (link = ordered; link != NULL; link = link->next)
+		((SakuraGroup *)link->data)->order = g_list_position(ordered, link);
+}
+
+
+gboolean
+sakura_workspace_model_move_group(SakuraWorkspaceModel *model,
+                                   SakuraGroup *source,
+                                   SakuraGroup *parent,
+                                   SakuraGroup *target,
+                                   gboolean after)
+{
+	GList *old_ordered, *new_ordered, *target_link;
+	SakuraGroup *old_parent;
+
+	if (model == NULL)
+		return FALSE;
+	if (parent == NULL)
+		parent = model->root_group;
+	if (!sakura_workspace_model_can_move_group(model, source, parent, target))
+		return FALSE;
+
+	old_parent = source->parent != NULL ? source->parent : model->root_group;
+	old_ordered = sakura_workspace_model_ordered_group_children(model,
+	                                                              old_parent,
+	                                                              source);
+	new_ordered = sakura_workspace_model_ordered_group_children(model,
+	                                                              parent,
+	                                                              source);
+
+	if (target == NULL) {
+		new_ordered = g_list_append(new_ordered, source);
+	} else {
+		target_link = g_list_find(new_ordered, target);
+		if (target_link == NULL) {
+			g_list_free(old_ordered);
+			g_list_free(new_ordered);
+			return FALSE;
+		}
+		if (after && target_link->next != NULL)
+			new_ordered = g_list_insert_before(new_ordered, target_link->next,
+			                                  source);
+		else if (after)
+			new_ordered = g_list_append(new_ordered, source);
+		else
+			new_ordered = g_list_insert_before(new_ordered, target_link, source);
+	}
+	source->parent = parent;
+
+	if (old_parent != parent)
+		sakura_workspace_model_normalize_group_orders(old_ordered);
+	sakura_workspace_model_normalize_group_orders(new_ordered);
+	g_list_free(old_ordered);
+	g_list_free(new_ordered);
+	return TRUE;
+}
+
+
+gboolean
 sakura_workspace_model_reorder_group(SakuraWorkspaceModel *model,
                                       SakuraGroup *source,
                                       SakuraGroup *target,
                                       gboolean after)
 {
-	GList *ordered = NULL, *link, *target_link;
 	SakuraGroup *parent;
 
-	if (model == NULL || source == NULL || target == NULL || source == target ||
+	if (model == NULL || source == NULL || target == NULL ||
 	    source == model->root_group || target == model->root_group)
 		return FALSE;
-	if (g_list_find(model->groups, source) == NULL ||
-	    g_list_find(model->groups, target) == NULL)
-		return FALSE;
 	parent = source->parent != NULL ? source->parent : model->root_group;
-	if (!sakura_workspace_model_group_is_child_of(model, target, parent))
-		return FALSE;
-	for (link = model->groups; link != NULL; link = link->next) {
-		SakuraGroup *group = link->data;
-
-		if (group != NULL && group != source &&
-		    sakura_workspace_model_group_is_child_of(model, group, parent))
-			ordered = g_list_prepend(ordered, group);
-	}
-	ordered = g_list_sort(ordered, sakura_workspace_model_group_order_compare);
-	target_link = g_list_find(ordered, target);
-	if (target_link == NULL) {
-		g_list_free(ordered);
-		return FALSE;
-	}
-	if (after) {
-		if (target_link->next != NULL)
-			ordered = g_list_insert_before(ordered, target_link->next, source);
-		else
-			ordered = g_list_append(ordered, source);
-	} else {
-		ordered = g_list_insert_before(ordered, target_link, source);
-	}
-	for (link = ordered; link != NULL; link = link->next)
-		((SakuraGroup *)link->data)->order = g_list_position(ordered, link);
-	g_list_free(ordered);
-	return TRUE;
+	return sakura_workspace_model_move_group(model, source, parent, target, after);
 }
 
 

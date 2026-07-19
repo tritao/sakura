@@ -1,5 +1,7 @@
 #include "sakura-core.h"
 
+static gint sakura_core_group_order_compare(gconstpointer first,
+	                                         gconstpointer second);
 
 static GQuark
 sakura_core_workspace_error_quark(void)
@@ -224,6 +226,110 @@ sakura_core_workspace_add_group(SakuraCoreWorkspace *workspace,
 	    !sakura_core_workspace_contains_group(workspace, group->parent))
 		return FALSE;
 	g_ptr_array_add(workspace->groups, group);
+	return TRUE;
+}
+
+
+static GList *
+sakura_core_workspace_ordered_group_children(
+	const SakuraCoreWorkspace *workspace, SakuraCoreGroup *parent,
+	SakuraCoreGroup *exclude)
+{
+	GList *ordered = NULL;
+
+	for (guint index = 0; workspace != NULL && workspace->groups != NULL &&
+	                       index < workspace->groups->len; index++) {
+		SakuraCoreGroup *group = g_ptr_array_index(workspace->groups, index);
+
+		if (group != NULL && group != workspace->root_group && group != exclude &&
+		    sakura_core_workspace_group_is_child_of(workspace, group, parent))
+			ordered = g_list_prepend(ordered, group);
+	}
+	return g_list_sort(ordered, sakura_core_group_order_compare);
+}
+
+
+static void
+sakura_core_workspace_normalize_group_orders(GList *ordered)
+{
+	for (GList *link = ordered; link != NULL; link = link->next)
+		((SakuraCoreGroup *)link->data)->order = g_list_position(ordered, link);
+}
+
+
+gboolean
+sakura_core_workspace_can_move_group(SakuraCoreWorkspace *workspace,
+	                                   SakuraCoreGroup *source,
+	                                   SakuraCoreGroup *parent,
+	                                   SakuraCoreGroup *target)
+{
+	if (workspace == NULL || workspace->root_group == NULL || source == NULL ||
+	    source == workspace->root_group ||
+	    !sakura_core_workspace_contains_group(workspace, source))
+		return FALSE;
+	if (parent == NULL)
+		parent = workspace->root_group;
+	if (parent == source ||
+	    !sakura_core_workspace_contains_group(workspace, parent))
+		return FALSE;
+	for (SakuraCoreGroup *candidate = parent; candidate != NULL;
+	     candidate = candidate->parent) {
+		if (candidate == source)
+			return FALSE;
+	}
+	if (target == NULL)
+		return TRUE;
+	return target != workspace->root_group && target != source &&
+	       sakura_core_workspace_contains_group(workspace, target) &&
+	       sakura_core_workspace_group_is_child_of(workspace, target, parent);
+}
+
+
+gboolean
+sakura_core_workspace_move_group(SakuraCoreWorkspace *workspace,
+	                               SakuraCoreGroup *source,
+	                               SakuraCoreGroup *parent,
+	                               SakuraCoreGroup *target,
+	                               gboolean after)
+{
+	GList *old_ordered, *new_ordered, *target_link;
+	SakuraCoreGroup *old_parent;
+
+	if (workspace == NULL)
+		return FALSE;
+	if (parent == NULL)
+		parent = workspace->root_group;
+	if (!sakura_core_workspace_can_move_group(workspace, source, parent, target))
+		return FALSE;
+
+	old_parent = source->parent != NULL ? source->parent : workspace->root_group;
+	old_ordered = sakura_core_workspace_ordered_group_children(
+		workspace, old_parent, source);
+	new_ordered = sakura_core_workspace_ordered_group_children(
+		workspace, parent, source);
+	if (target == NULL) {
+		new_ordered = g_list_append(new_ordered, source);
+	} else {
+		target_link = g_list_find(new_ordered, target);
+		if (target_link == NULL) {
+			g_list_free(old_ordered);
+			g_list_free(new_ordered);
+			return FALSE;
+		}
+		if (after && target_link->next != NULL)
+			new_ordered = g_list_insert_before(new_ordered, target_link->next,
+			                                  source);
+		else if (after)
+			new_ordered = g_list_append(new_ordered, source);
+		else
+			new_ordered = g_list_insert_before(new_ordered, target_link, source);
+	}
+	source->parent = parent;
+	if (old_parent != parent)
+		sakura_core_workspace_normalize_group_orders(old_ordered);
+	sakura_core_workspace_normalize_group_orders(new_ordered);
+	g_list_free(old_ordered);
+	g_list_free(new_ordered);
 	return TRUE;
 }
 

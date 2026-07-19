@@ -621,7 +621,12 @@ gboolean sakura_pane_focus_in_cb(GtkWidget *widget, GdkEventFocus *event,
 gboolean sakura_tab_is_in_active_scope(SakuraTab *tab);
 gboolean sakura_pane_is_in_active_scope(SakuraPane *pane);
 SakuraSidebarNode *sakura_sidebar_default_parent(void);
+void sakura_sidebar_prepare_page_parent(SakuraPage *page,
+                                        SakuraSidebarNode *parent);
 void sakura_sidebar_set_scope(SakuraSidebarNode *scope);
+gboolean sakura_sidebar_sync_page_to_agent(SakuraPage *page,
+                                           SakuraGroup *group,
+                                           SakuraTask *task);
 void sakura_sidebar_add_terminal(SakuraTab *tab, SakuraSidebarNode *parent);
 void sakura_sidebar_update_page(SakuraPage *page);
 void sakura_sidebar_remove_page(SakuraPage *page);
@@ -881,6 +886,15 @@ gboolean sakura_workspace_model_reorder_group(SakuraWorkspaceModel *model,
                                                SakuraGroup *source,
                                                SakuraGroup *target,
                                                gboolean after);
+gboolean sakura_workspace_model_can_move_group(SakuraWorkspaceModel *model,
+                                                SakuraGroup *source,
+                                                SakuraGroup *parent,
+                                                SakuraGroup *target);
+gboolean sakura_workspace_model_move_group(SakuraWorkspaceModel *model,
+                                            SakuraGroup *source,
+                                            SakuraGroup *parent,
+                                            SakuraGroup *target,
+                                            gboolean after);
 gboolean sakura_workspace_model_append_task(SakuraWorkspaceModel *model,
                                              SakuraTask *task,
                                              SakuraGroup *group);
@@ -945,6 +959,9 @@ gboolean sakura_agent_create_group(SakuraApp *app, const gchar *parent_id,
 gboolean sakura_agent_update_group(SakuraApp *app, const gchar *group_id,
                                    const gchar *title, const gchar *directory,
                                    GError **error);
+gboolean sakura_agent_move_group(SakuraApp *app, const gchar *group_id,
+                                 const gchar *parent_id, const gchar *target_id,
+                                 gboolean after, GError **error);
 gboolean sakura_agent_set_group_archived(SakuraApp *app,
                                          const gchar *group_id,
                                          gboolean archived, GError **error);

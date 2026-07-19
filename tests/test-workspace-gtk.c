@@ -1756,6 +1756,40 @@ test_sidebar_task_owns_page(void)
 
 
 static void
+test_sidebar_prepares_page_parent_for_runtime(void)
+{
+	SakuraSidebarNode *group_node;
+	SakuraGroup *group;
+	SakuraPage *page;
+
+	setup_workspace();
+	setup_sidebar_fixture();
+	group_node = test_sidebar_add_group("runtime-group", "Runtime group",
+	                                  sakura.sidebar_root);
+	group = group_node->group;
+	page = sakura_page_at_page(1);
+	page->task = NULL;
+	page->group = NULL;
+
+	/* This is the state of a new page before its sidebar row exists. The
+	 * runtime must still see the intended group when it starts. */
+	sakura_sidebar_prepare_page_parent(page, group_node);
+	g_assert_null(page->task);
+	g_assert_true(page->group == group);
+	g_assert_true(sakura_workspace_model_group_for_session(
+		sakura.workspace, page) == group);
+
+	sakura_sidebar_rebuild_projection();
+	g_assert_true(page->sidebar_node != NULL);
+	g_assert_true(page->sidebar_node->parent == group->sidebar_node);
+	assert_workspace_consistent();
+
+	test_sidebar_remove_group(group->sidebar_node);
+	teardown_workspace();
+}
+
+
+static void
 test_task_model_survives_sidebar_projection(void)
 {
 	SakuraTask *task;
@@ -2550,6 +2584,90 @@ test_sidebar_drag_policy_rejects_invalid_targets(void)
 
 
 static void
+test_sidebar_moves_groups_between_parents(void)
+{
+	SakuraSidebarNode *freecad, *wx_terminal, *wx_child, *sakura_group;
+	SakuraGroup *model_freecad, *model_wx_terminal, *model_wx_child;
+	SakuraGroup *model_sakura;
+	SakuraSessionSnapshot *snapshot;
+	SakuraSessionGroupRecord *record;
+
+	setup_workspace();
+	setup_sidebar_fixture();
+	freecad = test_sidebar_add_group("move-freecad", "FreeCAD",
+	                                sakura.sidebar_root);
+	wx_terminal = test_sidebar_add_group("move-wx-terminal", "wx-terminal",
+	                                    freecad);
+	wx_child = test_sidebar_add_group("move-wx-child", "Child", wx_terminal);
+	sakura_group = test_sidebar_add_group("move-sakura", "Sakura",
+	                                    sakura.sidebar_root);
+	model_freecad = freecad->group;
+	model_wx_terminal = wx_terminal->group;
+	model_wx_child = wx_child->group;
+	model_sakura = sakura_group->group;
+	model_freecad->order = 0;
+	model_sakura->order = 1;
+	model_wx_terminal->order = 0;
+	model_wx_child->order = 0;
+
+	/* Dropping a group into another group reparents the whole subtree. */
+	g_assert_true(sakura_workspace_model_can_move_group(
+		sakura.workspace, model_wx_terminal, model_sakura, NULL));
+	g_assert_true(sakura_workspace_model_move_group(
+		sakura.workspace, model_wx_terminal, model_sakura, NULL, FALSE));
+	g_assert_true(model_wx_terminal->parent == model_sakura);
+	g_assert_true(model_wx_child->parent == model_wx_terminal);
+	sakura_sidebar_rebuild_projection();
+	g_assert_true(model_wx_terminal->sidebar_node->parent ==
+	              model_sakura->sidebar_node);
+	g_assert_true(model_wx_child->sidebar_node->parent ==
+	              model_wx_terminal->sidebar_node);
+	assert_workspace_consistent();
+
+	/* Reparenting into a descendant is rejected instead of creating a cycle. */
+	g_assert_false(sakura_workspace_model_can_move_group(
+		sakura.workspace, model_wx_terminal, model_wx_child, NULL));
+	g_assert_false(sakura_workspace_model_move_group(
+		sakura.workspace, model_wx_terminal, model_wx_child, NULL, FALSE));
+	g_assert_true(model_wx_terminal->parent == model_sakura);
+
+	/* Cross-parent before/after drops use the target's sibling list. */
+	g_assert_true(sakura_workspace_model_move_group(
+		sakura.workspace, model_wx_terminal, sakura.workspace->root_group,
+		model_sakura, FALSE));
+	g_assert_true(model_wx_terminal->parent == sakura.workspace->root_group);
+	g_assert_cmpuint(model_wx_terminal->order, ==, 1);
+	g_assert_cmpuint(model_sakura->order, ==, 2);
+	g_assert_true(model_wx_child->parent == model_wx_terminal);
+
+	/* Move it back to the destination group, matching the wx-terminal use case. */
+	g_assert_true(sakura_workspace_model_move_group(
+		sakura.workspace, model_wx_terminal, model_sakura, NULL, FALSE));
+	g_assert_true(model_wx_terminal->parent == model_sakura);
+	g_assert_cmpuint(model_wx_terminal->order, ==, 0);
+	g_assert_cmpuint(model_sakura->order, ==, 1);
+	sakura_sidebar_rebuild_projection();
+	assert_workspace_consistent();
+
+	snapshot = test_workspace_snapshot_new();
+	record = test_snapshot_group_record(snapshot, model_wx_terminal->id);
+	g_assert_nonnull(record);
+	g_assert_cmpstr(record->parent_id, ==, model_sakura->id);
+	g_assert_cmpuint(record->order, ==, 0);
+	record = test_snapshot_group_record(snapshot, model_wx_child->id);
+	g_assert_nonnull(record);
+	g_assert_cmpstr(record->parent_id, ==, model_wx_terminal->id);
+	sakura_session_snapshot_free(snapshot);
+
+	test_sidebar_remove_group(model_wx_child->sidebar_node);
+	test_sidebar_remove_group(model_wx_terminal->sidebar_node);
+	test_sidebar_remove_group(model_freecad->sidebar_node);
+	test_sidebar_remove_group(model_sakura->sidebar_node);
+	teardown_workspace();
+}
+
+
+static void
 test_workspace_model_instance_ownership(void)
 {
 	SakuraWorkspaceModel *first = sakura_workspace_model_new();
@@ -2734,13 +2852,16 @@ test_agent_snapshot_merge_preserves_desktop_page_ownership(void)
 	g_ptr_array_add(agent_snapshot->groups, group_record);
 	page_record = g_new0(SakuraSessionPageRecord, 1);
 	page_record->id = g_strdup(page->id);
-	page_record->parent_id = g_strdup(group->id);
-	page_record->group_id = g_strdup(group->id);
+	/* Simulate the stale agent record produced before page ownership was
+	 * initialized before runtime startup. */
+	page_record->parent_id = g_strdup("root");
+	page_record->group_id = g_strdup("root");
 	page_record->title = g_strdup("Agent-owned page");
 	g_ptr_array_add(agent_snapshot->pages, page_record);
 
-	g_assert_true(sakura_workspace_model_merge_agent_snapshot(
-		sakura.workspace, agent_snapshot));
+	sakura.agent_pending_snapshot = agent_snapshot;
+	agent_snapshot = NULL;
+	sakura_agent_apply_pending_snapshot(&sakura);
 	g_assert_true(page->group == group);
 	g_assert_true(group->archived);
 	g_assert_cmpstr(page->title, ==, "Agent-owned page");
@@ -3157,6 +3278,8 @@ main(int argc, char **argv)
 	                test_sidebar_expansion_survives_rebuild);
 	g_test_add_func("/workspace/sidebar-task-owns-page",
 	                test_sidebar_task_owns_page);
+	g_test_add_func("/workspace/sidebar-prepares-page-parent-for-runtime",
+	                test_sidebar_prepares_page_parent_for_runtime);
 	g_test_add_func("/workspace/task-model-survives-sidebar-projection",
 	                test_task_model_survives_sidebar_projection);
 	g_test_add_func("/workspace/group-model-survives-sidebar-projection",
@@ -3183,6 +3306,8 @@ main(int argc, char **argv)
 	                test_sidebar_mixed_hierarchy_roundtrip);
 	g_test_add_func("/workspace/sidebar-drag-policy-invalid-targets",
 	                test_sidebar_drag_policy_rejects_invalid_targets);
+	g_test_add_func("/workspace/sidebar-moves-groups-between-parents",
+	                test_sidebar_moves_groups_between_parents);
 	g_test_add_func("/workspace/model-instance-ownership",
 	                test_workspace_model_instance_ownership);
 	g_test_add_func("/workspace/model-archive-subtrees",

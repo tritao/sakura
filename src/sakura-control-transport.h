@@ -26,13 +26,15 @@ typedef enum {
 	SAKURA_CONTROL_REQUEST_HELLO,
 	SAKURA_CONTROL_REQUEST_RESTART_TERMINAL,
 	SAKURA_CONTROL_REQUEST_UPDATE_PAGE,
-	SAKURA_CONTROL_REQUEST_DELETE_PAGE
+	SAKURA_CONTROL_REQUEST_DELETE_PAGE,
+	SAKURA_CONTROL_REQUEST_MOVE_GROUP
 } SakuraControlRequestKind;
 
 typedef struct {
 	gchar *request_id;
 	SakuraControlRequestKind kind;
 	gchar *parent_id;
+	gchar *target_id;
 	gchar *title;
 	gchar *directory;
 	gchar *group_id;
@@ -46,6 +48,7 @@ typedef struct {
 	gchar *client_name;
 	gchar *workspace_id;
 	gboolean archived;
+	gboolean after;
 	gboolean title_set_by_user;
 	guint protocol_version;
 	guint8 *input_data;
@@ -105,6 +108,9 @@ gboolean sakura_control_encode_create_task_request(
 gboolean sakura_control_encode_update_group_request(
 	const gchar *request_id, const gchar *group_id, const gchar *title,
 	const gchar *directory, GByteArray *payload);
+gboolean sakura_control_encode_move_group_request(
+	const gchar *request_id, const gchar *group_id, const gchar *parent_id,
+	const gchar *target_id, gboolean after, GByteArray *payload);
 gboolean sakura_control_encode_set_group_archived_request(
 	const gchar *request_id, const gchar *group_id, gboolean archived,
 	GByteArray *payload);

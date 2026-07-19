@@ -5,7 +5,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: sakura\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-07-18 21:37+0100\n"
+"POT-Creation-Date: 2026-07-19 10:42+0100\n"
 "PO-Revision-Date: 2018-04-29 13:18+0000\n"
 "Last-Translator: David Gómez <david@pleyades.net>\n"
 "Language-Team: sakura-it <nicola@entidi.it>\n"
@@ -138,18 +138,8 @@ msgstr ""
 msgid "Could not open link: %s"
 msgstr ""
 
-msgid "Codex rejected the rename request"
-msgstr ""
-
 #, c-format
 msgid "Could not rename Codex session: %s"
-msgstr ""
-
-msgid "The Codex session helper is not installed."
-msgstr ""
-
-#, c-format
-msgid "Could not start the Codex session helper: %s"
 msgstr ""
 
 msgid "enabled"
@@ -297,6 +287,9 @@ msgid "Could not start terminal — click to retry"
 msgstr ""
 
 msgid "Click to retry"
+msgstr ""
+
+msgid "Loading session…"
 msgstr ""
 
 msgid "Starting terminal…"
@@ -542,6 +535,9 @@ msgid "Delete this archived group permanently?"
 msgstr ""
 
 msgid "Workspace"
+msgstr ""
+
+msgid "Collapse all groups"
 msgstr ""
 
 msgid "No terminals in this group"

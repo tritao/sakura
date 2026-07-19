@@ -167,6 +167,19 @@ test_mutation_request_roundtrip(void)
 	sakura_control_request_clear(&request);
 	g_byte_array_set_size(encoded, 0);
 
+	g_assert_true(sakura_control_encode_move_group_request(
+		"move-group", "group-1", "group-2", "group-3", TRUE, encoded));
+	g_assert_true(sakura_control_decode_request(encoded->data, encoded->len,
+	                                           &request, &error));
+	g_assert_no_error(error);
+	g_assert_cmpint(request.kind, ==, SAKURA_CONTROL_REQUEST_MOVE_GROUP);
+	g_assert_cmpstr(request.group_id, ==, "group-1");
+	g_assert_cmpstr(request.parent_id, ==, "group-2");
+	g_assert_cmpstr(request.target_id, ==, "group-3");
+	g_assert_true(request.after);
+	sakura_control_request_clear(&request);
+	g_byte_array_set_size(encoded, 0);
+
 	g_assert_true(sakura_control_encode_set_group_archived_request(
 		"archive-group", "group-1", TRUE, encoded));
 	g_assert_true(sakura_control_decode_request(encoded->data, encoded->len,

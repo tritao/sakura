@@ -79,6 +79,9 @@ current tab's group when **All terminals** is selected, or the active group when
 a specific group is selected. An empty group offers a direct **New terminal**
 action.
 
+Groups can be nested by dragging a group onto another group. Dropping before or
+after a group reorders it among that group's siblings.
+
 Tasks and groups can be archived from their sidebar context menu instead of
 being removed. Archiving preserves the hierarchy and any attached live
 terminals; use **All terminals → Show archived** to reveal archived entries,

@@ -46,7 +46,8 @@ sakura_agent_socket_path_new(SakuraApp *app)
 	 SAKURA_CONTROL_CAPABILITY_TERMINALS | \
 	 SAKURA_CONTROL_CAPABILITY_TERMINAL_ATTACH | \
 	 SAKURA_CONTROL_CAPABILITY_EVENT_STREAM | \
-	 SAKURA_CONTROL_CAPABILITY_TERMINAL_RESTART)
+	 SAKURA_CONTROL_CAPABILITY_TERMINAL_RESTART | \
+	 SAKURA_CONTROL_CAPABILITY_GROUP_MOVE)
 
 
 static SakuraControlClientConnection *
@@ -105,6 +106,12 @@ typedef struct {
 	gchar *terminal_id;
 	gchar *message;
 } SakuraAgentCommandFailure;
+
+typedef struct {
+	SakuraPage *page;
+	SakuraTask *task;
+	SakuraGroup *group;
+} SakuraAgentPageOwnership;
 
 
 static void
@@ -411,12 +418,76 @@ sakura_agent_enqueue_command(SakuraApp *app, SakuraAgentCommand *command,
 
 
 static gboolean
-sakura_agent_apply_workspace_snapshot(SakuraApp *app,
-                                       SakuraSessionSnapshot *snapshot)
+sakura_agent_restore_page_ownership(SakuraApp *app,
+	                                GPtrArray *ownership)
 {
+	if (app == NULL || ownership == NULL)
+		return FALSE;
+	for (guint index = 0; index < ownership->len; index++) {
+		SakuraAgentPageOwnership *saved = g_ptr_array_index(ownership, index);
+		SakuraPage *page;
+		SakuraGroup *group;
+		GError *error = NULL;
+
+		if (saved == NULL || saved->page == NULL)
+			continue;
+		page = saved->page;
+		if (page->task == saved->task && page->group == saved->group)
+			continue;
+		page->task = saved->task;
+		page->group = saved->group;
+		group = page->task != NULL ? page->task->group : page->group;
+		if (app->agent_socket_path == NULL)
+			continue;
+		if (!sakura_agent_update_page(
+				app, page->id, group != NULL ? group->id : "root",
+				page->task != NULL ? page->task->id : NULL,
+				page->title, page->title_set_by_user, page->archived, &error)) {
+			g_warning("Could not repair agent ownership for page %s: %s",
+			          page->id != NULL ? page->id : "(unknown)",
+			          error != NULL ? error->message : "unknown error");
+		}
+		g_clear_error(&error);
+	}
+	return TRUE;
+}
+
+
+static GPtrArray *
+sakura_agent_capture_page_ownership(SakuraWorkspaceModel *model)
+{
+	GPtrArray *ownership;
+
+	ownership = g_ptr_array_new_with_free_func(g_free);
+	for (guint index = 0; model != NULL && model->pages != NULL &&
+	                     index < model->pages->len; index++) {
+		SakuraPage *page = g_ptr_array_index(model->pages, index);
+		SakuraAgentPageOwnership *saved;
+
+		if (page == NULL)
+			continue;
+		saved = g_new0(SakuraAgentPageOwnership, 1);
+		saved->page = page;
+		saved->task = page->task;
+		saved->group = page->group;
+		g_ptr_array_add(ownership, saved);
+	}
+	return ownership;
+}
+
+
+static gboolean
+sakura_agent_apply_workspace_snapshot(SakuraApp *app,
+                                       SakuraSessionSnapshot *snapshot,
+                                       gboolean preserve_page_ownership)
+{
+	GPtrArray *ownership;
+
 	if (app == NULL || snapshot == NULL || app->workspace == NULL ||
 	    app->session_shutting_down)
 		return FALSE;
+	ownership = preserve_page_ownership
+	          ? sakura_agent_capture_page_ownership(app->workspace) : NULL;
 
 	sakura_workspace_begin_mutation();
 	/* The agent snapshot is intentionally partial: it owns groups/tasks, while
@@ -424,6 +495,8 @@ sakura_agent_apply_workspace_snapshot(SakuraApp *app,
 	 * payload as a full restore or it can make a live page look orphaned after
 	 * an archive/restart event. */
 	sakura_workspace_model_merge_agent_snapshot(app->workspace, snapshot);
+	if (ownership != NULL)
+		sakura_agent_restore_page_ownership(app, ownership);
 	if (snapshot->root_directory != NULL &&
 	    snapshot->root_directory[0] != '\0') {
 		g_free(app->workspace->root_group->directory);
@@ -446,6 +519,12 @@ sakura_agent_apply_workspace_snapshot(SakuraApp *app,
 	sakura_workspace_mark_changed(SAKURA_WORKSPACE_CHANGE_STRUCTURE |
 	                              SAKURA_WORKSPACE_CHANGE_METADATA);
 	sakura_workspace_end_mutation();
+	/* Agent mutations, including group reparenting, must reach the desktop
+	 * session file as well. Otherwise the next agent restart can reintroduce its
+	 * previous hierarchy. */
+	sakura_session_mark_dirty();
+	if (ownership != NULL)
+		g_ptr_array_unref(ownership);
 	return TRUE;
 }
 
@@ -460,7 +539,7 @@ sakura_agent_apply_pending_snapshot(SakuraApp *app)
 		return;
 	snapshot = app->agent_pending_snapshot;
 	app->agent_pending_snapshot = NULL;
-	if (!sakura_agent_apply_workspace_snapshot(app, snapshot))
+	if (!sakura_agent_apply_workspace_snapshot(app, snapshot, TRUE))
 		g_warning("Could not apply pending sakura-agent workspace snapshot");
 	sakura_session_snapshot_free(snapshot);
 }
@@ -482,7 +561,7 @@ sakura_agent_apply_event_cb(gpointer data)
 		event->app->agent_pending_snapshot = event->snapshot;
 		event->snapshot = NULL;
 	} else if (event->app != NULL) {
-		sakura_agent_apply_workspace_snapshot(event->app, event->snapshot);
+		sakura_agent_apply_workspace_snapshot(event->app, event->snapshot, FALSE);
 	}
 	sakura_session_snapshot_free(event->snapshot);
 	g_free(event);
@@ -940,6 +1019,30 @@ sakura_agent_update_group(SakuraApp *app, const gchar *group_id,
 		sakura_control_encode_update_group_request(request_id, group_id, title,
 		                                          directory, request),
 		"update group", error);
+	g_byte_array_unref(request);
+	g_free(request_id);
+	return result;
+}
+
+
+gboolean
+sakura_agent_move_group(SakuraApp *app, const gchar *group_id,
+	                      const gchar *parent_id, const gchar *target_id,
+	                      gboolean after, GError **error)
+{
+	GByteArray *request;
+	gchar *request_id;
+	gboolean result;
+
+	if (app == NULL || app->agent_socket_path == NULL)
+		return FALSE;
+	request_id = g_uuid_string_random();
+	request = g_byte_array_new();
+	result = sakura_agent_request_encoded_mutation(
+		app, request_id, request,
+		sakura_control_encode_move_group_request(request_id, group_id, parent_id,
+		                                         target_id, after, request),
+		"move group", error);
 	g_byte_array_unref(request);
 	g_free(request_id);
 	return result;
@@ -1662,6 +1765,46 @@ sakura_agent_restart_cb(gpointer data)
 }
 
 
+static gboolean
+sakura_agent_reconcile_local_group_hierarchy(SakuraApp *app)
+{
+	GPtrArray *groups;
+	gboolean success = TRUE;
+
+	if (app == NULL || app->workspace == NULL)
+		return FALSE;
+	groups = sakura_workspace_model_ordered_groups(app->workspace);
+	/* Process siblings from right to left. Each later sibling is already in its
+	 * desired parent when it is used as the insertion target, so this also
+	 * repairs ordering while reconciling a previously surviving agent. */
+	for (gint index = (gint)groups->len - 1; index >= 0; index--) {
+		SakuraGroup *group = g_ptr_array_index(groups, index);
+		SakuraGroup *parent;
+		SakuraGroup *target = NULL;
+
+		if (group == NULL)
+			continue;
+		parent = group->parent != NULL ? group->parent : app->workspace->root_group;
+		for (guint next = index + 1; next < groups->len; next++) {
+			SakuraGroup *candidate = g_ptr_array_index(groups, next);
+
+			if (candidate != NULL && candidate->parent == group->parent) {
+				target = candidate;
+				break;
+			}
+		}
+		if (!sakura_agent_move_group(app, group->id, parent->id,
+		                             target != NULL ? target->id : NULL,
+		                             FALSE, NULL)) {
+			success = FALSE;
+			break;
+		}
+	}
+	g_ptr_array_unref(groups);
+	return success;
+}
+
+
 gboolean
 sakura_agent_start(SakuraApp *app)
 {
@@ -1687,6 +1830,8 @@ sakura_agent_start(SakuraApp *app)
 	}
 	if (sakura_agent_request_snapshot(socket_path, app->workspace_id, &error)) {
 		app->agent_socket_path = socket_path;
+		if (!sakura_agent_reconcile_local_group_hierarchy(app))
+			g_warning("Could not reconcile the existing sakura-agent group hierarchy");
 		sakura_agent_subscribe_start(app);
 		sakura_agent_command_start(app);
 		return TRUE;

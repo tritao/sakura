@@ -756,6 +756,10 @@ sakura_tab_agent_start_async_done(SakuraAgentTerminalStartResult *result,
 			result->attached_cols, result->attached_rows,
 			result->attached_status, &error)) {
 		result->replay_data = NULL;
+		sakura_sidebar_sync_page_to_agent(
+			tab->page, tab->page->task != NULL ? tab->page->task->group
+			                                  : tab->page->group,
+			tab->page->task);
 		return;
 	}
 	if (error != NULL)
@@ -1250,6 +1254,9 @@ sakura_tab_add_with_options (const gchar *restore_cwd,
 		sakura.workspace->active_tab = sk_tab;
 		sakura.workspace->active_page = tab_page;
 	}
+	if (!split_into_page)
+		/* Establish ownership before the agent can publish its first snapshot. */
+		sakura_sidebar_prepare_page_parent(tab_page, sidebar_parent);
 
 	/* vte signals */
 	g_signal_connect(G_OBJECT(sk_tab->vte), "bell", G_CALLBACK(sakura_beep_cb), NULL);

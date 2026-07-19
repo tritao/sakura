@@ -42,7 +42,8 @@ typedef struct {
 	 SAKURA_CONTROL_CAPABILITY_TERMINALS | \
 	 SAKURA_CONTROL_CAPABILITY_TERMINAL_ATTACH | \
 	 SAKURA_CONTROL_CAPABILITY_EVENT_STREAM | \
-	 SAKURA_CONTROL_CAPABILITY_TERMINAL_RESTART)
+	 SAKURA_CONTROL_CAPABILITY_TERMINAL_RESTART | \
+	 SAKURA_CONTROL_CAPABILITY_GROUP_MOVE)
 
 struct _SakuraAgent {
 	GMainLoop *loop;
@@ -318,6 +319,38 @@ sakura_agent_update_group(SakuraAgent *agent,
 	group->directory = g_strdup(request->directory != NULL &&
 	                            request->directory[0] != '\0'
 	                            ? request->directory : NULL);
+	return TRUE;
+}
+
+
+static gboolean
+sakura_agent_move_group(SakuraAgent *agent,
+	                      const SakuraControlRequest *request,
+	                      GError **error)
+{
+	SakuraCoreGroup *group;
+	SakuraCoreGroup *parent;
+	SakuraCoreGroup *target = NULL;
+
+	if (request->group_id == NULL || request->group_id[0] == '\0' ||
+	    g_strcmp0(request->group_id, "root") == 0)
+		return sakura_agent_error(error, "a non-root group is required");
+	group = sakura_agent_request_group(agent, request->group_id, error);
+	if (group == NULL)
+		return FALSE;
+	parent = sakura_agent_request_group(agent, request->parent_id, error);
+	if (parent == NULL)
+		return FALSE;
+	if (request->target_id != NULL && request->target_id[0] != '\0') {
+		if (g_strcmp0(request->target_id, "root") == 0)
+			return sakura_agent_error(error, "a non-root target is required");
+		target = sakura_agent_request_group(agent, request->target_id, error);
+		if (target == NULL)
+			return FALSE;
+	}
+	if (!sakura_core_workspace_move_group(agent->workspace, group, parent,
+	                                      target, request->after))
+		return sakura_agent_error(error, "could not move group");
 	return TRUE;
 }
 
@@ -950,6 +983,9 @@ sakura_agent_apply_request(SakuraAgent *agent,
 		break;
 	case SAKURA_CONTROL_REQUEST_UPDATE_GROUP:
 		changed = sakura_agent_update_group(agent, request, error);
+		break;
+	case SAKURA_CONTROL_REQUEST_MOVE_GROUP:
+		changed = sakura_agent_move_group(agent, request, error);
 		break;
 	case SAKURA_CONTROL_REQUEST_SET_GROUP_ARCHIVED:
 		changed = sakura_agent_set_group_archived(agent, request, error);

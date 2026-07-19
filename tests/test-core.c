@@ -612,6 +612,33 @@ test_layout_rejects_invalid_tree(void)
 }
 
 
+static void
+test_core_moves_group_subtrees(void)
+{
+	SakuraCoreWorkspace *workspace = sakura_core_workspace_new();
+	SakuraCoreGroup *root = sakura_core_group_new("root", "All terminals", NULL);
+	SakuraCoreGroup *source = sakura_core_group_new("source", "Source", root);
+	SakuraCoreGroup *child = sakura_core_group_new("child", "Child", source);
+	SakuraCoreGroup *target = sakura_core_group_new("target", "Target", root);
+
+	g_assert_true(sakura_core_workspace_set_root(workspace, root));
+	g_assert_true(sakura_core_workspace_add_group(workspace, source));
+	g_assert_true(sakura_core_workspace_add_group(workspace, child));
+	g_assert_true(sakura_core_workspace_add_group(workspace, target));
+	g_assert_false(sakura_core_workspace_can_move_group(
+		workspace, source, child, NULL));
+	g_assert_true(sakura_core_workspace_move_group(
+		workspace, source, target, NULL, FALSE));
+	g_assert_true(source->parent == target);
+	g_assert_true(child->parent == source);
+	g_assert_true(sakura_core_workspace_move_group(
+		workspace, source, root, target, TRUE));
+	g_assert_true(source->parent == root);
+
+	sakura_core_workspace_free(workspace);
+}
+
+
 int
 main(int argc, char **argv)
 {
@@ -634,5 +661,6 @@ main(int argc, char **argv)
 	g_test_add_func("/session/snapshot/preserve-on-failure", test_session_snapshot_preserves_previous_on_failure);
 	g_test_add_func("/layout/split-and-collapse", test_layout_split_and_collapse);
 	g_test_add_func("/layout/reject-invalid-tree", test_layout_rejects_invalid_tree);
+	g_test_add_func("/workspace/move-group-subtree", test_core_moves_group_subtrees);
 	return g_test_run();
 }

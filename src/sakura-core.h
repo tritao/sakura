@@ -255,6 +255,12 @@ gboolean sakura_core_workspace_set_root(SakuraCoreWorkspace *workspace,
                                          SakuraCoreGroup *root_group);
 gboolean sakura_core_workspace_add_group(SakuraCoreWorkspace *workspace,
                                          SakuraCoreGroup *group);
+gboolean sakura_core_workspace_can_move_group(
+	SakuraCoreWorkspace *workspace, SakuraCoreGroup *source,
+	SakuraCoreGroup *parent, SakuraCoreGroup *target);
+gboolean sakura_core_workspace_move_group(
+	SakuraCoreWorkspace *workspace, SakuraCoreGroup *source,
+	SakuraCoreGroup *parent, SakuraCoreGroup *target, gboolean after);
 gboolean sakura_core_workspace_can_remove_group(
 	SakuraCoreWorkspace *workspace, SakuraCoreGroup *group);
 gboolean sakura_core_workspace_remove_group(SakuraCoreWorkspace *workspace,
