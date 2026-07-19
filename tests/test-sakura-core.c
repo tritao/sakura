@@ -94,7 +94,9 @@ test_workspace_restore_snapshot(void)
 	SakuraSessionGroupRecord *group = g_new0(SakuraSessionGroupRecord, 1);
 	SakuraSessionTaskRecord *task = g_new0(SakuraSessionTaskRecord, 1);
 	SakuraSessionTaskRecord *child = g_new0(SakuraSessionTaskRecord, 1);
+	SakuraSessionPageRecord *page = g_new0(SakuraSessionPageRecord, 1);
 	SakuraCoreWorkspace *workspace;
+	SakuraCorePage *restored_page;
 	GError *error = NULL;
 
 	snapshot->root_directory = g_strdup("/tmp/project");
@@ -114,6 +116,13 @@ test_workspace_restore_snapshot(void)
 	/* The restore path must not depend on serialized record order. */
 	g_ptr_array_add(snapshot->tasks, child);
 	g_ptr_array_add(snapshot->tasks, task);
+	page->id = g_strdup("page-a");
+	page->parent_id = g_strdup("task-a");
+	page->group_id = g_strdup("group-a");
+	page->task_id = g_strdup("task-a");
+	page->title = g_strdup("Build terminal");
+	page->active_terminal_id = g_strdup("terminal-a");
+	g_ptr_array_add(snapshot->pages, page);
 
 	workspace = sakura_core_workspace_from_snapshot(snapshot, &error);
 	g_assert_no_error(error);
@@ -123,6 +132,13 @@ test_workspace_restore_snapshot(void)
 	             sakura_core_workspace_find_group(workspace, "group-a"));
 	g_assert_true(sakura_core_workspace_find_task(workspace, "task-child")->parent ==
 	             sakura_core_workspace_find_task(workspace, "task-a"));
+	restored_page = sakura_core_workspace_find_page(workspace, "page-a");
+	g_assert_nonnull(restored_page);
+	g_assert_true(restored_page->group ==
+	              sakura_core_workspace_find_group(workspace, "group-a"));
+	g_assert_true(restored_page->task ==
+	              sakura_core_workspace_find_task(workspace, "task-a"));
+	g_assert_cmpstr(restored_page->active_terminal_id, ==, "terminal-a");
 
 	sakura_core_workspace_free(workspace);
 	sakura_session_snapshot_free(snapshot);

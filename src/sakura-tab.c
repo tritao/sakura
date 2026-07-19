@@ -783,6 +783,7 @@ sakura_tab_start_agent_terminal(SakuraTab *tab, const gchar *cwd)
 {
 	const gchar *group_id = "root";
 	const gchar *task_id = "root";
+	const gchar *page_id = NULL;
 	guint cols, rows;
 	gchar *created_terminal_id = NULL;
 	guint8 *replay_data = NULL;
@@ -798,6 +799,8 @@ sakura_tab_start_agent_terminal(SakuraTab *tab, const gchar *cwd)
 	if (tab->page != NULL && tab->page->group != NULL &&
 	    tab->page->group->id != NULL)
 		group_id = tab->page->group->id;
+	if (tab->page != NULL && tab->page->id != NULL)
+		page_id = tab->page->id;
 	if (tab->page != NULL && tab->page->task != NULL &&
 	    tab->page->task->id != NULL)
 		task_id = tab->page->task->id;
@@ -810,7 +813,7 @@ sakura_tab_start_agent_terminal(SakuraTab *tab, const gchar *cwd)
 
 	if ((sakura.session_restoring || tab->runtime_start_pending) &&
 	    sakura_agent_start_terminal_async(
-			&sakura, tab->terminal_id, group_id, task_id, cwd, cols, rows,
+			&sakura, tab->terminal_id, page_id, group_id, task_id, cwd, cols, rows,
 			sakura_tab_agent_start_async_done, NULL, &error)) {
 		sakura_tab_set_agent_start_pending(tab, TRUE);
 		if (sakura.session_restoring)
@@ -825,8 +828,8 @@ sakura_tab_start_agent_terminal(SakuraTab *tab, const gchar *cwd)
 		&attached_cols, &attached_rows, &attached_status, &error);
 	if (!attached) {
 		g_clear_error(&error);
-		if (!sakura_agent_create_terminal(&sakura, tab->terminal_id, group_id,
-		                                  task_id, cwd, cols, rows,
+		if (!sakura_agent_create_terminal(&sakura, tab->terminal_id, page_id,
+		                                  group_id, task_id, cwd, cols, rows,
 		                                  &created_terminal_id, &error)) {
 			g_clear_error(&error);
 			g_free(replay_data);
@@ -919,6 +922,7 @@ sakura_tab_restart_agent_terminal(SakuraTab *tab)
 {
 	const gchar *group_id = "root";
 	const gchar *task_id = "root";
+	const gchar *page_id = NULL;
 	const gchar *cwd;
 	guint cols, rows;
 	GError *error = NULL;
@@ -929,6 +933,8 @@ sakura_tab_restart_agent_terminal(SakuraTab *tab)
 	if (tab->page != NULL && tab->page->group != NULL &&
 	    tab->page->group->id != NULL)
 		group_id = tab->page->group->id;
+	if (tab->page != NULL && tab->page->id != NULL)
+		page_id = tab->page->id;
 	if (tab->page != NULL && tab->page->task != NULL &&
 	    tab->page->task->id != NULL)
 		task_id = tab->page->task->id;
@@ -944,8 +950,9 @@ sakura_tab_restart_agent_terminal(SakuraTab *tab)
 	 * replacement of the remote runtime and preserves the logical ID. */
 	sakura_tab_close_agent_terminal(tab);
 	tab->agent_terminal_lost = TRUE;
-	if (!sakura_agent_restart_terminal(&sakura, tab->terminal_id, group_id,
-	                                   task_id, cwd, cols, rows, &error)) {
+	if (!sakura_agent_restart_terminal(&sakura, tab->terminal_id, page_id,
+	                                   group_id, task_id, cwd, cols, rows,
+	                                   &error)) {
 		g_warning("Could not restart agent terminal %s: %s", tab->terminal_id,
 		          error != NULL ? error->message : "unknown error");
 		g_clear_error(&error);
@@ -1799,6 +1806,23 @@ sakura_set_tab_label_text(const gchar *title, gint page)
 		g_free(tab->page->title);
 		tab->page->title = g_strdup(label_text);
 		tab->page->title_set_by_user = tab->label_set_byuser;
+		if (sakura.agent_socket_path != NULL && tab->page->id != NULL) {
+			SakuraGroup *group = tab->page->task != NULL
+			                   ? tab->page->task->group : tab->page->group;
+			GError *error = NULL;
+
+			if (!sakura_agent_update_page(
+					&sakura, tab->page->id,
+					group != NULL ? group->id : NULL,
+					tab->page->task != NULL ? tab->page->task->id : NULL,
+					tab->page->title, tab->page->title_set_by_user,
+					tab->page->archived, &error)) {
+				if (error != NULL)
+					g_warning("Could not update page title through sakura-agent: %s",
+					          error->message);
+				g_clear_error(&error);
+			}
+		}
 	}
 	g_free(label_text);
 	sakura_sidebar_update_tab(tab);

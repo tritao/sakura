@@ -932,7 +932,8 @@ struct sakura_agent_terminal_start_result {
 typedef void (*SakuraAgentTerminalStartCallback)(
 	SakuraAgentTerminalStartResult *result, gpointer data);
 gboolean sakura_agent_start_terminal_async(
-	SakuraApp *app, const gchar *terminal_id, const gchar *group_id,
+	SakuraApp *app, const gchar *terminal_id, const gchar *page_id,
+	const gchar *group_id,
 	const gchar *task_id, const gchar *cwd, guint cols, guint rows,
 	SakuraAgentTerminalStartCallback callback, gpointer data,
 	GError **error);
@@ -956,6 +957,10 @@ gboolean sakura_agent_create_task(SakuraApp *app, const gchar *group_id,
                                   GError **error);
 gboolean sakura_agent_update_task(SakuraApp *app, const gchar *task_id,
                                   const gchar *title, GError **error);
+gboolean sakura_agent_update_page(SakuraApp *app, const gchar *page_id,
+                                  const gchar *group_id, const gchar *task_id,
+                                  const gchar *title, gboolean title_set_by_user,
+                                  gboolean archived, GError **error);
 gboolean sakura_agent_set_task_archived(SakuraApp *app,
                                         const gchar *task_id,
                                         gboolean archived, GError **error);
@@ -963,10 +968,12 @@ gboolean sakura_agent_delete_task(SakuraApp *app, const gchar *task_id,
                                   GError **error);
 gboolean sakura_agent_create_terminal(
 	SakuraApp *app, const gchar *requested_terminal_id,
-	const gchar *group_id, const gchar *task_id, const gchar *cwd,
+	const gchar *page_id, const gchar *group_id, const gchar *task_id,
+	const gchar *cwd,
 	guint cols, guint rows, gchar **created_terminal_id, GError **error);
 gboolean sakura_agent_restart_terminal(
-	SakuraApp *app, const gchar *terminal_id, const gchar *group_id,
+	SakuraApp *app, const gchar *terminal_id, const gchar *page_id,
+	const gchar *group_id,
 	const gchar *task_id, const gchar *cwd, guint cols, guint rows,
 	GError **error);
 gboolean sakura_agent_attach_terminal(

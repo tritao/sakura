@@ -32,6 +32,9 @@ static void sakura_sidebar_refresh_tab_rows(void);
 static void sakura_sidebar_show_page_panes(SakuraPage *page);
 static void sakura_sidebar_hide_page_panes(SakuraPage *page);
 static void sakura_sidebar_add_page(SakuraPage *page, SakuraSidebarNode *parent);
+static gboolean sakura_sidebar_sync_page_to_agent(SakuraPage *page,
+                                                   SakuraGroup *group,
+                                                   SakuraTask *task);
 static void sakura_sidebar_remove_node_row(SakuraSidebarNode *node);
 static gboolean sakura_sidebar_reorder_node_to_group(
                                       SakuraSidebarNode *source,
@@ -252,6 +255,32 @@ sakura_task_update_row(SakuraTask *task)
 }
 
 
+static gboolean
+sakura_sidebar_sync_page_to_agent(SakuraPage *page, SakuraGroup *group,
+                                  SakuraTask *task)
+{
+	GError *error = NULL;
+	gboolean result;
+
+	if (sakura.agent_socket_path == NULL || page == NULL ||
+	    page->id == NULL || page->id[0] == '\0')
+		return TRUE;
+	if (task != NULL)
+		group = task->group;
+	result = sakura_agent_update_page(
+		&sakura, page->id, group != NULL ? group->id : NULL,
+		task != NULL ? task->id : NULL, page->title, page->title_set_by_user,
+		page->archived, &error);
+	if (!result) {
+		if (error != NULL)
+			g_warning("Could not update page through sakura-agent: %s",
+			          error->message);
+		g_clear_error(&error);
+	}
+	return result;
+}
+
+
 void
 sakura_task_attach_page(SakuraTask *task, SakuraPage *page)
 {
@@ -262,6 +291,8 @@ sakura_task_attach_page(SakuraTask *task, SakuraPage *page)
 		return;
 	group = sakura_workspace_model_group_for_task(sakura.workspace, task);
 	if (page->task == task)
+		return;
+	if (!sakura_sidebar_sync_page_to_agent(page, group, task))
 		return;
 	sakura_workspace_begin_mutation();
 	node = page->sidebar_node;
@@ -308,6 +339,8 @@ sakura_task_detach_page(SakuraPage *page)
 	group = old_task != NULL ? sakura_workspace_model_group_for_task(sakura.workspace, old_task)
 	                         : page->group;
 	group_node = sakura_sidebar_group_node(group);
+	if (!sakura_sidebar_sync_page_to_agent(page, group, NULL))
+		return;
 	sakura_sidebar_cancel_pending_selection();
 	sakura_sidebar_hide_page_panes(page);
 	if (!sakura_workspace_model_detach_page(sakura.workspace, page)) {
@@ -1866,6 +1899,8 @@ sakura_sidebar_move_page_to_group(SakuraPage *page, SakuraSidebarNode *group)
 		return FALSE;
 	if (page->task == NULL && page->group == new_group)
 		return TRUE;
+	if (!sakura_sidebar_sync_page_to_agent(page, new_group, NULL))
+		return FALSE;
 	sakura_workspace_begin_mutation();
 	node = page->sidebar_node;
 	old_task = page->task;
@@ -2869,6 +2904,16 @@ sakura_sidebar_agent_archive_node(SakuraSidebarNode *node)
 		archived = !sakura_sidebar_group_is_archived(node->group);
 		result = sakura_agent_set_group_archived(&sakura, node->group->id,
 	                                        archived, &error);
+	} else if (node->type == SAKURA_SIDEBAR_PAGE && node->page != NULL) {
+		SakuraPage *page = node->page;
+		SakuraGroup *group = page->task != NULL ? page->task->group : page->group;
+		SakuraTask *task = page->task;
+
+		archived = !page->archived;
+		result = sakura_agent_update_page(
+			&sakura, page->id, group != NULL ? group->id : NULL,
+			task != NULL ? task->id : NULL, page->title,
+			page->title_set_by_user, archived, &error);
 	} else {
 		return FALSE;
 	}

@@ -383,6 +383,10 @@ sakura_session_layout_valid(const SakuraSessionSnapshot *snapshot,
 		    !g_hash_table_contains(groups, page->parent_id) &&
 		    !g_hash_table_contains(tasks, page->parent_id))
 			goto invalid;
+		if (page->group_id != NULL && page->group_id[0] != '\0' &&
+		    g_strcmp0(page->group_id, "root") != 0 &&
+		    !g_hash_table_contains(groups, page->group_id))
+			goto invalid;
 		if (has_task && !g_hash_table_contains(tasks, page->task_id))
 			goto invalid;
 		if (has_task && g_strcmp0(page->parent_id, page->task_id) != 0)
@@ -669,6 +673,7 @@ sakura_session_snapshot_load_into(GKeyFile *key_file,
 		SakuraSessionPageRecord *page = g_new0(SakuraSessionPageRecord, 1);
 		page->id = g_key_file_get_string(key_file, section, "id", NULL);
 		page->parent_id = g_key_file_get_string(key_file, section, "parent", NULL);
+		page->group_id = g_key_file_get_string(key_file, section, "group", NULL);
 		page->title = g_key_file_get_string(key_file, section, "title", NULL);
 		page->root_layout_id = g_key_file_get_string(key_file, section, "root_layout", NULL);
 		page->active_terminal_id = g_key_file_get_string(key_file, section,
@@ -681,6 +686,21 @@ sakura_session_snapshot_load_into(GKeyFile *key_file,
 			page->archived = g_key_file_get_boolean(key_file, section, "archived", NULL);
 		if (page->parent_id == NULL)
 			page->parent_id = g_strdup("root");
+		if (page->group_id == NULL || page->group_id[0] == '\0') {
+			for (guint task_index = 0; task_index < snapshot->tasks->len;
+			     task_index++) {
+				SakuraSessionTaskRecord *task =
+					g_ptr_array_index(snapshot->tasks, task_index);
+
+				if (page->task_id != NULL && task != NULL &&
+				    g_strcmp0(page->task_id, task->id) == 0) {
+					page->group_id = g_strdup(task->group_id);
+					break;
+				}
+			}
+		}
+		if (page->group_id == NULL || page->group_id[0] == '\0')
+			page->group_id = g_strdup(page->parent_id);
 		g_ptr_array_add(snapshot->pages, page);
 		g_free(section);
 	}
@@ -919,6 +939,8 @@ sakura_session_snapshot_save(const SakuraSessionSnapshot *snapshot,
 		g_key_file_set_string(key_file, section, "id", page->id != NULL ? page->id : "");
 		g_key_file_set_string(key_file, section, "parent",
 		                      page->parent_id != NULL ? page->parent_id : "root");
+		if (page->group_id != NULL && page->group_id[0] != '\0')
+			g_key_file_set_string(key_file, section, "group", page->group_id);
 		g_key_file_set_string(key_file, section, "title", page->title != NULL ? page->title : "");
 		g_key_file_set_boolean(key_file, section, "title_set_by_user", page->title_set_by_user);
 		g_key_file_set_boolean(key_file, section, "archived", page->archived);

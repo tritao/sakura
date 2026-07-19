@@ -62,6 +62,7 @@ sakura_session_page_record_free(gpointer data)
 		return;
 	g_free(record->id);
 	g_free(record->parent_id);
+	g_free(record->group_id);
 	g_free(record->title);
 	g_free(record->root_layout_id);
 	g_free(record->active_terminal_id);

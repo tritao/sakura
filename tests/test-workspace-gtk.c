@@ -2652,6 +2652,7 @@ test_agent_snapshot_merge_preserves_desktop_page_ownership(void)
 	SakuraPage *page;
 	SakuraSessionSnapshot *agent_snapshot;
 	SakuraSessionGroupRecord *group_record;
+	SakuraSessionPageRecord *page_record;
 
 	setup_workspace();
 	setup_sidebar_fixture();
@@ -2668,8 +2669,8 @@ test_agent_snapshot_merge_preserves_desktop_page_ownership(void)
 	g_assert_true(page->sidebar_node != NULL);
 	g_assert_true(page->sidebar_node->parent == group->sidebar_node);
 
-	/* This is the shape of an agent event today: it has group/task state but
-	 * deliberately has no desktop page/layout records. */
+	/* The agent owns page metadata, while the desktop retains the GTK
+	 * surface/layout records needed to render it. */
 	agent_snapshot = sakura_session_snapshot_new();
 	group_record = g_new0(SakuraSessionGroupRecord, 1);
 	group_record->id = g_strdup(group->id);
@@ -2677,12 +2678,18 @@ test_agent_snapshot_merge_preserves_desktop_page_ownership(void)
 	group_record->title = g_strdup(group->title);
 	group_record->archived = TRUE;
 	g_ptr_array_add(agent_snapshot->groups, group_record);
-	g_assert_cmpuint(agent_snapshot->pages->len, ==, 0);
+	page_record = g_new0(SakuraSessionPageRecord, 1);
+	page_record->id = g_strdup(page->id);
+	page_record->parent_id = g_strdup(group->id);
+	page_record->group_id = g_strdup(group->id);
+	page_record->title = g_strdup("Agent-owned page");
+	g_ptr_array_add(agent_snapshot->pages, page_record);
 
 	g_assert_true(sakura_workspace_model_merge_agent_snapshot(
 		sakura.workspace, agent_snapshot));
 	g_assert_true(page->group == group);
 	g_assert_true(group->archived);
+	g_assert_cmpstr(page->title, ==, "Agent-owned page");
 	/* A partial agent payload must not delete another live model entity just
 	 * because the agent has not started owning that entity yet. */
 	g_assert_true(test_workspace_model_group_by_id(

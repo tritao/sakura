@@ -47,6 +47,7 @@ sakura_control_request_clear(SakuraControlRequest *request)
 	g_clear_pointer(&request->directory, g_free);
 	g_clear_pointer(&request->group_id, g_free);
 	g_clear_pointer(&request->task_id, g_free);
+	g_clear_pointer(&request->page_id, g_free);
 	g_clear_pointer(&request->terminal_id, g_free);
 	g_clear_pointer(&request->cwd, g_free);
 	g_clear_pointer(&request->provider, g_free);
@@ -56,6 +57,7 @@ sakura_control_request_clear(SakuraControlRequest *request)
 	g_clear_pointer(&request->workspace_id, g_free);
 	request->kind = SAKURA_CONTROL_REQUEST_NONE;
 	request->archived = FALSE;
+	request->title_set_by_user = FALSE;
 	request->protocol_version = 0;
 	g_clear_pointer(&request->input_data, g_free);
 	request->input_length = 0;
@@ -346,6 +348,37 @@ sakura_control_encode_update_task_request(const gchar *request_id,
 
 
 gboolean
+sakura_control_encode_update_page_request(const gchar *request_id,
+	                                         const gchar *page_id,
+	                                         const gchar *group_id,
+	                                         const gchar *task_id,
+	                                         const gchar *title,
+	                                         gboolean title_set_by_user,
+	                                         gboolean archived,
+	                                         GByteArray *payload)
+{
+	Sakura__Control__V1__UpdatePageRequest update_page =
+		SAKURA__CONTROL__V1__UPDATE_PAGE_REQUEST__INIT;
+	Sakura__Control__V1__Request request =
+		SAKURA__CONTROL__V1__REQUEST__INIT;
+
+	if (payload == NULL || request_id == NULL || request_id[0] == '\0' ||
+	    page_id == NULL || page_id[0] == '\0')
+		return FALSE;
+	update_page.page_id = (gchar *)page_id;
+	update_page.group_id = (gchar *)sakura_control_string(group_id);
+	update_page.task_id = (gchar *)sakura_control_string(task_id);
+	update_page.title = (gchar *)sakura_control_string(title);
+	update_page.title_set_by_user = title_set_by_user;
+	update_page.archived = archived;
+	request.request_id = (gchar *)request_id;
+	request.body_case = SAKURA__CONTROL__V1__REQUEST__BODY_UPDATE_PAGE;
+	request.update_page = &update_page;
+	return sakura_control_pack_message(&request.base, payload);
+}
+
+
+gboolean
 sakura_control_encode_set_task_archived_request(const gchar *request_id,
 	                                               const gchar *task_id,
 	                                               gboolean archived,
@@ -391,8 +424,10 @@ sakura_control_encode_delete_task_request(const gchar *request_id,
 
 
 gboolean
-sakura_control_encode_create_terminal_request(const gchar *request_id,
+sakura_control_encode_create_terminal_request_with_page(
+	                                             const gchar *request_id,
 	                                             const gchar *terminal_id,
+	                                             const gchar *page_id,
 	                                             const gchar *group_id,
 	                                             const gchar *task_id,
 	                                             const gchar *cwd,
@@ -407,6 +442,7 @@ sakura_control_encode_create_terminal_request(const gchar *request_id,
 	if (payload == NULL || request_id == NULL || request_id[0] == '\0')
 		return FALSE;
 	create_terminal.terminal_id = (gchar *)sakura_control_string(terminal_id);
+	create_terminal.page_id = (gchar *)sakura_control_string(page_id);
 	create_terminal.group_id = (gchar *)sakura_control_string(group_id);
 	create_terminal.task_id = (gchar *)sakura_control_string(task_id);
 	create_terminal.cwd = (gchar *)sakura_control_string(cwd);
@@ -416,6 +452,21 @@ sakura_control_encode_create_terminal_request(const gchar *request_id,
 	request.body_case = SAKURA__CONTROL__V1__REQUEST__BODY_CREATE_TERMINAL;
 	request.create_terminal = &create_terminal;
 	return sakura_control_pack_message(&request.base, payload);
+}
+
+
+gboolean
+sakura_control_encode_create_terminal_request(const gchar *request_id,
+	                                             const gchar *terminal_id,
+	                                             const gchar *group_id,
+	                                             const gchar *task_id,
+	                                             const gchar *cwd,
+	                                             guint cols, guint rows,
+	                                             GByteArray *payload)
+{
+	return sakura_control_encode_create_terminal_request_with_page(
+		request_id, terminal_id, NULL, group_id, task_id, cwd, cols, rows,
+		payload);
 }
 
 
@@ -536,8 +587,10 @@ sakura_control_encode_detach_terminal_request(const gchar *request_id,
 
 
 gboolean
-sakura_control_encode_restart_terminal_request(const gchar *request_id,
+sakura_control_encode_restart_terminal_request_with_page(
+	                                               const gchar *request_id,
 	                                               const gchar *terminal_id,
+	                                               const gchar *page_id,
 	                                               const gchar *group_id,
 	                                               const gchar *task_id,
 	                                               const gchar *cwd,
@@ -553,6 +606,7 @@ sakura_control_encode_restart_terminal_request(const gchar *request_id,
 	    terminal_id == NULL || terminal_id[0] == '\0')
 		return FALSE;
 	restart.terminal_id = (gchar *)terminal_id;
+	restart.page_id = (gchar *)sakura_control_string(page_id);
 	restart.group_id = (gchar *)sakura_control_string(group_id);
 	restart.task_id = (gchar *)sakura_control_string(task_id);
 	restart.cwd = (gchar *)sakura_control_string(cwd);
@@ -562,6 +616,21 @@ sakura_control_encode_restart_terminal_request(const gchar *request_id,
 	request.body_case = SAKURA__CONTROL__V1__REQUEST__BODY_RESTART_TERMINAL;
 	request.restart_terminal = &restart;
 	return sakura_control_pack_message(&request.base, payload);
+}
+
+
+gboolean
+sakura_control_encode_restart_terminal_request(const gchar *request_id,
+	                                               const gchar *terminal_id,
+	                                               const gchar *group_id,
+	                                               const gchar *task_id,
+	                                               const gchar *cwd,
+	                                               guint cols, guint rows,
+	                                               GByteArray *payload)
+{
+	return sakura_control_encode_restart_terminal_request_with_page(
+		request_id, terminal_id, NULL, group_id, task_id, cwd, cols, rows,
+		payload);
 }
 
 
@@ -662,6 +731,17 @@ sakura_control_decode_request(const guint8 *payload,
 			request->title = g_strdup(decoded->update_task->title);
 		}
 		break;
+	case SAKURA__CONTROL__V1__REQUEST__BODY_UPDATE_PAGE:
+		if (decoded->update_page != NULL) {
+			request->kind = SAKURA_CONTROL_REQUEST_UPDATE_PAGE;
+			request->page_id = g_strdup(decoded->update_page->page_id);
+			request->group_id = g_strdup(decoded->update_page->group_id);
+			request->task_id = g_strdup(decoded->update_page->task_id);
+			request->title = g_strdup(decoded->update_page->title);
+			request->title_set_by_user = decoded->update_page->title_set_by_user;
+			request->archived = decoded->update_page->archived;
+		}
+		break;
 	case SAKURA__CONTROL__V1__REQUEST__BODY_SET_TASK_ARCHIVED:
 		if (decoded->set_task_archived != NULL) {
 			request->kind = SAKURA_CONTROL_REQUEST_SET_TASK_ARCHIVED;
@@ -679,6 +759,7 @@ sakura_control_decode_request(const guint8 *payload,
 		if (decoded->create_terminal != NULL) {
 			request->kind = SAKURA_CONTROL_REQUEST_CREATE_TERMINAL;
 			request->terminal_id = g_strdup(decoded->create_terminal->terminal_id);
+			request->page_id = g_strdup(decoded->create_terminal->page_id);
 			request->group_id = g_strdup(decoded->create_terminal->group_id);
 			request->task_id = g_strdup(decoded->create_terminal->task_id);
 			request->cwd = g_strdup(decoded->create_terminal->cwd);
@@ -733,6 +814,7 @@ sakura_control_decode_request(const guint8 *payload,
 			request->kind = SAKURA_CONTROL_REQUEST_RESTART_TERMINAL;
 			request->terminal_id = g_strdup(
 				decoded->restart_terminal->terminal_id);
+			request->page_id = g_strdup(decoded->restart_terminal->page_id);
 			request->group_id = g_strdup(decoded->restart_terminal->group_id);
 			request->task_id = g_strdup(decoded->restart_terminal->task_id);
 			request->cwd = g_strdup(decoded->restart_terminal->cwd);
@@ -812,6 +894,26 @@ sakura_control_fill_terminal(Sakura__Control__V1__Terminal *message,
 
 
 static void
+sakura_control_fill_page(Sakura__Control__V1__Page *message,
+                         const SakuraCorePage *page)
+{
+	sakura__control__v1__page__init(message);
+	message->id = (gchar *)sakura_control_string(page->id);
+	message->group_id = (gchar *)sakura_control_string(
+		page->group != NULL ? page->group->id : "root");
+	message->task_id = (gchar *)sakura_control_string(
+		page->task != NULL ? page->task->id : NULL);
+	message->title = (gchar *)sakura_control_string(page->title);
+	message->title_set_by_user = page->title_set_by_user;
+	message->archived = page->archived;
+	message->root_layout_id = (gchar *)sakura_control_string(
+		page->root_layout_id);
+	message->active_terminal_id = (gchar *)sakura_control_string(
+		page->active_terminal_id);
+}
+
+
+static void
 sakura_control_fill_snapshot(
 	Sakura__Control__V1__WorkspaceSnapshot *snapshot,
 	const SakuraCoreWorkspace *workspace)
@@ -819,6 +921,7 @@ sakura_control_fill_snapshot(
 	GPtrArray *groups;
 	GPtrArray *tasks;
 	GPtrArray *terminals;
+	GPtrArray *pages;
 
 	sakura__control__v1__workspace_snapshot__init(snapshot);
 	groups = sakura_core_workspace_ordered_groups(workspace);
@@ -869,6 +972,23 @@ sakura_control_fill_snapshot(
 	if (terminals != workspace->terminals)
 		g_ptr_array_unref(terminals);
 
+	pages = workspace != NULL && workspace->pages != NULL
+	      ? workspace->pages : g_ptr_array_new();
+	if (pages->len != 0) {
+		snapshot->pages = g_new0(Sakura__Control__V1__Page *, pages->len);
+		for (guint index = 0; index < pages->len; index++) {
+			Sakura__Control__V1__Page *page_message = g_new0(
+				Sakura__Control__V1__Page, 1);
+
+			sakura_control_fill_page(page_message,
+			                         g_ptr_array_index(pages, index));
+			snapshot->pages[index] = page_message;
+		}
+		snapshot->n_pages = pages->len;
+	}
+	if (pages != workspace->pages)
+		g_ptr_array_unref(pages);
+
 	snapshot->active_group_id = (gchar *)sakura_control_string(
 		workspace->active_group != NULL ? workspace->active_group->id : "root");
 	snapshot->active_task_id = (gchar *)sakura_control_string(
@@ -889,9 +1009,12 @@ sakura_control_free_snapshot_messages(
 		g_free(snapshot->tasks[index]);
 	for (gsize index = 0; index < snapshot->n_terminals; index++)
 		g_free(snapshot->terminals[index]);
+	for (gsize index = 0; index < snapshot->n_pages; index++)
+		g_free(snapshot->pages[index]);
 	g_free(snapshot->groups);
 	g_free(snapshot->tasks);
 	g_free(snapshot->terminals);
+	g_free(snapshot->pages);
 }
 
 
@@ -1231,6 +1354,23 @@ sakura_control_decode_workspace_changed_event(
 		task->order = wire_task->order;
 		task->archived = wire_task->archived;
 		g_ptr_array_add(decoded_snapshot->tasks, task);
+	}
+	for (gsize index = 0; index < wire_snapshot->n_pages; index++) {
+		Sakura__Control__V1__Page *wire_page = wire_snapshot->pages[index];
+		SakuraSessionPageRecord *page = g_new0(SakuraSessionPageRecord, 1);
+
+		page->id = g_strdup(wire_page->id);
+		page->group_id = g_strdup(wire_page->group_id);
+		page->task_id = g_strdup(wire_page->task_id);
+		page->parent_id = g_strdup(page->task_id != NULL &&
+		                          page->task_id[0] != '\0'
+		                        ? page->task_id : page->group_id);
+		page->title = g_strdup(wire_page->title);
+		page->title_set_by_user = wire_page->title_set_by_user;
+		page->archived = wire_page->archived;
+		page->root_layout_id = g_strdup(wire_page->root_layout_id);
+		page->active_terminal_id = g_strdup(wire_page->active_terminal_id);
+		g_ptr_array_add(decoded_snapshot->pages, page);
 	}
 	*sequence = decoded->sequence;
 	*snapshot = decoded_snapshot;

@@ -67,6 +67,7 @@ typedef struct sakura_session_snapshot SakuraSessionSnapshot;
 typedef struct sakura_core_workspace SakuraCoreWorkspace;
 typedef struct sakura_core_group SakuraCoreGroup;
 typedef struct sakura_core_task SakuraCoreTask;
+typedef struct sakura_core_page SakuraCorePage;
 typedef struct sakura_core_terminal SakuraCoreTerminal;
 
 typedef struct {
@@ -112,6 +113,7 @@ typedef struct {
 typedef struct {
 	gchar *id;
 	gchar *parent_id;
+	gchar *group_id;
 	gchar *title;
 	gboolean title_set_by_user;
 	gboolean archived;
@@ -187,6 +189,17 @@ struct sakura_core_task {
 	gboolean archived;
 };
 
+struct sakura_core_page {
+	gchar *id;
+	gchar *title;
+	gboolean title_set_by_user;
+	gboolean archived;
+	gchar *root_layout_id;
+	gchar *active_terminal_id;
+	SakuraCoreGroup *group;
+	SakuraCoreTask *task;
+};
+
 struct sakura_core_terminal {
 	gchar *id;
 	gchar *cwd;
@@ -202,6 +215,7 @@ struct sakura_core_workspace {
 	SakuraCoreGroup *root_group;
 	GPtrArray *groups; /* SakuraCoreGroup *, owned. */
 	GPtrArray *tasks;  /* SakuraCoreTask *, owned. */
+	GPtrArray *pages;  /* SakuraCorePage *, owned. */
 	GPtrArray *terminals; /* SakuraCoreTerminal *, owned. */
 	SakuraCoreGroup *active_group; /* Borrowed. */
 	SakuraCoreTask *active_task; /* Borrowed. */
@@ -226,6 +240,10 @@ SakuraCoreTask *sakura_core_task_new(const gchar *id,
                                      SakuraCoreGroup *group,
                                      SakuraCoreTask *parent);
 void sakura_core_task_free(SakuraCoreTask *task);
+SakuraCorePage *sakura_core_page_new(const gchar *id,
+                                     SakuraCoreGroup *group,
+                                     SakuraCoreTask *task);
+void sakura_core_page_free(SakuraCorePage *page);
 SakuraCoreTerminal *sakura_core_terminal_new(const gchar *id,
                                              const gchar *cwd,
                                              SakuraCoreGroup *group,
@@ -257,6 +275,10 @@ SakuraCoreGroup *sakura_core_workspace_find_group(
 	SakuraCoreWorkspace *workspace, const gchar *id);
 SakuraCoreTask *sakura_core_workspace_find_task(
 	SakuraCoreWorkspace *workspace, const gchar *id);
+SakuraCorePage *sakura_core_workspace_find_page(
+	SakuraCoreWorkspace *workspace, const gchar *id);
+gboolean sakura_core_workspace_add_page(SakuraCoreWorkspace *workspace,
+                                         SakuraCorePage *page);
 GPtrArray *sakura_core_workspace_ordered_groups(
 	const SakuraCoreWorkspace *workspace);
 GPtrArray *sakura_core_workspace_ordered_tasks(

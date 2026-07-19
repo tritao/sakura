@@ -468,6 +468,51 @@ sakura_agent_update_task(SakuraAgent *agent,
 
 
 static gboolean
+sakura_agent_update_page(SakuraAgent *agent,
+	                      const SakuraControlRequest *request,
+	                      GError **error)
+{
+	SakuraCorePage *page;
+	SakuraCoreGroup *group;
+	SakuraCoreTask *task = NULL;
+
+	if (request->page_id == NULL || request->page_id[0] == '\0')
+		return sakura_agent_error(error, "page id is required");
+	group = sakura_agent_request_group(agent, request->group_id, error);
+	if (group == NULL)
+		return FALSE;
+	if (request->task_id != NULL && request->task_id[0] != '\0' &&
+	    g_strcmp0(request->task_id, "root") != 0) {
+		task = sakura_core_workspace_find_task(agent->workspace,
+		                                       request->task_id);
+		if (task == NULL) {
+			g_set_error(error, G_IO_ERROR, G_IO_ERROR_NOT_FOUND,
+			            "task %s was not found", request->task_id);
+			return FALSE;
+		}
+		if (task->group != group)
+			return sakura_agent_error(error,
+			                          "page task belongs to another group");
+	}
+	page = sakura_core_workspace_find_page(agent->workspace, request->page_id);
+	if (page == NULL) {
+		page = sakura_core_page_new(request->page_id, group, task);
+		if (!sakura_core_workspace_add_page(agent->workspace, page)) {
+			sakura_core_page_free(page);
+			return sakura_agent_error(error, "could not register page");
+		}
+	}
+	page->group = task != NULL ? task->group : group;
+	page->task = task;
+	g_free(page->title);
+	page->title = g_strdup(request->title != NULL ? request->title : "");
+	page->title_set_by_user = request->title_set_by_user;
+	page->archived = request->archived;
+	return TRUE;
+}
+
+
+static gboolean
 sakura_agent_set_task_archived(SakuraAgent *agent,
 	                             const SakuraControlRequest *request,
 	                             GError **error)
@@ -510,6 +555,38 @@ sakura_agent_delete_task(SakuraAgent *agent,
 		                          "task must have no child tasks before deletion");
 	if (!sakura_core_workspace_remove_task(agent->workspace, task))
 		return sakura_agent_error(error, "could not delete task");
+	return TRUE;
+}
+
+
+static gboolean
+sakura_agent_bind_page_terminal(SakuraAgent *agent, const gchar *page_id,
+	                              const gchar *terminal_id,
+	                              SakuraCoreGroup *group,
+	                              SakuraCoreTask *task,
+	                              const gchar *title,
+	                              GError **error)
+{
+	SakuraCorePage *page;
+
+	if (page_id == NULL || page_id[0] == '\0')
+		return TRUE;
+	page = sakura_core_workspace_find_page(agent->workspace, page_id);
+	if (page == NULL) {
+		page = sakura_core_page_new(page_id, group, task);
+		if (!sakura_core_workspace_add_page(agent->workspace, page)) {
+			sakura_core_page_free(page);
+			return sakura_agent_error(error, "could not register page");
+		}
+	}
+	page->group = group;
+	page->task = task;
+	g_free(page->active_terminal_id);
+	page->active_terminal_id = g_strdup(terminal_id);
+	if (page->title == NULL || page->title[0] == '\0') {
+		g_free(page->title);
+		page->title = g_strdup(title != NULL ? title : "");
+	}
 	return TRUE;
 }
 
@@ -602,6 +679,13 @@ sakura_agent_create_terminal(SakuraAgent *agent,
 		g_free(id);
 		g_free(owned_cwd);
 		return sakura_agent_error(error, "could not register terminal");
+	}
+	if (!sakura_agent_bind_page_terminal(agent, request->page_id, id, group,
+	                                     task, core->title, error)) {
+		sakura_core_workspace_remove_terminal(agent->workspace, core);
+		g_free(id);
+		g_free(owned_cwd);
+		return FALSE;
 	}
 	terminal = g_new0(SakuraAgentTerminal, 1);
 	terminal->agent = agent;
@@ -767,6 +851,14 @@ sakura_agent_close_terminal(SakuraAgent *agent,
 			return sakura_agent_error(error, "could not remove terminal");
 		terminal->core = NULL;
 	}
+	for (guint index = 0; agent->workspace->pages != NULL &&
+	                     index < agent->workspace->pages->len; index++) {
+		SakuraCorePage *page = g_ptr_array_index(agent->workspace->pages, index);
+
+		if (page != NULL && g_strcmp0(page->active_terminal_id,
+	                              terminal->id) == 0)
+			g_clear_pointer(&page->active_terminal_id, g_free);
+	}
 	return TRUE;
 }
 
@@ -846,6 +938,9 @@ sakura_agent_apply_request(SakuraAgent *agent,
 		break;
 	case SAKURA_CONTROL_REQUEST_UPDATE_TASK:
 		changed = sakura_agent_update_task(agent, request, error);
+		break;
+	case SAKURA_CONTROL_REQUEST_UPDATE_PAGE:
+		changed = sakura_agent_update_page(agent, request, error);
 		break;
 	case SAKURA_CONTROL_REQUEST_SET_TASK_ARCHIVED:
 		changed = sakura_agent_set_task_archived(agent, request, error);

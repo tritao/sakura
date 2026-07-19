@@ -580,6 +580,54 @@ sakura_workspace_model_apply_snapshot(SakuraWorkspaceModel *model,
 				task->group = group;
 			}
 		}
+		/* Pages are agent-owned logical records, but their GTK surfaces are
+		 * desktop-owned. Reconcile only existing surfaces by stable page ID;
+		 * creating or destroying widgets remains a desktop restore operation. */
+		for (guint index = 0; snapshot->pages != NULL &&
+		                     index < snapshot->pages->len; index++) {
+			SakuraSessionPageRecord *record =
+				g_ptr_array_index(snapshot->pages, index);
+			SakuraPage *page = NULL;
+			SakuraTask *task;
+			SakuraGroup *group;
+
+			if (record == NULL || record->id == NULL || model->pages == NULL)
+				continue;
+			for (guint page_index = 0; page_index < model->pages->len;
+			     page_index++) {
+				SakuraPage *candidate =
+					g_ptr_array_index(model->pages, page_index);
+
+				if (candidate != NULL &&
+				    g_strcmp0(candidate->id, record->id) == 0) {
+					page = candidate;
+					break;
+				}
+			}
+			if (page == NULL)
+				continue;
+			task = record->task_id != NULL
+			     ? sakura_workspace_model_find_task(model, record->task_id) : NULL;
+			if (record->task_id != NULL && record->task_id[0] != '\0' &&
+			    g_strcmp0(record->task_id, "root") != 0 && task == NULL)
+				continue;
+			group = record->group_id != NULL
+			      ? sakura_workspace_model_find_group(model, record->group_id) : NULL;
+			if (task != NULL)
+				group = task->group;
+			if (group == NULL && record->parent_id != NULL)
+				group = sakura_workspace_model_find_group(model, record->parent_id);
+			if (group == NULL)
+				continue;
+			page->task = task;
+			page->group = group;
+			g_free(page->title);
+			page->title = g_strdup(record->title != NULL ? record->title : "");
+			page->title_set_by_user = record->title_set_by_user;
+			page->archived = record->archived;
+			g_free(page->last_active_terminal_id);
+			page->last_active_terminal_id = g_strdup(record->active_terminal_id);
+		}
 	}
 	/* A full desktop restore is authoritative for agent-owned tasks. An agent
 	 * merge deliberately skips this block because the agent has no page graph. */

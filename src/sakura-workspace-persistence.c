@@ -242,6 +242,7 @@ sakura_workspace_snapshot_page_record(const SakuraWorkspaceModel *model,
 	record->id = g_strdup(page->id);
 	representative = page->tab_bar_tab;
 	group = sakura_workspace_snapshot_group_for_page(model, page);
+	record->group_id = g_strdup(group != NULL ? group->id : "root");
 	record->parent_id = g_strdup(page->task != NULL
 	                           ? page->task->id
 	                           : group != NULL ? group->id : "root");

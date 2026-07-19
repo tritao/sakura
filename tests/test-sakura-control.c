@@ -200,6 +200,22 @@ test_mutation_request_roundtrip(void)
 	sakura_control_request_clear(&request);
 	g_byte_array_set_size(encoded, 0);
 
+	g_assert_true(sakura_control_encode_update_page_request(
+		"update-page", "page-1", "group-1", "task-1", "Renamed page",
+		TRUE, TRUE, encoded));
+	g_assert_true(sakura_control_decode_request(encoded->data, encoded->len,
+	                                           &request, &error));
+	g_assert_no_error(error);
+	g_assert_cmpint(request.kind, ==, SAKURA_CONTROL_REQUEST_UPDATE_PAGE);
+	g_assert_cmpstr(request.page_id, ==, "page-1");
+	g_assert_cmpstr(request.group_id, ==, "group-1");
+	g_assert_cmpstr(request.task_id, ==, "task-1");
+	g_assert_cmpstr(request.title, ==, "Renamed page");
+	g_assert_true(request.title_set_by_user);
+	g_assert_true(request.archived);
+	sakura_control_request_clear(&request);
+	g_byte_array_set_size(encoded, 0);
+
 	g_assert_true(sakura_control_encode_set_task_archived_request(
 		"archive-task", "task-1", TRUE, encoded));
 	g_assert_true(sakura_control_decode_request(encoded->data, encoded->len,
@@ -237,8 +253,9 @@ test_mutation_request_roundtrip(void)
 	sakura_control_request_clear(&request);
 	g_byte_array_set_size(encoded, 0);
 
-	g_assert_true(sakura_control_encode_create_terminal_request(
-		"create-terminal", "terminal-1", "group-1", "task-1", "/tmp", 100, 40,
+	g_assert_true(sakura_control_encode_create_terminal_request_with_page(
+		"create-terminal", "terminal-1", "page-1", "group-1", "task-1",
+		"/tmp", 100, 40,
 		encoded));
 	g_assert_true(sakura_control_decode_request(encoded->data, encoded->len,
 	                                           &request, &error));
@@ -246,6 +263,7 @@ test_mutation_request_roundtrip(void)
 	g_assert_cmpint(request.kind, ==,
 	               SAKURA_CONTROL_REQUEST_CREATE_TERMINAL);
 	g_assert_cmpstr(request.terminal_id, ==, "terminal-1");
+	g_assert_cmpstr(request.page_id, ==, "page-1");
 	g_assert_cmpstr(request.group_id, ==, "group-1");
 	g_assert_cmpstr(request.task_id, ==, "task-1");
 	g_assert_cmpstr(request.cwd, ==, "/tmp");
@@ -254,15 +272,16 @@ test_mutation_request_roundtrip(void)
 	sakura_control_request_clear(&request);
 	g_byte_array_set_size(encoded, 0);
 
-	g_assert_true(sakura_control_encode_restart_terminal_request(
-		"restart-terminal", "terminal-1", "group-1", "task-1", "/tmp",
-		120, 50, encoded));
+	g_assert_true(sakura_control_encode_restart_terminal_request_with_page(
+		"restart-terminal", "terminal-1", "page-1", "group-1", "task-1",
+		"/tmp", 120, 50, encoded));
 	g_assert_true(sakura_control_decode_request(encoded->data, encoded->len,
 	                                           &request, &error));
 	g_assert_no_error(error);
 	g_assert_cmpint(request.kind, ==,
 	               SAKURA_CONTROL_REQUEST_RESTART_TERMINAL);
 	g_assert_cmpstr(request.terminal_id, ==, "terminal-1");
+	g_assert_cmpstr(request.page_id, ==, "page-1");
 	g_assert_cmpstr(request.group_id, ==, "group-1");
 	g_assert_cmpstr(request.task_id, ==, "task-1");
 	g_assert_cmpstr(request.cwd, ==, "/tmp");
@@ -542,7 +561,8 @@ test_agent_set_event_timeout(GSocketConnection *connection)
 static gboolean
 test_agent_read_workspace_until(GInputStream *input, gsize terminal_count,
 	                              const gchar *terminal_id,
-	                              guint expected_cols, guint expected_rows)
+	                              guint expected_cols, guint expected_rows,
+	                              const gchar *expected_page_id)
 {
 	for (guint attempt = 0; attempt < 100; attempt++) {
 		GByteArray *payload = NULL;
@@ -580,12 +600,64 @@ test_agent_read_workspace_until(GInputStream *input, gsize terminal_count,
 						g_assert_cmpuint(terminal->rows, ==, expected_rows);
 				}
 			}
+			if (expected_page_id != NULL) {
+				gboolean page_found = FALSE;
+
+				for (gsize index = 0; index < snapshot->n_pages; index++) {
+					if (g_strcmp0(snapshot->pages[index]->id,
+					             expected_page_id) == 0) {
+						page_found = TRUE;
+						break;
+					}
+				}
+				found = found && page_found;
+			}
 			if (found) {
 				sakura__control__v1__event__free_unpacked(event, NULL);
 				return TRUE;
 			}
 		}
 		sakura__control__v1__event__free_unpacked(event, NULL);
+	}
+	return FALSE;
+}
+
+
+static gboolean
+test_agent_read_page_state_until(GInputStream *input, const gchar *page_id,
+                                 const gchar *title, gboolean title_set_by_user,
+                                 gboolean archived)
+{
+	for (guint attempt = 0; attempt < 100; attempt++) {
+		GByteArray *payload = NULL;
+		SakuraSessionSnapshot *snapshot = NULL;
+		guint64 sequence;
+		GError *error = NULL;
+
+		if (!sakura_control_frame_read(input, &payload, NULL, &error)) {
+			g_clear_error(&error);
+			return FALSE;
+		}
+		if (sakura_control_decode_workspace_changed_event(
+				payload->data, payload->len, &sequence, &snapshot, &error)) {
+			for (guint index = 0; snapshot->pages != NULL &&
+			                    index < snapshot->pages->len; index++) {
+				SakuraSessionPageRecord *page =
+					g_ptr_array_index(snapshot->pages, index);
+
+				if (page != NULL && g_strcmp0(page->id, page_id) == 0 &&
+				    g_strcmp0(page->title, title) == 0 &&
+				    page->title_set_by_user == title_set_by_user &&
+				    page->archived == archived) {
+					sakura_session_snapshot_free(snapshot);
+					g_byte_array_unref(payload);
+					return TRUE;
+				}
+			}
+		}
+		g_clear_error(&error);
+		sakura_session_snapshot_free(snapshot);
+		g_byte_array_unref(payload);
 	}
 	return FALSE;
 }
@@ -1080,12 +1152,12 @@ test_agent_terminal_lifecycle(void)
 	sakura_control_response_clear(&response);
 	g_clear_pointer(&event_payload, g_byte_array_unref);
 	g_assert_true(test_agent_read_workspace_until(subscriber_input, 0, NULL,
-	                                              0, 0));
+	                                              0, 0, NULL));
 
 	g_byte_array_set_size(request, 0);
-	g_assert_true(sakura_control_encode_create_terminal_request(
-		"create-terminal", "terminal-agent-1", "root", "root", "/tmp", 100, 40,
-		request));
+	g_assert_true(sakura_control_encode_create_terminal_request_with_page(
+		"create-terminal", "terminal-agent-1", "page-agent-1", "root", "root",
+		"/tmp", 100, 40, request));
 	test_agent_call_on_connection(command_connection, "create-terminal", request,
 	                              &response);
 	g_assert_true(response.accepted);
@@ -1095,12 +1167,13 @@ test_agent_terminal_lifecycle(void)
 	terminal_id = g_strdup(response.accepted_id);
 	sakura_control_response_clear(&response);
 	g_assert_true(test_agent_read_workspace_until(subscriber_input, 1,
-	                                              terminal_id, 100, 40));
+	                                              terminal_id, 100, 40,
+	                                              "page-agent-1"));
 
 	g_byte_array_set_size(request, 0);
-	g_assert_true(sakura_control_encode_restart_terminal_request(
-		"terminal-restart", terminal_id, "root", "root", directory, 120, 50,
-		request));
+	g_assert_true(sakura_control_encode_restart_terminal_request_with_page(
+		"terminal-restart", terminal_id, "page-agent-1", "root", "root",
+		directory, 120, 50, request));
 	test_agent_call_on_connection(command_connection, "terminal-restart", request,
 	                              &response);
 	g_assert_true(response.accepted);
@@ -1108,7 +1181,19 @@ test_agent_terminal_lifecycle(void)
 	g_assert_cmpstr(response.accepted_id, ==, terminal_id);
 	sakura_control_response_clear(&response);
 	g_assert_true(test_agent_read_workspace_until(subscriber_input, 1,
-	                                              terminal_id, 120, 50));
+	                                              terminal_id, 120, 50,
+	                                              "page-agent-1"));
+
+	g_byte_array_set_size(request, 0);
+	g_assert_true(sakura_control_encode_update_page_request(
+		"page-update", "page-agent-1", "root", "root", "Agent page",
+		TRUE, TRUE, request));
+	test_agent_call_on_connection(command_connection, "page-update", request,
+	                              &response);
+	g_assert_true(response.has_snapshot);
+	sakura_control_response_clear(&response);
+	g_assert_true(test_agent_read_page_state_until(
+		subscriber_input, "page-agent-1", "Agent page", TRUE, TRUE));
 
 	g_byte_array_set_size(request, 0);
 	{
@@ -1161,7 +1246,7 @@ test_agent_terminal_lifecycle(void)
 	g_assert_true(response.has_snapshot);
 	sakura_control_response_clear(&response);
 	g_assert_true(test_agent_read_workspace_until(subscriber_input, 1,
-	                                              terminal_id, 120, 50));
+	                                              terminal_id, 120, 50, NULL));
 
 	g_byte_array_set_size(request, 0);
 	{
@@ -1186,7 +1271,7 @@ test_agent_terminal_lifecycle(void)
 	g_assert_true(response.has_snapshot);
 	sakura_control_response_clear(&response);
 	g_assert_true(test_agent_read_workspace_until(subscriber_input, 0, NULL,
-	                                              0, 0));
+	                                              0, 0, NULL));
 
 	g_io_stream_close(G_IO_STREAM(subscriber), NULL, NULL);
 	g_object_unref(subscriber);

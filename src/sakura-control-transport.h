@@ -24,7 +24,8 @@ typedef enum {
 	SAKURA_CONTROL_REQUEST_ATTACH_TERMINAL,
 	SAKURA_CONTROL_REQUEST_DETACH_TERMINAL,
 	SAKURA_CONTROL_REQUEST_HELLO,
-	SAKURA_CONTROL_REQUEST_RESTART_TERMINAL
+	SAKURA_CONTROL_REQUEST_RESTART_TERMINAL,
+	SAKURA_CONTROL_REQUEST_UPDATE_PAGE
 } SakuraControlRequestKind;
 
 typedef struct {
@@ -35,6 +36,7 @@ typedef struct {
 	gchar *directory;
 	gchar *group_id;
 	gchar *task_id;
+	gchar *page_id;
 	gchar *terminal_id;
 	gchar *cwd;
 	gchar *provider;
@@ -43,6 +45,7 @@ typedef struct {
 	gchar *client_name;
 	gchar *workspace_id;
 	gboolean archived;
+	gboolean title_set_by_user;
 	guint protocol_version;
 	guint8 *input_data;
 	gsize input_length;
@@ -109,6 +112,10 @@ gboolean sakura_control_encode_delete_group_request(
 gboolean sakura_control_encode_update_task_request(
 	const gchar *request_id, const gchar *task_id, const gchar *title,
 	GByteArray *payload);
+gboolean sakura_control_encode_update_page_request(
+	const gchar *request_id, const gchar *page_id, const gchar *group_id,
+	const gchar *task_id, const gchar *title, gboolean title_set_by_user,
+	gboolean archived, GByteArray *payload);
 gboolean sakura_control_encode_set_task_archived_request(
 	const gchar *request_id, const gchar *task_id, gboolean archived,
 	GByteArray *payload);
@@ -118,6 +125,10 @@ gboolean sakura_control_encode_create_terminal_request(
 	const gchar *request_id, const gchar *terminal_id, const gchar *group_id,
 	const gchar *task_id, const gchar *cwd, guint cols, guint rows,
 	GByteArray *payload);
+gboolean sakura_control_encode_create_terminal_request_with_page(
+	const gchar *request_id, const gchar *terminal_id, const gchar *page_id,
+	const gchar *group_id, const gchar *task_id, const gchar *cwd,
+	guint cols, guint rows, GByteArray *payload);
 gboolean sakura_control_encode_terminal_input_request(
 	const gchar *request_id, const gchar *terminal_id, const guint8 *data,
 	gsize data_length, GByteArray *payload);
@@ -135,6 +146,10 @@ gboolean sakura_control_encode_restart_terminal_request(
 	const gchar *request_id, const gchar *terminal_id, const gchar *group_id,
 	const gchar *task_id, const gchar *cwd, guint cols, guint rows,
 	GByteArray *payload);
+gboolean sakura_control_encode_restart_terminal_request_with_page(
+	const gchar *request_id, const gchar *terminal_id, const gchar *page_id,
+	const gchar *group_id, const gchar *task_id, const gchar *cwd,
+	guint cols, guint rows, GByteArray *payload);
 gboolean sakura_control_encode_subscribe_events_request(
 	const gchar *request_id, guint64 after_sequence, GByteArray *payload);
 gboolean sakura_control_decode_request(const guint8 *payload,

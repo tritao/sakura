@@ -47,6 +47,8 @@ sakura_core_workspace_new(void)
 		(GDestroyNotify)sakura_core_group_free);
 	workspace->tasks = g_ptr_array_new_with_free_func(
 		(GDestroyNotify)sakura_core_task_free);
+	workspace->pages = g_ptr_array_new_with_free_func(
+		(GDestroyNotify)sakura_core_page_free);
 	workspace->terminals = g_ptr_array_new_with_free_func(
 		(GDestroyNotify)sakura_core_terminal_free);
 	return workspace;
@@ -59,6 +61,7 @@ sakura_core_workspace_free(SakuraCoreWorkspace *workspace)
 	if (workspace == NULL)
 		return;
 	g_clear_pointer(&workspace->terminals, g_ptr_array_unref);
+	g_clear_pointer(&workspace->pages, g_ptr_array_unref);
 	g_clear_pointer(&workspace->tasks, g_ptr_array_unref);
 	g_clear_pointer(&workspace->groups, g_ptr_array_unref);
 	g_free(workspace);
@@ -120,6 +123,33 @@ sakura_core_task_free(SakuraCoreTask *task)
 	g_free(task->external_id);
 	g_free(task->url);
 	g_free(task);
+}
+
+
+SakuraCorePage *
+sakura_core_page_new(const gchar *id, SakuraCoreGroup *group,
+                     SakuraCoreTask *task)
+{
+	SakuraCorePage *page = g_new0(SakuraCorePage, 1);
+
+	page->id = g_strdup(id);
+	page->title = g_strdup("");
+	page->group = group;
+	page->task = task;
+	return page;
+}
+
+
+void
+sakura_core_page_free(SakuraCorePage *page)
+{
+	if (page == NULL)
+		return;
+	g_free(page->id);
+	g_free(page->title);
+	g_free(page->root_layout_id);
+	g_free(page->active_terminal_id);
+	g_free(page);
 }
 
 
@@ -369,6 +399,45 @@ sakura_core_workspace_find_task(SakuraCoreWorkspace *workspace,
 			return task;
 	}
 	return NULL;
+}
+
+
+SakuraCorePage *
+sakura_core_workspace_find_page(SakuraCoreWorkspace *workspace,
+                                 const gchar *id)
+{
+	if (workspace == NULL || id == NULL || workspace->pages == NULL)
+		return NULL;
+	for (guint index = 0; index < workspace->pages->len; index++) {
+		SakuraCorePage *page = g_ptr_array_index(workspace->pages, index);
+
+		if (page != NULL && g_strcmp0(page->id, id) == 0)
+			return page;
+	}
+	return NULL;
+}
+
+
+gboolean
+sakura_core_workspace_add_page(SakuraCoreWorkspace *workspace,
+                               SakuraCorePage *page)
+{
+	if (workspace == NULL || page == NULL || page->id == NULL ||
+	    workspace->pages == NULL ||
+	    sakura_core_workspace_find_page(workspace, page->id) != NULL)
+		return FALSE;
+	if (page->group == NULL)
+		page->group = workspace->root_group;
+	if (page->group != NULL &&
+	    !sakura_core_workspace_contains_group(workspace, page->group))
+		return FALSE;
+	if (page->task != NULL &&
+	    !sakura_core_workspace_contains_task(workspace, page->task))
+		return FALSE;
+	if (page->task != NULL && page->task->group != page->group)
+		return FALSE;
+	g_ptr_array_add(workspace->pages, page);
+	return TRUE;
 }
 
 
@@ -675,6 +744,52 @@ sakura_core_workspace_add_snapshot_group(SakuraCoreWorkspace *workspace,
 }
 
 
+static gboolean
+sakura_core_workspace_add_snapshot_page(
+	SakuraCoreWorkspace *workspace, const SakuraSessionPageRecord *record)
+{
+	SakuraCoreTask *task;
+	SakuraCoreGroup *group;
+	SakuraCorePage *page;
+
+	if (record == NULL || record->id == NULL ||
+	    sakura_core_workspace_find_page(workspace, record->id) != NULL)
+		return FALSE;
+	task = record->task_id != NULL
+	     ? sakura_core_workspace_find_task(workspace, record->task_id) : NULL;
+	if (record->task_id != NULL && record->task_id[0] != '\0' &&
+	    g_strcmp0(record->task_id, "root") != 0 && task == NULL)
+		return FALSE;
+	group = record->group_id != NULL
+	      ? sakura_core_workspace_find_group(workspace, record->group_id) : NULL;
+	if (task != NULL)
+		group = task->group;
+	if (group == NULL && record->parent_id != NULL) {
+		group = sakura_core_workspace_find_group(workspace, record->parent_id);
+		if (group == NULL) {
+			task = sakura_core_workspace_find_task(workspace,
+			                                       record->parent_id);
+			if (task != NULL)
+				group = task->group;
+		}
+	}
+	if (group == NULL)
+		group = workspace->root_group;
+	page = sakura_core_page_new(record->id, group, task);
+	g_free(page->title);
+	page->title = g_strdup(record->title != NULL ? record->title : "");
+	page->title_set_by_user = record->title_set_by_user;
+	page->archived = record->archived;
+	page->root_layout_id = g_strdup(record->root_layout_id);
+	page->active_terminal_id = g_strdup(record->active_terminal_id);
+	if (!sakura_core_workspace_add_page(workspace, page)) {
+		sakura_core_page_free(page);
+		return FALSE;
+	}
+	return TRUE;
+}
+
+
 SakuraCoreWorkspace *
 sakura_core_workspace_from_snapshot(const SakuraSessionSnapshot *snapshot,
 	                                GError **error)
@@ -819,6 +934,11 @@ sakura_core_workspace_from_snapshot(const SakuraSessionSnapshot *snapshot,
 				sakura_core_task_free(task);
 		}
 	}
+	if (snapshot->pages != NULL) {
+		for (guint index = 0; index < snapshot->pages->len; index++)
+			sakura_core_workspace_add_snapshot_page(
+				workspace, g_ptr_array_index(snapshot->pages, index));
+	}
 	workspace->active_group = sakura_core_workspace_find_group(
 		workspace, snapshot->active_group_id);
 	if (workspace->active_group == NULL)
@@ -837,10 +957,11 @@ sakura_core_workspace_sync_snapshot(const SakuraCoreWorkspace *workspace,
 	GPtrArray *tasks;
 
 	if (workspace == NULL || snapshot == NULL || snapshot->groups == NULL ||
-	    snapshot->tasks == NULL)
+	    snapshot->tasks == NULL || snapshot->pages == NULL)
 		return FALSE;
 	g_ptr_array_set_size(snapshot->groups, 0);
 	g_ptr_array_set_size(snapshot->tasks, 0);
+	g_ptr_array_set_size(snapshot->pages, 0);
 	groups = sakura_core_workspace_ordered_groups(workspace);
 	for (guint index = 0; index < groups->len; index++) {
 		SakuraCoreGroup *model_group = g_ptr_array_index(groups, index);
@@ -879,6 +1000,32 @@ sakura_core_workspace_sync_snapshot(const SakuraCoreWorkspace *workspace,
 		g_ptr_array_add(snapshot->tasks, task);
 	}
 	g_ptr_array_unref(tasks);
+
+	for (guint index = 0; workspace->pages != NULL &&
+	                     index < workspace->pages->len; index++) {
+		SakuraCorePage *model_page = g_ptr_array_index(workspace->pages, index);
+		SakuraSessionPageRecord *page;
+		SakuraCoreGroup *group;
+
+		if (model_page == NULL || model_page->id == NULL)
+			continue;
+		page = g_new0(SakuraSessionPageRecord, 1);
+		group = model_page->group != NULL ? model_page->group
+		                               : workspace->root_group;
+		page->id = g_strdup(model_page->id);
+		page->group_id = g_strdup(group != NULL ? group->id : "root");
+		page->parent_id = g_strdup(model_page->task != NULL
+		                           ? model_page->task->id
+		                           : page->group_id);
+		page->task_id = g_strdup(model_page->task != NULL
+		                         ? model_page->task->id : NULL);
+		page->title = g_strdup(model_page->title);
+		page->title_set_by_user = model_page->title_set_by_user;
+		page->archived = model_page->archived;
+		page->root_layout_id = g_strdup(model_page->root_layout_id);
+		page->active_terminal_id = g_strdup(model_page->active_terminal_id);
+		g_ptr_array_add(snapshot->pages, page);
+	}
 
 	g_free(snapshot->active_group_id);
 	snapshot->active_group_id = g_strdup(
