@@ -1235,6 +1235,66 @@ test_workspace_reconciles_at_outer_mutation_boundary(void)
 
 
 static void
+test_workspace_reconciles_suppressed_notebook_switch(void)
+{
+	SakuraPage *model_page;
+
+	setup_workspace();
+	setup_sidebar_fixture();
+	model_page = sakura_page_at_page(1);
+	sakura.workspace->active_page = model_page;
+	sakura.workspace->active_tab = model_page->active_tab;
+	gtk_notebook_set_current_page(GTK_NOTEBOOK(sakura.notebook), 1);
+	g_signal_connect(sakura.notebook, "switch-page",
+	                 G_CALLBACK(sakura_switch_page_cb), NULL);
+
+	/* GTK can select a physical neighbour while a mutation is open. The
+	 * deferred signal must not leave the model pointing at a different page. */
+	sakura_workspace_begin_mutation();
+	gtk_notebook_set_current_page(GTK_NOTEBOOK(sakura.notebook), 2);
+	g_assert_cmpint(gtk_notebook_get_current_page(GTK_NOTEBOOK(sakura.notebook)),
+	                ==, 2);
+	g_assert_true(sakura.workspace->active_page == model_page);
+	sakura_workspace_end_mutation();
+
+	g_assert_cmpint(gtk_notebook_get_current_page(GTK_NOTEBOOK(sakura.notebook)),
+	                ==, 1);
+	g_assert_true(sakura.workspace->active_page == model_page);
+	g_assert_true(sakura.workspace->active_tab == model_page->active_tab);
+	assert_workspace_consistent();
+	teardown_workspace();
+}
+
+
+static void
+test_workspace_clears_selection_for_empty_scope(void)
+{
+	SakuraPage *page;
+	SakuraSidebarNode *group;
+
+	setup_workspace();
+	setup_sidebar_fixture();
+	group = test_sidebar_add_group("empty", "Empty", sakura.sidebar_root);
+	page = sakura_page_at_page(1);
+	sakura.workspace->active_page = page;
+	sakura.workspace->active_tab = page->active_tab;
+	gtk_notebook_set_current_page(GTK_NOTEBOOK(sakura.notebook), 1);
+
+	sakura_workspace_begin_mutation();
+	sakura.workspace->active_group = group->group;
+	sakura.active_group_scope = group;
+	sakura_select_scope_default();
+	sakura_workspace_end_mutation();
+
+	g_assert_null(sakura.workspace->active_page);
+	g_assert_null(sakura.workspace->active_tab);
+	assert_workspace_consistent();
+	test_sidebar_remove_group(group);
+	teardown_workspace();
+}
+
+
+static void
 test_sidebar_selection_priority(void)
 {
 	SakuraPage *page_a, *page_b, *page_c;
@@ -2951,6 +3011,10 @@ main(int argc, char **argv)
 	                test_sidebar_selects_created_tab);
 	g_test_add_func("/workspace/reconciles-at-outer-mutation-boundary",
 	                test_workspace_reconciles_at_outer_mutation_boundary);
+	g_test_add_func("/workspace/reconciles-suppressed-notebook-switch",
+	                test_workspace_reconciles_suppressed_notebook_switch);
+	g_test_add_func("/workspace/clears-selection-for-empty-scope",
+	                test_workspace_clears_selection_for_empty_scope);
 	g_test_add_func("/workspace/sidebar-selection-priority",
 	                test_sidebar_selection_priority);
 	g_test_add_func("/workspace/close-active-page-preserves-group",

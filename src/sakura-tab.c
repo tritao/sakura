@@ -1523,8 +1523,11 @@ sakura_tab_delete_page(gint page)
 		sakura_workspace_end_mutation();
 		return FALSE;
 	}
-	if (removed_active)
+	if (removed_active) {
 		sakura.workspace->active_tab = NULL;
+		sakura.workspace->active_page = NULL;
+		sakura.workspace_selection_cleared = TRUE;
+	}
 
 	/* Do the first tab checks BEFORE deleting the tab, to ensure correct
 	 * sizes are calculated when the tab is deleted */
@@ -1539,8 +1542,10 @@ sakura_tab_delete_page(gint page)
 				g_ptr_array_remove_fast(sakura.workspace->panes, pane);
 		}
 	}
-	if (sakura.workspace->active_page == tab_page)
+	if (sakura.workspace->active_page == tab_page) {
 		sakura.workspace->active_page = NULL;
+		sakura.workspace_selection_cleared = TRUE;
+	}
 	if (tab_page != NULL) {
 		sakura_sidebar_remove_page(tab_page);
 		sakura_page_free(tab_page);

@@ -1132,6 +1132,7 @@ sakura_select_pane (struct sakura_tab *sk_tab, gboolean focus)
 	if (page < 0)
 		return;
 
+	sakura.workspace_selection_cleared = FALSE;
 	sakura.workspace->active_tab = sk_tab;
 	sakura.workspace->active_page = sk_tab->page;
 	if (sk_tab->page != NULL)
@@ -1195,10 +1196,109 @@ sakura_workspace_start_page_runtime(SakuraPage *page)
 }
 
 
+static SakuraTab *
+sakura_workspace_notebook_tab_for_widget(GtkWidget *widget_page, guint page_num)
+{
+	if (sakura.workspace != NULL && sakura.workspace->pages != NULL &&
+	    widget_page != NULL) {
+		for (guint index = 0; index < sakura.workspace->pages->len; index++) {
+			SakuraPage *page = g_ptr_array_index(sakura.workspace->pages, index);
+
+			if (page != NULL && page->container == widget_page)
+				return page->active_tab != NULL ? page->active_tab
+				                              : page->tab_bar_tab;
+		}
+	}
+	return sakura_tab_at_page(page_num);
+}
+
+
+static void
+sakura_workspace_capture_notebook_selection(SakuraTab *tab)
+{
+	g_clear_pointer(&sakura.workspace_pending_notebook_terminal_id, g_free);
+	if (tab != NULL && tab->terminal_id != NULL)
+		sakura.workspace_pending_notebook_terminal_id = g_strdup(tab->terminal_id);
+}
+
+
+void
+sakura_workspace_reconcile_selection(void)
+{
+	SakuraWorkspaceModel *workspace = sakura.workspace;
+	SakuraTab *active_tab = NULL;
+	SakuraPage *active_page = NULL;
+	SakuraTab *pending_tab = NULL;
+	gint current, target = -1;
+
+	if (workspace == NULL)
+		return;
+
+	if (sakura.workspace_selection_cleared) {
+		/* An empty scope is a valid state. Do not let an automatic GTK
+		 * neighbour selected during a mutation recreate a terminal selection. */
+		workspace->active_page = NULL;
+		workspace->active_tab = NULL;
+	} else {
+		active_page = workspace->active_page;
+		active_tab = workspace->active_tab;
+		if (active_tab != NULL && active_tab->page != NULL &&
+		    active_tab->page->container != NULL && sakura.notebook != NULL &&
+		    gtk_notebook_page_num(GTK_NOTEBOOK(sakura.notebook),
+	                              active_tab->page->container) >= 0) {
+			/* The active pane identifies its owning page. */
+			active_page = active_tab->page;
+		} else if (active_page != NULL && active_page->container != NULL &&
+		           sakura.notebook != NULL &&
+		           gtk_notebook_page_num(GTK_NOTEBOOK(sakura.notebook),
+	                                  active_page->container) >= 0) {
+			/* A page can survive a pane/layout mutation while its cached active
+			 * pane is temporarily unset. Re-derive the pair from the page. */
+			active_tab = sakura_sidebar_page_active_tab(active_page);
+		} else if (sakura.workspace_pending_notebook_terminal_id != NULL) {
+			/* The switch signal may have been the only selection event observed
+			 * during a transaction. Recover it by stable terminal identity. */
+			pending_tab = sakura_find_pane_by_terminal_id(
+				sakura.workspace_pending_notebook_terminal_id);
+			if (pending_tab != NULL && pending_tab->page != NULL) {
+				active_page = pending_tab->page;
+				active_tab = active_page->active_tab != NULL
+				           ? active_page->active_tab : pending_tab;
+			}
+		}
+
+		if (active_page == NULL || active_tab == NULL ||
+		    active_tab->page != active_page) {
+			active_page = NULL;
+			active_tab = NULL;
+		}
+		workspace->active_page = active_page;
+		workspace->active_tab = active_tab;
+	}
+
+	if (sakura.notebook != NULL) {
+		current = gtk_notebook_get_current_page(GTK_NOTEBOOK(sakura.notebook));
+		if (workspace->active_page != NULL &&
+		    workspace->active_page->container != NULL)
+			target = gtk_notebook_page_num(
+				GTK_NOTEBOOK(sakura.notebook), workspace->active_page->container);
+		if (target >= 0 && current != target)
+			gtk_notebook_set_current_page(GTK_NOTEBOOK(sakura.notebook), target);
+	}
+
+	g_clear_pointer(&sakura.workspace_pending_notebook_terminal_id, g_free);
+	sakura.workspace_selection_cleared = FALSE;
+}
+
+
 void
 sakura_workspace_begin_mutation(void)
 {
-		sakura.workspace_mutation_depth++;
+	if (sakura.workspace_mutation_depth == 0) {
+		g_clear_pointer(&sakura.workspace_pending_notebook_terminal_id, g_free);
+		sakura.workspace_selection_cleared = FALSE;
+	}
+	sakura.workspace_mutation_depth++;
 }
 
 
@@ -1266,6 +1366,7 @@ sakura_workspace_end_mutation(void)
 	if (sakura.workspace_mutation_depth > 0)
 		sakura.workspace_mutation_depth--;
 	if (!sakura_workspace_is_mutating()) {
+		sakura_workspace_reconcile_selection();
 		sakura_workspace_reconcile();
 		sakura_workspace_validate_after_mutation();
 	}
@@ -1313,9 +1414,13 @@ sakura_select_scope_default (void)
 
 	/* An empty scope has no active terminal, but the scope itself remains
 	 * selected so the next terminal is created in the right group. */
+	sakura.workspace->active_page = NULL;
 	sakura.workspace->active_tab = NULL;
+	sakura.workspace_selection_cleared = TRUE;
 	sakura_workspace_mark_changed(SAKURA_WORKSPACE_CHANGE_SELECTION);
 	sakura_sidebar_queue_select_node(sakura.active_group_scope);
+	if (!sakura_workspace_is_mutating())
+		sakura_workspace_reconcile_selection();
 }
 
 
@@ -4635,19 +4740,22 @@ sakura_switch_page_cb (GtkWidget *widget, GtkWidget *widget_page,
 	(void)data;
 	if (sakura.session_shutting_down)
 		return;
+	tab = sakura_workspace_notebook_tab_for_widget(widget_page, page_num);
 	/* Page removal is a transaction. GTK may emit switch-page while the old
-	 * page is being detached; the delete path performs the authoritative
-	 * group-aware selection once the model is consistent again. */
-	if (sakura_workspace_is_mutating())
+	 * page is being detached. Preserve the event until the outer transaction
+	 * can reconcile it with the authoritative workspace selection. */
+	if (sakura_workspace_is_mutating()) {
+		sakura_workspace_capture_notebook_selection(tab);
 		return;
+	}
 	/* Don't use gtk_notebook_get_current_page here; GTK still reports the
 	 * previous page while this callback is dispatched. */
-	tab = sakura_tab_at_page(page_num);
 	if (tab == NULL)
 		return;
 	page = tab->page;
 	if (page != NULL && page->active_tab != NULL)
 		tab = page->active_tab;
+	sakura.workspace_selection_cleared = FALSE;
 	sakura.workspace->active_tab = tab;
 	sakura.workspace->active_page = page;
 	sakura_workspace_start_page_runtime(page);
