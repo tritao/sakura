@@ -1993,6 +1993,29 @@ test_sidebar_creation_parent_preserves_context(void)
 
 
 static void
+test_sidebar_new_group_parent_follows_current_terminal(void)
+{
+	SakuraPage *page;
+	SakuraSidebarNode *group;
+
+	setup_workspace();
+	setup_sidebar_fixture();
+	group = test_sidebar_add_group("freecad", "FreeCAD", sakura.sidebar_root);
+	page = sakura_page_at_page(1);
+	g_assert_true(sakura_sidebar_move_page_to_group(page, group));
+
+	/* Selecting a terminal while All terminals is scoped must still make its
+	 * owning group the destination for a new group from the toolbar. */
+	sakura.workspace->active_group = sakura.workspace->root_group;
+	sakura.active_group_scope = sakura.sidebar_root;
+	g_assert_true(sakura_sidebar_default_parent() == group);
+
+	test_sidebar_remove_group(group);
+	teardown_workspace();
+}
+
+
+static void
 test_sidebar_move_page_preserves_whole_page_parent(void)
 {
 	SakuraPage *page;
@@ -2954,6 +2977,8 @@ main(int argc, char **argv)
 	                test_sidebar_order_survives_snapshot_roundtrip);
 	g_test_add_func("/workspace/sidebar-creation-parent-context",
 	                test_sidebar_creation_parent_preserves_context);
+	g_test_add_func("/workspace/sidebar-new-group-parent-current-terminal",
+	                test_sidebar_new_group_parent_follows_current_terminal);
 	g_test_add_func("/workspace/sidebar-move-page-parent",
 	                test_sidebar_move_page_preserves_whole_page_parent);
 	g_test_add_func("/workspace/sidebar-page-context-menu-close-label",

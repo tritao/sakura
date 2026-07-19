@@ -2513,13 +2513,17 @@ sakura_sidebar_new_group_cb (GtkWidget *widget, void *data)
 	struct sakura_sidebar_node *context_node = data;
 	const gchar *title;
 
-	if (context_node != NULL && context_node->type == SAKURA_SIDEBAR_TERMINAL)
-		context_node = context_node->parent;
-	parent = context_node != NULL
-	       ? context_node
-	       : (sakura_active_group_model() != NULL
-	          ? sakura_sidebar_group_node(sakura_active_group_model())
-	          : sakura_sidebar_selected_group());
+	/* A context-menu invocation carries its clicked group explicitly. The
+	 * toolbar has no context node, so derive its destination from the current
+	 * terminal/task before falling back to the active scope. In particular, the
+	 * All terminals scope must not turn a selected FreeCAD terminal into a root
+	 * level group. */
+	if (context_node != NULL) {
+		parent = context_node->type == SAKURA_SIDEBAR_GROUP
+		       ? context_node : sakura_sidebar_group_ancestor(context_node);
+	} else {
+		parent = sakura_sidebar_group_ancestor(sakura_sidebar_default_parent());
+	}
 	dialog = gtk_dialog_new_with_buttons(_("New group"),
 	                                     GTK_WINDOW(sakura.main_window),
 	                                     GTK_DIALOG_MODAL | GTK_DIALOG_USE_HEADER_BAR,
