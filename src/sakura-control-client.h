@@ -3,7 +3,48 @@
 
 #include <gio/gio.h>
 
+#define SAKURA_CONTROL_CLIENT_API_VERSION 1
+#define SAKURA_CONTROL_PROTOCOL_VERSION 2
+#define SAKURA_CONTROL_MAX_FRAME (1024 * 1024)
+#define SAKURA_CONTROL_CAPABILITY_WORKSPACE G_GUINT64_CONSTANT(1)
+#define SAKURA_CONTROL_CAPABILITY_TERMINALS G_GUINT64_CONSTANT(2)
+#define SAKURA_CONTROL_CAPABILITY_TERMINAL_ATTACH G_GUINT64_CONSTANT(4)
+#define SAKURA_CONTROL_CAPABILITY_EVENT_STREAM G_GUINT64_CONSTANT(8)
+#define SAKURA_CONTROL_CAPABILITY_TERMINAL_RESTART G_GUINT64_CONSTANT(16)
+
 typedef struct _SakuraControlClientConnection SakuraControlClientConnection;
+
+typedef struct {
+	gchar *terminal_id;
+	guint cols;
+	guint rows;
+	guint status;
+	guint8 *output;
+	gsize output_length;
+} SakuraControlTerminalAttachment;
+
+typedef enum {
+	SAKURA_CONTROL_CLIENT_EVENT_UNKNOWN,
+	SAKURA_CONTROL_CLIENT_EVENT_TERMINAL_OUTPUT,
+	SAKURA_CONTROL_CLIENT_EVENT_TERMINAL_STATUS
+} SakuraControlClientEventType;
+
+typedef struct {
+	SakuraControlClientEventType type;
+	guint64 sequence;
+	gchar *terminal_id;
+	guint8 *data;
+	gsize data_length;
+	gboolean final_chunk;
+	guint status;
+	gchar *message;
+	guint8 *payload;
+	gsize payload_length;
+} SakuraControlClientEvent;
+
+void sakura_control_terminal_attachment_clear(
+	SakuraControlTerminalAttachment *attachment);
+void sakura_control_client_event_clear(SakuraControlClientEvent *event);
 
 /*
  * Opens a local agent connection and completes the protocol handshake.
@@ -33,6 +74,29 @@ gboolean sakura_control_client_subscribe_events(
 	GError **error);
 gboolean sakura_control_client_read_frame(
 	SakuraControlClientConnection *connection, GByteArray **payload,
+	GCancellable *cancellable, GError **error);
+
+/* Terminal operations are the stable high-level API. Callers do not need
+ * protocol or generated protobuf headers to use the client library. */
+gboolean sakura_control_client_create_terminal(
+	SakuraControlClientConnection *connection, const gchar *terminal_id,
+	const gchar *group_id, const gchar *task_id, const gchar *cwd, guint cols,
+	guint rows, gchar **created_terminal_id, GError **error);
+gboolean sakura_control_client_attach_terminal(
+	SakuraControlClientConnection *connection, const gchar *terminal_id,
+	guint cols, guint rows, SakuraControlTerminalAttachment *attachment,
+	GError **error);
+gboolean sakura_control_client_terminal_input(
+	SakuraControlClientConnection *connection, const gchar *terminal_id,
+	const guint8 *data, gsize data_length, GError **error);
+gboolean sakura_control_client_terminal_resize(
+	SakuraControlClientConnection *connection, const gchar *terminal_id,
+	guint cols, guint rows, GError **error);
+gboolean sakura_control_client_detach_terminal(
+	SakuraControlClientConnection *connection, const gchar *terminal_id,
+	GError **error);
+gboolean sakura_control_client_read_event(
+	SakuraControlClientConnection *connection, SakuraControlClientEvent *event,
 	GCancellable *cancellable, GError **error);
 
 #endif /* SAKURA_CONTROL_CLIENT_H */

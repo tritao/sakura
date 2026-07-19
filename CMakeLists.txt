@@ -7,6 +7,8 @@ SET (VERSION "3.8.9")
 
 INCLUDE (FindPkgConfig)
 INCLUDE (CTest)
+INCLUDE (GNUInstallDirs)
+INCLUDE (CMakePackageConfigHelpers)
 FIND_PACKAGE (Python3 COMPONENTS Interpreter)
 
 OPTION (SAKURA_ENABLE_SANITIZERS
@@ -65,10 +67,12 @@ ADD_LIBRARY (sakura-control-client STATIC
 	src/sakura-control-client.c
 	${SAKURA_CONTROL_TRANSPORT_SOURCES})
 SET_TARGET_PROPERTIES (sakura-control-client PROPERTIES
-	POSITION_INDEPENDENT_CODE ON)
+	POSITION_INDEPENDENT_CODE ON
+	EXPORT_NAME ControlClient)
 TARGET_INCLUDE_DIRECTORIES (sakura-control-client PUBLIC
-	${CMAKE_CURRENT_SOURCE_DIR}/src
-	${SAKURA_PROTO_GENERATED_DIR})
+	$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src>
+	$<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}/sakura>
+	PRIVATE ${SAKURA_PROTO_GENERATED_DIR})
 TARGET_LINK_LIBRARIES (sakura-control-client PUBLIC
 	PkgConfig::GLIB
 	PkgConfig::GIO_UNIX
@@ -146,8 +150,11 @@ ADD_LIBRARY (sakura-core STATIC
 	src/sakura-core-session.c
 	src/sakura-core-workspace.c)
 SET_TARGET_PROPERTIES (sakura-core PROPERTIES
-	POSITION_INDEPENDENT_CODE ON)
-TARGET_INCLUDE_DIRECTORIES (sakura-core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
+	POSITION_INDEPENDENT_CODE ON
+	EXPORT_NAME Core)
+TARGET_INCLUDE_DIRECTORIES (sakura-core PUBLIC
+	$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src>
+	$<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}/sakura>)
 TARGET_COMPILE_OPTIONS (sakura-core PRIVATE ${SAKURA_WARNING_FLAGS})
 TARGET_LINK_LIBRARIES (sakura-core PUBLIC PkgConfig::GLIB m)
 TARGET_LINK_LIBRARIES (sakura-control-client PUBLIC sakura-core)
@@ -226,6 +233,14 @@ IF (BUILD_TESTING)
 	ADD_DEPENDENCIES (sakura-control-test sakura-proto-generated)
 	ADD_DEPENDENCIES (sakura-control-test sakura-agent)
 	ADD_TEST (NAME control COMMAND sakura-control-test)
+
+	ADD_EXECUTABLE (sakura-control-client-api-test
+		tests/test-sakura-control-client-api.c)
+	TARGET_INCLUDE_DIRECTORIES (sakura-control-client-api-test PRIVATE
+		${CMAKE_CURRENT_SOURCE_DIR}/src)
+	TARGET_LINK_LIBRARIES (sakura-control-client-api-test PRIVATE
+		sakura-control-client)
+	ADD_TEST (NAME control-client-api COMMAND sakura-control-client-api-test)
 
 	ADD_EXECUTABLE (sakura-core-test)
 	TARGET_SOURCES (sakura-core-test PRIVATE
@@ -342,6 +357,30 @@ ENDIF (Python3_Interpreter_FOUND)
 ADD_SUBDIRECTORY (po)
 
 INSTALL (TARGETS sakura sakura-agent RUNTIME DESTINATION bin)
+INSTALL (TARGETS sakura-control-client sakura-core
+	EXPORT SakuraTargets
+	ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
+	INCLUDES DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
+INSTALL (FILES src/sakura-control-client.h
+	DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/sakura)
+INSTALL (FILES src/sakura-core.h
+	DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/sakura)
+INSTALL (EXPORT SakuraTargets
+	FILE SakuraTargets.cmake
+	NAMESPACE Sakura::
+	DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/Sakura)
+CONFIGURE_PACKAGE_CONFIG_FILE (
+	${CMAKE_CURRENT_SOURCE_DIR}/cmake/SakuraConfig.cmake.in
+	${CMAKE_CURRENT_BINARY_DIR}/SakuraConfig.cmake
+	INSTALL_DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/Sakura)
+WRITE_BASIC_PACKAGE_VERSION_FILE (
+	${CMAKE_CURRENT_BINARY_DIR}/SakuraConfigVersion.cmake
+	VERSION ${VERSION}
+	COMPATIBILITY SameMajorVersion)
+INSTALL (FILES
+	${CMAKE_CURRENT_BINARY_DIR}/SakuraConfig.cmake
+	${CMAKE_CURRENT_BINARY_DIR}/SakuraConfigVersion.cmake
+	DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/Sakura)
 INSTALL (FILES sakura.desktop DESTINATION share/applications)
 INSTALL (FILES terminal-tango.svg DESTINATION share/pixmaps)
 INSTALL (FILES

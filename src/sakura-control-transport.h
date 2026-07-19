@@ -1,19 +1,9 @@
 #ifndef SAKURA_CONTROL_TRANSPORT_H
 #define SAKURA_CONTROL_TRANSPORT_H
 
-#include <gio/gio.h>
+#include "sakura-control-client.h"
 
 #include "sakura-core.h"
-
-/* The protobuf payload is framed separately so the same generated messages
- * can later be carried by an HTTP or WebSocket adapter. */
-#define SAKURA_CONTROL_PROTOCOL_VERSION 2
-#define SAKURA_CONTROL_MAX_FRAME (1024 * 1024)
-#define SAKURA_CONTROL_CAPABILITY_WORKSPACE G_GUINT64_CONSTANT(1)
-#define SAKURA_CONTROL_CAPABILITY_TERMINALS G_GUINT64_CONSTANT(2)
-#define SAKURA_CONTROL_CAPABILITY_TERMINAL_ATTACH G_GUINT64_CONSTANT(4)
-#define SAKURA_CONTROL_CAPABILITY_EVENT_STREAM G_GUINT64_CONSTANT(8)
-#define SAKURA_CONTROL_CAPABILITY_TERMINAL_RESTART G_GUINT64_CONSTANT(16)
 
 typedef enum {
 	SAKURA_CONTROL_REQUEST_NONE,
