@@ -40,6 +40,60 @@ test_codex_interrupt_event_matching(void)
 
 
 static void
+test_codex_helper_resolution(void)
+{
+	GError *error = NULL;
+	const gchar *saved_path_value = g_getenv("PATH");
+	const gchar *saved_override_value = g_getenv("SAKURA_CODEX_HELPER");
+	gchar *saved_path = g_strdup(saved_path_value);
+	gchar *saved_override = g_strdup(saved_override_value);
+	gchar *directory;
+	gchar *stale_helper;
+	gchar *expected_helper;
+	gchar *helper;
+
+	directory = g_dir_make_tmp("sakura-codex-helper-XXXXXX", &error);
+	g_assert_no_error(error);
+	g_assert_nonnull(directory);
+	stale_helper = g_build_filename(directory, "sakura-codex-session-name", NULL);
+	g_assert_true(g_file_set_contents(stale_helper, "#!/bin/sh\n", -1, &error));
+	g_assert_no_error(error);
+	g_assert_cmpint(g_chmod(stale_helper, 0700), ==, 0);
+
+	/* An explicit override remains available for packaging and test harnesses. */
+	g_setenv("SAKURA_CODEX_HELPER", stale_helper, TRUE);
+	helper = sakura_find_codex_name_helper();
+	g_assert_cmpstr(helper, ==, stale_helper);
+	g_free(helper);
+
+	/* A stale PATH entry must not override the helper shipped with Sakura. */
+	g_unsetenv("SAKURA_CODEX_HELPER");
+	g_setenv("PATH", directory, TRUE);
+	expected_helper = g_build_filename(SAKURA_SOURCE_SCRIPT_DIR,
+	                                   "sakura-codex-session-name", NULL);
+	helper = sakura_find_codex_name_helper();
+	g_assert_cmpstr(helper, ==, expected_helper);
+	g_free(helper);
+
+	if (saved_path != NULL)
+		g_setenv("PATH", saved_path, TRUE);
+	else
+		g_unsetenv("PATH");
+	if (saved_override != NULL)
+		g_setenv("SAKURA_CODEX_HELPER", saved_override, TRUE);
+	else
+		g_unsetenv("SAKURA_CODEX_HELPER");
+	g_remove(stale_helper);
+	g_rmdir(directory);
+	g_free(saved_path);
+	g_free(saved_override);
+	g_free(stale_helper);
+	g_free(expected_helper);
+	g_free(directory);
+}
+
+
+static void
 test_codex_tracking_write(const gchar *directory, const gchar *token,
                           const gchar *event_name, const gchar *state)
 {
@@ -3062,6 +3116,8 @@ main(int argc, char **argv)
 	                test_notebook_identity_and_reorder);
 	g_test_add_func("/workspace/codex-interrupt-event-matching",
 	                test_codex_interrupt_event_matching);
+	g_test_add_func("/workspace/codex-helper-resolution",
+	                test_codex_helper_resolution);
 	g_test_add_func("/workspace/restored-attention-survives-codex-session-start",
 	                test_restored_attention_survives_codex_session_start);
 	g_test_add_func("/workspace/terminal-bell-does-not-create-codex-ready-state",

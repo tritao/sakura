@@ -10,6 +10,8 @@
 #define GIT_ICON_NAME "git"
 #define GITHUB_ICON_NAME "github"
 #define SAKURA_CODEX_HELPER_PROTOCOL_VERSION "v1"
+#define SAKURA_CODEX_HELPER_OVERRIDE_ENV "SAKURA_CODEX_HELPER"
+#define SAKURA_CODEX_HELPER_NAME "sakura-codex-session-name"
 
 const gchar *
 sakura_tool_label(SakuraToolKind tool)
@@ -792,21 +794,77 @@ sakura_codex_schedule_name_retry (struct sakura_tab *sk_tab)
 }
 
 
-gchar *
-sakura_find_codex_name_helper (void)
+static gboolean
+sakura_codex_helper_is_usable(const gchar *path)
+{
+	return path != NULL && path[0] != '\0' &&
+	       g_file_test(path, G_FILE_TEST_IS_REGULAR | G_FILE_TEST_IS_EXECUTABLE);
+}
+
+
+static gchar *
+sakura_codex_helper_in_directory(const gchar *directory)
 {
 	gchar *helper;
 
-	helper = g_find_program_in_path("sakura-codex-session-name");
+	if (directory == NULL || directory[0] == '\0')
+		return NULL;
+	helper = g_build_filename(directory, SAKURA_CODEX_HELPER_NAME, NULL);
+	if (sakura_codex_helper_is_usable(helper))
+		return helper;
+	g_free(helper);
+	return NULL;
+}
+
+
+static gchar *
+sakura_codex_helper_beside_executable(void)
+{
+	gchar *executable, *directory, *helper;
+
+	executable = g_file_read_link("/proc/self/exe", NULL);
+	if (executable == NULL || executable[0] == '\0') {
+		g_free(executable);
+		return NULL;
+	}
+	directory = g_path_get_dirname(executable);
+	helper = sakura_codex_helper_in_directory(directory);
+	g_free(directory);
+	g_free(executable);
+	return helper;
+}
+
+
+gchar *
+sakura_find_codex_name_helper (void)
+{
+	const gchar *override;
+	gchar *helper;
+
+	override = g_getenv(SAKURA_CODEX_HELPER_OVERRIDE_ENV);
+	if (override != NULL && override[0] != '\0') {
+		helper = strchr(override, G_DIR_SEPARATOR) != NULL
+		       ? g_strdup(override) : g_find_program_in_path(override);
+		if (sakura_codex_helper_is_usable(helper))
+			return helper;
+		g_warning("Configured %s is not an executable helper: %s",
+		          SAKURA_CODEX_HELPER_OVERRIDE_ENV, override);
+		g_free(helper);
+		return NULL;
+	}
+
+	helper = sakura_codex_helper_beside_executable();
 	if (helper != NULL)
 		return helper;
 
-	helper = g_build_filename(SAKURA_SOURCE_SCRIPT_DIR,
-	                           "sakura-codex-session-name", NULL);
-	if (g_file_test(helper, G_FILE_TEST_IS_REGULAR))
+	helper = sakura_codex_helper_in_directory(SAKURA_SOURCE_SCRIPT_DIR);
+	if (helper != NULL)
 		return helper;
 
-	g_free(helper);
+	helper = sakura_codex_helper_in_directory(SAKURA_INSTALL_BINDIR);
+	if (helper != NULL)
+		return helper;
+
 	return NULL;
 }
 
@@ -1170,7 +1228,12 @@ sakura_codex_name_helper_read_done (GObject *source_object,
 	valid_response = valid_response && end != fields[0] && *end == '\0' &&
 	                request_id == query->request_id;
 	if (!valid_response) {
-		sakura_codex_name_helper_request_failed(query, "invalid response from Codex session name helper");
+		if (query->kind != SAKURA_CODEX_SESSION_QUERY_NAME)
+			sakura_codex_name_helper_request_failed(
+				query, "incompatible Codex session helper (expected protocol v1)");
+		else
+			sakura_codex_name_helper_request_failed(
+				query, "invalid response from Codex session name helper");
 		g_strfreev(fields);
 		g_free(line);
 		return;
