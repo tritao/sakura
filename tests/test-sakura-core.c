@@ -139,6 +139,12 @@ test_workspace_restore_snapshot(void)
 	g_assert_true(restored_page->task ==
 	              sakura_core_workspace_find_task(workspace, "task-a"));
 	g_assert_cmpstr(restored_page->active_terminal_id, ==, "terminal-a");
+	g_assert_false(sakura_core_workspace_can_remove_task(
+		workspace, sakura_core_workspace_find_task(workspace, "task-a")));
+	g_assert_false(sakura_core_workspace_can_remove_group(
+		workspace, sakura_core_workspace_find_group(workspace, "group-a")));
+	g_assert_true(sakura_core_workspace_remove_page(workspace, restored_page));
+	g_assert_null(sakura_core_workspace_find_page(workspace, "page-a"));
 
 	sakura_core_workspace_free(workspace);
 	sakura_session_snapshot_free(snapshot);

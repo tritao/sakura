@@ -379,6 +379,27 @@ sakura_control_encode_update_page_request(const gchar *request_id,
 
 
 gboolean
+sakura_control_encode_delete_page_request(const gchar *request_id,
+                                          const gchar *page_id,
+                                          GByteArray *payload)
+{
+	Sakura__Control__V1__DeletePageRequest delete_page =
+		SAKURA__CONTROL__V1__DELETE_PAGE_REQUEST__INIT;
+	Sakura__Control__V1__Request request =
+		SAKURA__CONTROL__V1__REQUEST__INIT;
+
+	if (payload == NULL || request_id == NULL || request_id[0] == '\0' ||
+	    page_id == NULL || page_id[0] == '\0')
+		return FALSE;
+	delete_page.page_id = (gchar *)page_id;
+	request.request_id = (gchar *)request_id;
+	request.body_case = SAKURA__CONTROL__V1__REQUEST__BODY_DELETE_PAGE;
+	request.delete_page = &delete_page;
+	return sakura_control_pack_message(&request.base, payload);
+}
+
+
+gboolean
 sakura_control_encode_set_task_archived_request(const gchar *request_id,
 	                                               const gchar *task_id,
 	                                               gboolean archived,
@@ -740,6 +761,12 @@ sakura_control_decode_request(const guint8 *payload,
 			request->title = g_strdup(decoded->update_page->title);
 			request->title_set_by_user = decoded->update_page->title_set_by_user;
 			request->archived = decoded->update_page->archived;
+		}
+		break;
+	case SAKURA__CONTROL__V1__REQUEST__BODY_DELETE_PAGE:
+		if (decoded->delete_page != NULL) {
+			request->kind = SAKURA_CONTROL_REQUEST_DELETE_PAGE;
+			request->page_id = g_strdup(decoded->delete_page->page_id);
 		}
 		break;
 	case SAKURA__CONTROL__V1__REQUEST__BODY_SET_TASK_ARCHIVED:

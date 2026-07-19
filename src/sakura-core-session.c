@@ -349,21 +349,6 @@ sakura_session_layout_valid(const SakuraSessionSnapshot *snapshot,
 	    !g_hash_table_contains(tasks, snapshot->selected_task_id))
 		goto invalid;
 
-	/* Version 4 sessions can contain terminals without the page/layout
-	 * representation introduced at the same time. Still validate the
-	 * selection IDs above, but retain compatibility with that format. */
-	if (snapshot->pages->len == 0 && snapshot->layouts->len == 0) {
-		g_hash_table_destroy(pages);
-		g_hash_table_destroy(layouts);
-		g_hash_table_destroy(terminals);
-		g_hash_table_destroy(children);
-		g_hash_table_destroy(leaf_terminals);
-		g_hash_table_destroy(reachable);
-		g_hash_table_destroy(groups);
-		g_hash_table_destroy(tasks);
-		return TRUE;
-	}
-
 	for (index = 0; index < snapshot->pages->len; index++) {
 		SakuraSessionPageRecord *page = g_ptr_array_index(snapshot->pages, index);
 		if (page->id == NULL || page->id[0] == '\0' ||
@@ -393,6 +378,21 @@ sakura_session_layout_valid(const SakuraSessionSnapshot *snapshot,
 			goto invalid;
 		if (!has_task && parent_is_task)
 			goto invalid;
+	}
+	/* Agent snapshots intentionally persist semantic pages without desktop
+	 * tabs/layouts. Legacy terminal-only sessions also arrive here with no
+	 * pages/layouts, so validate relationships above and accept both forms. */
+	if (snapshot->layouts->len == 0 &&
+	    (snapshot->pages->len == 0 || snapshot->tabs->len == 0)) {
+		g_hash_table_destroy(pages);
+		g_hash_table_destroy(layouts);
+		g_hash_table_destroy(terminals);
+		g_hash_table_destroy(children);
+		g_hash_table_destroy(leaf_terminals);
+		g_hash_table_destroy(reachable);
+		g_hash_table_destroy(groups);
+		g_hash_table_destroy(tasks);
+		return TRUE;
 	}
 	for (index = 0; index < snapshot->tabs->len; index++) {
 		SakuraSessionTabRecord *tab = g_ptr_array_index(snapshot->tabs, index);

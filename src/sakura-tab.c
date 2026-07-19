@@ -1496,6 +1496,8 @@ sakura_tab_delete_page(gint page)
 	struct sakura_tab *sk_tab;
 	SakuraPage *tab_page;
 	GPtrArray *page_panes;
+	gchar *agent_page_id = NULL;
+	gboolean agent_page_backed = FALSE;
 	gboolean removed_active;
 	guint index;
 
@@ -1515,6 +1517,20 @@ sakura_tab_delete_page(gint page)
 	tab_page = sk_tab->page;
 	page_panes = tab_page != NULL && tab_page->panes != NULL
 	           ? g_ptr_array_ref(tab_page->panes) : NULL;
+	if (tab_page != NULL && tab_page->id != NULL)
+		agent_page_id = g_strdup(tab_page->id);
+	for (index = 0; tab_page != NULL && tab_page->panes != NULL &&
+	                 index < tab_page->panes->len; index++) {
+		SakuraTab *pane = g_ptr_array_index(tab_page->panes, index);
+
+		if (pane != NULL && pane->agent_backed) {
+			agent_page_backed = TRUE;
+			break;
+		}
+	}
+	if (tab_page != NULL && tab_page->last_active_terminal_id != NULL &&
+	    tab_page->last_active_terminal_id[0] != '\0')
+		agent_page_backed = TRUE;
 	/* Capture this before GTK detaches the page. Removing the current page can
 	 * synchronously emit switch-page and temporarily point active_page at a
 	 * physical notebook neighbor. */
@@ -1527,6 +1543,7 @@ sakura_tab_delete_page(gint page)
 	}
 	if (tab_page != NULL && !sakura_notebook_detach_page(tab_page)) {
 		g_clear_pointer(&page_panes, g_ptr_array_unref);
+		g_clear_pointer(&agent_page_id, g_free);
 		sakura_workspace_end_mutation();
 		return FALSE;
 	}
@@ -1564,6 +1581,18 @@ sakura_tab_delete_page(gint page)
 	} else {
 		sakura_tab_free(sk_tab);
 	}
+	if (agent_page_backed && agent_page_id != NULL &&
+	    sakura.agent_socket_path != NULL &&
+	    !sakura.session_restoring && !sakura.session_shutting_down) {
+		GError *error = NULL;
+
+		if (!sakura_agent_delete_page(&sakura, agent_page_id, &error)) {
+			g_warning("Could not delete agent page %s: %s", agent_page_id,
+			          error != NULL ? error->message : "unknown error");
+			g_clear_error(&error);
+		}
+	}
+	g_clear_pointer(&agent_page_id, g_free);
 	sakura_workspace_mark_changed(SAKURA_WORKSPACE_CHANGE_STRUCTURE);
 	sakura_sidebar_update_attention_count();
 

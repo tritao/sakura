@@ -25,7 +25,8 @@ typedef enum {
 	SAKURA_CONTROL_REQUEST_DETACH_TERMINAL,
 	SAKURA_CONTROL_REQUEST_HELLO,
 	SAKURA_CONTROL_REQUEST_RESTART_TERMINAL,
-	SAKURA_CONTROL_REQUEST_UPDATE_PAGE
+	SAKURA_CONTROL_REQUEST_UPDATE_PAGE,
+	SAKURA_CONTROL_REQUEST_DELETE_PAGE
 } SakuraControlRequestKind;
 
 typedef struct {
@@ -116,6 +117,8 @@ gboolean sakura_control_encode_update_page_request(
 	const gchar *request_id, const gchar *page_id, const gchar *group_id,
 	const gchar *task_id, const gchar *title, gboolean title_set_by_user,
 	gboolean archived, GByteArray *payload);
+gboolean sakura_control_encode_delete_page_request(
+	const gchar *request_id, const gchar *page_id, GByteArray *payload);
 gboolean sakura_control_encode_set_task_archived_request(
 	const gchar *request_id, const gchar *task_id, gboolean archived,
 	GByteArray *payload);

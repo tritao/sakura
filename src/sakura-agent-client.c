@@ -1012,6 +1012,28 @@ sakura_agent_update_page(SakuraApp *app, const gchar *page_id,
 
 
 gboolean
+sakura_agent_delete_page(SakuraApp *app, const gchar *page_id,
+	                       GError **error)
+{
+	GByteArray *request;
+	gchar *request_id;
+	gboolean result;
+
+	if (app == NULL || app->agent_socket_path == NULL)
+		return FALSE;
+	request_id = g_uuid_string_random();
+	request = g_byte_array_new();
+	result = sakura_agent_request_encoded_mutation(
+		app, request_id, request,
+		sakura_control_encode_delete_page_request(request_id, page_id, request),
+		"delete page", error);
+	g_byte_array_unref(request);
+	g_free(request_id);
+	return result;
+}
+
+
+gboolean
 sakura_agent_set_task_archived(SakuraApp *app, const gchar *task_id,
 	                             gboolean archived, GError **error)
 {

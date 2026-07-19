@@ -126,6 +126,10 @@ message UpdatePageRequest {
   bool archived = 6;
 }
 
+message DeletePageRequest {
+  string page_id = 1;
+}
+
 message SetTaskArchivedRequest {
   string task_id = 1;
   bool archived = 2;
@@ -206,6 +210,7 @@ message Request {
     HelloRequest hello = 18;
     RestartTerminalRequest restart_terminal = 19;
     UpdatePageRequest update_page = 20;
+    DeletePageRequest delete_page = 21;
   }
 }
 

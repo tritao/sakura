@@ -216,6 +216,16 @@ test_mutation_request_roundtrip(void)
 	sakura_control_request_clear(&request);
 	g_byte_array_set_size(encoded, 0);
 
+	g_assert_true(sakura_control_encode_delete_page_request(
+		"delete-page", "page-1", encoded));
+	g_assert_true(sakura_control_decode_request(encoded->data, encoded->len,
+	                                           &request, &error));
+	g_assert_no_error(error);
+	g_assert_cmpint(request.kind, ==, SAKURA_CONTROL_REQUEST_DELETE_PAGE);
+	g_assert_cmpstr(request.page_id, ==, "page-1");
+	sakura_control_request_clear(&request);
+	g_byte_array_set_size(encoded, 0);
+
 	g_assert_true(sakura_control_encode_set_task_archived_request(
 		"archive-task", "task-1", TRUE, encoded));
 	g_assert_true(sakura_control_decode_request(encoded->data, encoded->len,
@@ -664,6 +674,34 @@ test_agent_read_page_state_until(GInputStream *input, const gchar *page_id,
 
 
 static gboolean
+test_agent_read_page_count_until(GInputStream *input, gsize page_count)
+{
+	for (guint attempt = 0; attempt < 100; attempt++) {
+		GByteArray *payload = NULL;
+		SakuraSessionSnapshot *snapshot = NULL;
+		guint64 sequence;
+		GError *error = NULL;
+
+		if (!sakura_control_frame_read(input, &payload, NULL, &error)) {
+			g_clear_error(&error);
+			return FALSE;
+		}
+		if (sakura_control_decode_workspace_changed_event(
+				payload->data, payload->len, &sequence, &snapshot, &error) &&
+		    snapshot->pages != NULL && snapshot->pages->len == page_count) {
+			sakura_session_snapshot_free(snapshot);
+			g_byte_array_unref(payload);
+			return TRUE;
+		}
+		g_clear_error(&error);
+		sakura_session_snapshot_free(snapshot);
+		g_byte_array_unref(payload);
+	}
+	return FALSE;
+}
+
+
+static gboolean
 test_agent_read_output_until(GInputStream *input, const gchar *terminal_id,
 	                           const gchar *needle)
 {
@@ -787,6 +825,7 @@ test_agent_create_and_reload(void)
 	SakuraSessionSnapshot *snapshot;
 	SakuraSessionGroupRecord *group;
 	SakuraSessionTaskRecord *task;
+	SakuraSessionPageRecord *page_record;
 	GError *error = NULL;
 	GSocketConnection *subscriber;
 	GInputStream *subscriber_input;
@@ -891,6 +930,53 @@ test_agent_create_and_reload(void)
 	g_assert_cmpstr(task->group_id, ==, group_id);
 	task_id = g_strdup(task->id);
 	sakura_session_snapshot_free(snapshot);
+	g_byte_array_set_size(request, 0);
+	g_assert_true(sakura_control_encode_update_page_request(
+		"create-page", "page-restart", group_id, task_id, "Restored page",
+		TRUE, FALSE, request));
+	test_agent_call(socket_path, "create-page", request, &response);
+	sakura_control_response_clear(&response);
+	g_clear_pointer(&event_payload, g_byte_array_unref);
+	sakura_session_snapshot_free(event_snapshot);
+	event_snapshot = NULL;
+	g_assert_true(sakura_control_frame_read(subscriber_input, &event_payload,
+	                                        NULL, &error));
+	g_assert_no_error(error);
+	g_assert_true(sakura_control_decode_workspace_changed_event(
+		event_payload->data, event_payload->len, &event_sequence,
+		&event_snapshot, &error));
+	g_assert_no_error(error);
+	g_assert_cmpuint(event_sequence, ==, 3);
+	g_assert_cmpuint(event_snapshot->pages->len, ==, 1);
+	page_record = g_ptr_array_index(event_snapshot->pages, 0);
+	g_assert_cmpstr(page_record->id, ==, "page-restart");
+	g_assert_cmpstr(page_record->group_id, ==, group_id);
+	g_assert_cmpstr(page_record->task_id, ==, task_id);
+	g_assert_cmpstr(page_record->title, ==, "Restored page");
+	test_save_agent_session(session_path, event_snapshot);
+
+	g_byte_array_set_size(request, 0);
+	g_assert_true(sakura_control_encode_set_group_archived_request(
+		"archive-projects", group_id, TRUE, request));
+	test_agent_call(socket_path, "archive-projects", request, &response);
+	sakura_control_response_clear(&response);
+	g_clear_pointer(&event_payload, g_byte_array_unref);
+	sakura_session_snapshot_free(event_snapshot);
+	event_snapshot = NULL;
+	g_assert_true(sakura_control_frame_read(subscriber_input, &event_payload,
+	                                        NULL, &error));
+	g_assert_no_error(error);
+	g_assert_true(sakura_control_decode_workspace_changed_event(
+		event_payload->data, event_payload->len, &event_sequence,
+		&event_snapshot, &error));
+	g_assert_no_error(error);
+	g_assert_cmpuint(event_sequence, ==, 4);
+	group = g_ptr_array_index(event_snapshot->groups, 0);
+	g_assert_true(group->archived);
+	page_record = g_ptr_array_index(event_snapshot->pages, 0);
+	g_assert_cmpstr(page_record->group_id, ==, group_id);
+	g_assert_cmpstr(page_record->task_id, ==, task_id);
+	test_save_agent_session(session_path, event_snapshot);
 	g_clear_pointer(&event_payload, g_byte_array_unref);
 	sakura_session_snapshot_free(event_snapshot);
 	event_snapshot = NULL;
@@ -934,6 +1020,14 @@ test_agent_create_and_reload(void)
 	g_assert_cmpuint(event_sequence, ==, 0);
 	g_assert_cmpuint(event_snapshot->groups->len, ==, 1);
 	g_assert_cmpuint(event_snapshot->tasks->len, ==, 1);
+	g_assert_cmpuint(event_snapshot->pages->len, ==, 1);
+	group = g_ptr_array_index(event_snapshot->groups, 0);
+	g_assert_true(group->archived);
+	page_record = g_ptr_array_index(event_snapshot->pages, 0);
+	g_assert_cmpstr(page_record->id, ==, "page-restart");
+	g_assert_cmpstr(page_record->group_id, ==, group_id);
+	g_assert_cmpstr(page_record->task_id, ==, task_id);
+	g_assert_cmpstr(page_record->title, ==, "Restored page");
 	sakura_session_snapshot_free(event_snapshot);
 	event_snapshot = NULL;
 	g_clear_pointer(&event_payload, g_byte_array_unref);
@@ -1072,6 +1166,24 @@ test_agent_create_and_reload(void)
 	g_clear_pointer(&event_payload, g_byte_array_unref);
 
 	g_byte_array_set_size(request, 0);
+	g_assert_true(sakura_control_encode_delete_page_request(
+		"delete-page", "page-restart", request));
+	test_agent_call(socket_path, "delete-page", request, &response);
+	sakura_control_response_clear(&response);
+	g_assert_true(sakura_control_frame_read(subscriber_input, &event_payload,
+	                                        NULL, &error));
+	g_assert_no_error(error);
+	g_assert_true(sakura_control_decode_workspace_changed_event(
+		event_payload->data, event_payload->len, &event_sequence,
+		&event_snapshot, &error));
+	g_assert_no_error(error);
+	g_assert_cmpuint(event_sequence, ==, 7);
+	g_assert_cmpuint(event_snapshot->pages->len, ==, 0);
+	sakura_session_snapshot_free(event_snapshot);
+	event_snapshot = NULL;
+	g_clear_pointer(&event_payload, g_byte_array_unref);
+
+	g_byte_array_set_size(request, 0);
 	g_assert_true(sakura_control_encode_delete_task_request(
 		"delete-task", task_id, request));
 	test_agent_call(socket_path, "delete-task", request, &response);
@@ -1083,7 +1195,7 @@ test_agent_create_and_reload(void)
 		event_payload->data, event_payload->len, &event_sequence,
 		&event_snapshot, &error));
 	g_assert_no_error(error);
-	g_assert_cmpuint(event_sequence, ==, 7);
+	g_assert_cmpuint(event_sequence, ==, 8);
 	g_assert_cmpuint(event_snapshot->tasks->len, ==, 0);
 	sakura_session_snapshot_free(event_snapshot);
 	event_snapshot = NULL;
@@ -1272,6 +1384,15 @@ test_agent_terminal_lifecycle(void)
 	sakura_control_response_clear(&response);
 	g_assert_true(test_agent_read_workspace_until(subscriber_input, 0, NULL,
 	                                              0, 0, NULL));
+
+	g_byte_array_set_size(request, 0);
+	g_assert_true(sakura_control_encode_delete_page_request(
+		"delete-page", "page-agent-1", request));
+	test_agent_call_on_connection(command_connection, "delete-page", request,
+	                              &response);
+	g_assert_true(response.has_snapshot);
+	sakura_control_response_clear(&response);
+	g_assert_true(test_agent_read_page_count_until(subscriber_input, 0));
 
 	g_io_stream_close(G_IO_STREAM(subscriber), NULL, NULL);
 	g_object_unref(subscriber);

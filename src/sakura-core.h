@@ -279,6 +279,8 @@ SakuraCorePage *sakura_core_workspace_find_page(
 	SakuraCoreWorkspace *workspace, const gchar *id);
 gboolean sakura_core_workspace_add_page(SakuraCoreWorkspace *workspace,
                                          SakuraCorePage *page);
+gboolean sakura_core_workspace_remove_page(SakuraCoreWorkspace *workspace,
+                                            SakuraCorePage *page);
 GPtrArray *sakura_core_workspace_ordered_groups(
 	const SakuraCoreWorkspace *workspace);
 GPtrArray *sakura_core_workspace_ordered_tasks(

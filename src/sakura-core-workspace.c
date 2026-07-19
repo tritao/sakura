@@ -255,6 +255,12 @@ sakura_core_workspace_can_remove_group(SakuraCoreWorkspace *workspace,
 		if (terminal != NULL && terminal->group == group)
 			return FALSE;
 	}
+	for (guint index = 0; index < workspace->pages->len; index++) {
+		SakuraCorePage *page = g_ptr_array_index(workspace->pages, index);
+
+		if (page != NULL && page->group == group)
+			return FALSE;
+	}
 	return TRUE;
 }
 
@@ -314,6 +320,12 @@ sakura_core_workspace_can_remove_task(SakuraCoreWorkspace *workspace,
 			workspace->terminals, index);
 
 		if (terminal != NULL && terminal->task == task)
+			return FALSE;
+	}
+	for (guint index = 0; index < workspace->pages->len; index++) {
+		SakuraCorePage *page = g_ptr_array_index(workspace->pages, index);
+
+		if (page != NULL && page->task == task)
 			return FALSE;
 	}
 	return TRUE;
@@ -438,6 +450,17 @@ sakura_core_workspace_add_page(SakuraCoreWorkspace *workspace,
 		return FALSE;
 	g_ptr_array_add(workspace->pages, page);
 	return TRUE;
+}
+
+
+gboolean
+sakura_core_workspace_remove_page(SakuraCoreWorkspace *workspace,
+                                  SakuraCorePage *page)
+{
+	if (workspace == NULL || page == NULL || workspace->pages == NULL ||
+	    !g_ptr_array_find(workspace->pages, page, NULL))
+		return FALSE;
+	return g_ptr_array_remove(workspace->pages, page);
 }
 
 

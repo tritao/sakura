@@ -513,6 +513,27 @@ sakura_agent_update_page(SakuraAgent *agent,
 
 
 static gboolean
+sakura_agent_delete_page(SakuraAgent *agent,
+                         const SakuraControlRequest *request,
+                         GError **error)
+{
+	SakuraCorePage *page;
+
+	if (request->page_id == NULL || request->page_id[0] == '\0')
+		return sakura_agent_error(error, "page id is required");
+	page = sakura_core_workspace_find_page(agent->workspace, request->page_id);
+	if (page == NULL) {
+		g_set_error(error, G_IO_ERROR, G_IO_ERROR_NOT_FOUND,
+		            "page %s was not found", request->page_id);
+		return FALSE;
+	}
+	if (!sakura_core_workspace_remove_page(agent->workspace, page))
+		return sakura_agent_error(error, "could not delete page");
+	return TRUE;
+}
+
+
+static gboolean
 sakura_agent_set_task_archived(SakuraAgent *agent,
 	                             const SakuraControlRequest *request,
 	                             GError **error)
@@ -941,6 +962,9 @@ sakura_agent_apply_request(SakuraAgent *agent,
 		break;
 	case SAKURA_CONTROL_REQUEST_UPDATE_PAGE:
 		changed = sakura_agent_update_page(agent, request, error);
+		break;
+	case SAKURA_CONTROL_REQUEST_DELETE_PAGE:
+		changed = sakura_agent_delete_page(agent, request, error);
 		break;
 	case SAKURA_CONTROL_REQUEST_SET_TASK_ARCHIVED:
 		changed = sakura_agent_set_task_archived(agent, request, error);
