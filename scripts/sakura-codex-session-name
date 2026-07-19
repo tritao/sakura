@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Read a persisted Codex session name through the app-server protocol."""
+"""Read persisted Codex session metadata through the app-server protocol."""
 
 import argparse
 import base64
@@ -118,6 +118,13 @@ class CodexAppServer:
             return name.strip()
         return ""
 
+    def read_cwd(self, session_id):
+        thread = self._read_thread(session_id)
+        cwd = thread.get("cwd")
+        if not isinstance(cwd, str):
+            return ""
+        return cwd.strip()
+
     def _read_thread(self, session_id):
         if self.process is None or self.process.poll() is not None:
             self.close()
@@ -177,6 +184,14 @@ def read_name(session_id):
         server.close()
 
 
+def read_cwd(session_id):
+    server = CodexAppServer()
+    try:
+        return server.read_cwd(session_id)
+    finally:
+        server.close()
+
+
 def set_name(session_id, name):
     server = CodexAppServer()
     try:
@@ -217,6 +232,7 @@ def main():
     parser = argparse.ArgumentParser()
     mode = parser.add_mutually_exclusive_group(required=True)
     mode.add_argument("--name", dest="session_id")
+    mode.add_argument("--cwd", dest="cwd_session_id")
     mode.add_argument("--set-name", nargs=2, metavar=("SESSION", "NAME"),
                       dest="set_name")
     mode.add_argument("--server", action="store_true")
@@ -229,6 +245,14 @@ def main():
             set_name(*args.set_name)
         except (OSError, RuntimeError, ValueError, json.JSONDecodeError) as exc:
             print(f"could not set Codex session name: {exc}", file=sys.stderr)
+            return 1
+        return 0
+    if args.cwd_session_id:
+        try:
+            print(read_cwd(args.cwd_session_id))
+        except (OSError, RuntimeError, ValueError, json.JSONDecodeError) as exc:
+            print(f"could not read Codex session working directory: {exc}",
+                  file=sys.stderr)
             return 1
         return 0
     try:

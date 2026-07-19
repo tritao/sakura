@@ -502,10 +502,13 @@ struct sakura_tab {
 	gchar *codex_session_id;
 	gchar *codex_session_name;
 	gchar *codex_reasoning_effort;
+	gchar *codex_resume_cwd;
 	gchar *codex_turn_id;
 	gchar *codex_interrupt_turn_id;
 	gchar *codex_tracking_token;
 	gboolean codex_start_pending;
+	gboolean codex_resume_cwd_query_active;
+	gboolean codex_resume_cwd_lookup_done;
 	gboolean codex_name_query_active;
 	guint codex_name_retry_source_id;
 	guint codex_name_retry_count;
@@ -734,6 +737,7 @@ void sakura_open_mail_cb(GtkWidget *widget, void *data);
 void sakura_copy_url_cb(GtkWidget *widget, void *data);
 void sakura_copy_pr_url_cb(GtkWidget *widget, void *data);
 void sakura_tab_spawn_tool(SakuraTab *tab, const gchar *cwd, gchar **env);
+void sakura_tab_resume_codex_with_cwd(SakuraTab *tab, const gchar *fallback_cwd);
 gboolean sakura_tab_start_process(SakuraTab *tab, const gchar *cwd, gchar **env,
                                    SakuraTabKind kind, SakuraToolKind tool,
                                    const gchar *execute_command, gchar **xterm_args,
@@ -764,6 +768,8 @@ SakuraTab *sakura_find_codex_tab_by_tracking_token(const gchar *token);
 gchar *sakura_find_codex_name_helper(void);
 void sakura_codex_name_helper_shutdown(void);
 void sakura_codex_sync_name(SakuraTab *tab);
+void sakura_codex_resolve_resume_cwd_async(SakuraTab *tab,
+                                           const gchar *fallback_cwd);
 void sakura_codex_set_name_async(SakuraTab *tab, const gchar *name);
 SakuraCodexTrackingState sakura_codex_tracking_state(void);
 void sakura_codex_tracking_menu_update(GtkWidget *item);

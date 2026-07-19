@@ -4821,8 +4821,10 @@ sakura_sidebar_set_node_row(SakuraSidebarNode *node, GtkTreeIter *iter)
 	escaped_title = g_markup_escape_text(node->title != NULL ? node->title : "", -1);
 	escaped_subtitle = g_markup_escape_text(node->subtitle != NULL ? node->subtitle : "", -1);
 	if (!task_row && status_tab != NULL &&
-	    (status_tab->runtime_deferred || status_tab->runtime_start_pending))
-		status_label = status_tab->runtime_start_pending
+	    (status_tab->runtime_deferred || status_tab->runtime_start_pending ||
+	     status_tab->codex_resume_cwd_query_active))
+		status_label = (status_tab->runtime_start_pending ||
+		                status_tab->codex_resume_cwd_query_active)
 	                   ? _("Starting terminal…") : _("Click to resume");
 	else
 		status_label = task_row ? sakura_task_status_label(task_status) :
@@ -4835,9 +4837,10 @@ sakura_sidebar_set_node_row(SakuraSidebarNode *node, GtkTreeIter *iter)
 	                            : (((status_tab == NULL || !status_tab->runtime_deferred) &&
                                 status == SAKURA_TAB_STATUS_RUNNING) ||
 	                              (status_tab != NULL &&
-	                               (status_tab->agent_start_pending ||
-	                                status_tab->codex_start_pending ||
-	                                status_tab->runtime_start_pending)));
+	                              (status_tab->agent_start_pending ||
+	                               status_tab->codex_start_pending ||
+	                               status_tab->codex_resume_cwd_query_active ||
+	                               status_tab->runtime_start_pending)));
 	status_color = task_row ? sakura_task_status_color(task_status) :
 	              (status != SAKURA_TAB_STATUS_NONE ? sakura_tab_status_color(status) : NULL);
 	status_symbol = task_row ? sakura_task_status_symbol(task_status) :

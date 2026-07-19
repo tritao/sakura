@@ -329,12 +329,42 @@ sakura_tab_spawn_codex(SakuraTab *tab, const gchar *cwd, gchar **env)
 {
 	gchar **codex_env = g_get_environ();
 	gchar *reasoning_config = NULL;
-	gchar *argv[10] = { (gchar *)"codex",
+	const gchar *launch_cwd = cwd;
+	gchar *argv[12] = { (gchar *)"codex",
 	                    (gchar *)"--dangerously-bypass-approvals-and-sandbox",
 	                    (gchar *)"--enable", (gchar *)"hooks",
-	                    NULL, NULL, NULL, NULL, NULL, NULL };
+	                    NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL };
 	guint next_arg = 4;
 
+	if (tab->codex_session_id != NULL && tab->codex_session_id[0] != '\0' &&
+	    !tab->codex_resume_cwd_lookup_done) {
+		if (!tab->codex_resume_cwd_query_active) {
+			tab->codex_resume_cwd_query_active = TRUE;
+			if (sakura.session_restoring || tab->runtime_start_pending) {
+				if (!tab->codex_start_pending) {
+					tab->codex_start_pending = TRUE;
+					if (sakura.session_restoring)
+						sakura_startup_terminal_start_pending(&sakura, TRUE);
+				}
+			}
+			if (tab->spinner != NULL) {
+				gtk_widget_set_tooltip_text(tab->spinner,
+				                            _("Loading session…"));
+				gtk_widget_show(tab->spinner);
+				gtk_spinner_start(GTK_SPINNER(tab->spinner));
+			}
+			sakura_sidebar_update_tab(tab);
+			sakura_codex_resolve_resume_cwd_async(tab, cwd);
+		}
+		g_strfreev(codex_env);
+		return;
+	}
+
+	if (tab->codex_resume_cwd != NULL) {
+		launch_cwd = tab->codex_resume_cwd;
+		argv[next_arg++] = (gchar *)"--cd";
+		argv[next_arg++] = tab->codex_resume_cwd;
+	}
 	if (sakura_codex_reasoning_effort_is_valid(tab->codex_reasoning_effort)) {
 		reasoning_config = g_strdup_printf("model_reasoning_effort=%s",
 		                                    tab->codex_reasoning_effort);
@@ -363,21 +393,39 @@ sakura_tab_spawn_codex(SakuraTab *tab, const gchar *cwd, gchar **env)
 			g_free(name);
 		}
 	}
+	argv[next_arg] = NULL;
 	codex_env = g_environ_unsetenv(codex_env, "NO_COLOR");
 	if (sakura.session_restoring || tab->runtime_start_pending) {
-		tab->codex_start_pending = TRUE;
-		if (sakura.session_restoring)
-			sakura_startup_terminal_start_pending(&sakura, TRUE);
+		if (!tab->codex_start_pending) {
+			tab->codex_start_pending = TRUE;
+			if (sakura.session_restoring)
+				sakura_startup_terminal_start_pending(&sakura, TRUE);
+		}
 		if (tab->spinner != NULL) {
+			gtk_widget_set_tooltip_text(tab->spinner, _("Starting terminal…"));
 			gtk_widget_show(tab->spinner);
 			gtk_spinner_start(GTK_SPINNER(tab->spinner));
 		}
 	}
-	vte_terminal_spawn_async(VTE_TERMINAL(tab->vte), VTE_PTY_NO_HELPER, cwd,
+	vte_terminal_spawn_async(VTE_TERMINAL(tab->vte), VTE_PTY_NO_HELPER, launch_cwd,
 	                         argv, codex_env, G_SPAWN_SEARCH_PATH, NULL, NULL, NULL,
 	                         -1, NULL, sakura_spawn_callback, NULL);
 	g_strfreev(codex_env);
 	g_free(reasoning_config);
+}
+
+
+void
+sakura_tab_resume_codex_with_cwd(SakuraTab *tab, const gchar *fallback_cwd)
+{
+	gchar **env;
+
+	if (tab == NULL || tab->kind != SAKURA_TAB_CODEX ||
+	    sakura.session_shutting_down)
+		return;
+	env = sakura_tab_build_environment(tab, FALSE);
+	sakura_tab_spawn_codex(tab, fallback_cwd, env);
+	g_strfreev(env);
 }
 
 
@@ -2454,6 +2502,7 @@ sakura_tab_free(SakuraTab *tab)
 	g_free(tab->codex_session_id);
 	g_free(tab->codex_session_name);
 	g_free(tab->codex_reasoning_effort);
+	g_free(tab->codex_resume_cwd);
 	g_free(tab->codex_turn_id);
 	g_free(tab->codex_interrupt_turn_id);
 	g_free(tab->codex_tracking_token);
@@ -2487,7 +2536,7 @@ sakura_tab_set_status(SakuraTab *tab, SakuraTabStatus status, gboolean attention
 	if (tab->spinner != NULL) {
 		if ((!tab->runtime_deferred && status == SAKURA_TAB_STATUS_RUNNING) ||
 		    tab->agent_start_pending || tab->codex_start_pending ||
-		    tab->runtime_start_pending) {
+		    tab->codex_resume_cwd_query_active || tab->runtime_start_pending) {
 			gtk_widget_show(tab->spinner);
 			gtk_spinner_start(GTK_SPINNER(tab->spinner));
 		} else {
@@ -2568,7 +2617,7 @@ sakura_tab_restore_state(SakuraTab *tab, SakuraTabStatus status,
 	if (tab->spinner != NULL) {
 		if ((!tab->runtime_deferred && status == SAKURA_TAB_STATUS_RUNNING) ||
 		    tab->agent_start_pending || tab->codex_start_pending ||
-		    tab->runtime_start_pending) {
+		    tab->codex_resume_cwd_query_active || tab->runtime_start_pending) {
 			gtk_widget_show(tab->spinner);
 			gtk_spinner_start(GTK_SPINNER(tab->spinner));
 		} else {
@@ -2769,7 +2818,7 @@ sakura_tab_bar_update_tab(SakuraTab *tab)
 
 	status_color = sakura_tab_status_color(tab->status);
 	status_symbol = sakura_tab_status_symbol(tab->status);
-	if (tab->runtime_start_pending ||
+	if (tab->runtime_start_pending || tab->codex_resume_cwd_query_active ||
 	    (!tab->runtime_deferred && tab->status == SAKURA_TAB_STATUS_RUNNING)) {
 		gtk_widget_show(status_slot);
 		gtk_widget_hide(tab->tab_button_status);
