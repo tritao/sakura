@@ -293,9 +293,44 @@ sakura_workspace_model_update_task_id(SakuraWorkspaceModel *model,
 }
 
 
-gboolean
-sakura_workspace_model_restore_snapshot(SakuraWorkspaceModel *model,
-                                         const SakuraSessionSnapshot *snapshot)
+static gboolean
+sakura_workspace_model_can_set_group_parent(SakuraWorkspaceModel *model,
+                                             SakuraGroup *group,
+                                             SakuraGroup *parent)
+{
+	if (model == NULL || group == NULL || parent == NULL || group == parent ||
+	    g_list_find(model->groups, parent) == NULL)
+		return FALSE;
+	for (SakuraGroup *candidate = parent; candidate != NULL;
+	     candidate = candidate->parent) {
+		if (candidate == group)
+			return FALSE;
+	}
+	return TRUE;
+}
+
+
+static gboolean
+sakura_workspace_model_can_set_task_parent(SakuraWorkspaceModel *model,
+                                            SakuraTask *task,
+                                            SakuraTask *parent)
+{
+	if (model == NULL || task == NULL || parent == NULL || task == parent ||
+	    sakura_workspace_model_find_task(model, parent->id) != parent)
+		return FALSE;
+	for (SakuraTask *candidate = parent; candidate != NULL;
+	     candidate = candidate->parent) {
+		if (candidate == task)
+			return FALSE;
+	}
+	return TRUE;
+}
+
+
+static gboolean
+sakura_workspace_model_apply_snapshot(SakuraWorkspaceModel *model,
+                                       const SakuraSessionSnapshot *snapshot,
+                                       gboolean remove_missing)
 {
 	guint remaining, pass;
 
@@ -368,28 +403,45 @@ sakura_workspace_model_restore_snapshot(SakuraWorkspaceModel *model,
 				sakura_group_free(group);
 		}
 	}
-	/* Agent snapshots are authoritative for groups. Remove only groups that
-	 * have no local task/page dependants; those dependants are desktop-only
-	 * state that the GTK-free agent cannot see yet. */
-	for (GList *link = model->groups, *next; link != NULL; link = next) {
-		SakuraGroup *group = link->data;
-		gboolean present = FALSE;
-
-		next = link->next;
-		if (group == NULL || group == model->root_group)
-			continue;
+	if (!remove_missing) {
+		/* Reconcile relationships after all records exist. This matters when an
+		 * event lists a child before its parent, and keeps stable object identity
+		 * so desktop-owned pages continue pointing at the same group. */
 		for (guint index = 0; snapshot->groups != NULL &&
 		                     index < snapshot->groups->len; index++) {
 			SakuraSessionGroupRecord *record =
 				g_ptr_array_index(snapshot->groups, index);
+			SakuraGroup *group, *parent;
 
-			if (record != NULL && g_strcmp0(record->id, group->id) == 0) {
-				present = TRUE;
-				break;
-			}
+			if (record == NULL || record->id == NULL)
+				continue;
+			group = sakura_workspace_model_find_group(model, record->id);
+			parent = sakura_workspace_model_find_group(model, record->parent_id);
+			if (sakura_workspace_model_can_set_group_parent(model, group, parent))
+				group->parent = parent;
 		}
-		if (!present)
-			sakura_workspace_model_remove_group(model, group);
+	}
+	if (remove_missing) {
+		for (GList *link = model->groups, *next; link != NULL; link = next) {
+			SakuraGroup *group = link->data;
+			gboolean present = FALSE;
+
+			next = link->next;
+			if (group == NULL || group == model->root_group)
+				continue;
+			for (guint index = 0; snapshot->groups != NULL &&
+			                     index < snapshot->groups->len; index++) {
+				SakuraSessionGroupRecord *record =
+					g_ptr_array_index(snapshot->groups, index);
+
+				if (record != NULL && g_strcmp0(record->id, group->id) == 0) {
+					present = TRUE;
+					break;
+				}
+			}
+			if (!present)
+				sakura_workspace_model_remove_group(model, group);
+		}
 	}
 
 	remaining = snapshot->tasks != NULL ? snapshot->tasks->len : 0;
@@ -498,10 +550,40 @@ sakura_workspace_model_restore_snapshot(SakuraWorkspaceModel *model,
 			sakura_workspace_model_update_task_id(model, task);
 		}
 	}
-	/* As with groups, delete only tasks that the desktop can safely release.
-	 * A task with a page or child task remains projected until that dependency
-	 * is handled by a later command. */
-	if (model->tasks != NULL) {
+	if (!remove_missing) {
+		/* Agent-owned task relationships also arrive by stable ID. Keep the
+		 * desktop object, but move it to the parent/group named by the agent. */
+		for (guint index = 0; snapshot->tasks != NULL &&
+		                     index < snapshot->tasks->len; index++) {
+			SakuraSessionTaskRecord *record =
+				g_ptr_array_index(snapshot->tasks, index);
+			SakuraTask *task, *parent;
+			SakuraGroup *group;
+
+			if (record == NULL || record->id == NULL)
+				continue;
+			task = sakura_workspace_model_find_task(model, record->id);
+			if (task == NULL)
+				continue;
+			parent = record->parent_id != NULL &&
+			         record->parent_id[0] != '\0' &&
+			         g_strcmp0(record->parent_id, "root") != 0
+			       ? sakura_workspace_model_find_task(model, record->parent_id) : NULL;
+			if (sakura_workspace_model_can_set_task_parent(model, task, parent)) {
+				task->parent = parent;
+				task->group = parent->group;
+				continue;
+			}
+			group = sakura_workspace_model_find_group(model, record->group_id);
+			if (group != NULL) {
+				task->parent = NULL;
+				task->group = group;
+			}
+		}
+	}
+	/* A full desktop restore is authoritative for agent-owned tasks. An agent
+	 * merge deliberately skips this block because the agent has no page graph. */
+	if (remove_missing && model->tasks != NULL) {
 		for (gint index = (gint)model->tasks->len - 1; index >= 0; index--) {
 			SakuraTask *task = g_ptr_array_index(model->tasks, index);
 			gboolean present = FALSE;
@@ -524,6 +606,22 @@ sakura_workspace_model_restore_snapshot(SakuraWorkspaceModel *model,
 		}
 	}
 	return TRUE;
+}
+
+
+gboolean
+sakura_workspace_model_restore_snapshot(SakuraWorkspaceModel *model,
+                                         const SakuraSessionSnapshot *snapshot)
+{
+	return sakura_workspace_model_apply_snapshot(model, snapshot, TRUE);
+}
+
+
+gboolean
+sakura_workspace_model_merge_agent_snapshot(
+	SakuraWorkspaceModel *model, const SakuraSessionSnapshot *snapshot)
+{
+	return sakura_workspace_model_apply_snapshot(model, snapshot, FALSE);
 }
 
 

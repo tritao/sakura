@@ -2643,6 +2643,69 @@ test_sidebar_archive_filters_projection(void)
 
 
 static void
+test_agent_snapshot_merge_preserves_desktop_page_ownership(void)
+{
+	SakuraSidebarNode *group_node;
+	SakuraSidebarNode *omitted_group_node;
+	SakuraGroup *group;
+	SakuraGroup *omitted_group;
+	SakuraPage *page;
+	SakuraSessionSnapshot *agent_snapshot;
+	SakuraSessionGroupRecord *group_record;
+
+	setup_workspace();
+	setup_sidebar_fixture();
+	group_node = test_sidebar_add_group("agent-archive-group",
+	                                  "Agent archive group", sakura.sidebar_root);
+	group = group_node->group;
+	omitted_group_node = test_sidebar_add_group("agent-omitted-group",
+	                                          "Agent omitted group",
+	                                          sakura.sidebar_root);
+	omitted_group = omitted_group_node->group;
+	page = sakura_page_at_page(1);
+	page->group = group;
+	sakura_sidebar_rebuild_projection();
+	g_assert_true(page->sidebar_node != NULL);
+	g_assert_true(page->sidebar_node->parent == group->sidebar_node);
+
+	/* This is the shape of an agent event today: it has group/task state but
+	 * deliberately has no desktop page/layout records. */
+	agent_snapshot = sakura_session_snapshot_new();
+	group_record = g_new0(SakuraSessionGroupRecord, 1);
+	group_record->id = g_strdup(group->id);
+	group_record->parent_id = g_strdup("root");
+	group_record->title = g_strdup(group->title);
+	group_record->archived = TRUE;
+	g_ptr_array_add(agent_snapshot->groups, group_record);
+	g_assert_cmpuint(agent_snapshot->pages->len, ==, 0);
+
+	g_assert_true(sakura_workspace_model_merge_agent_snapshot(
+		sakura.workspace, agent_snapshot));
+	g_assert_true(page->group == group);
+	g_assert_true(group->archived);
+	/* A partial agent payload must not delete another live model entity just
+	 * because the agent has not started owning that entity yet. */
+	g_assert_true(test_workspace_model_group_by_id(
+		sakura.workspace, omitted_group->id) == omitted_group);
+
+	/* The page is hidden only by the projection policy and comes back when
+	 * archived content is requested; the agent merge never destroys it. */
+	sakura_sidebar_rebuild_projection();
+	g_assert_null(page->sidebar_node);
+	sakura.show_archived = TRUE;
+	sakura_sidebar_rebuild_projection();
+	g_assert_nonnull(group->sidebar_node);
+	g_assert_nonnull(page->sidebar_node);
+	g_assert_true(page->sidebar_node->parent == group->sidebar_node);
+
+	sakura_session_snapshot_free(agent_snapshot);
+	test_sidebar_remove_group(group->sidebar_node);
+	test_sidebar_remove_group(omitted_group->sidebar_node);
+	teardown_workspace();
+}
+
+
+static void
 test_workspace_model_restores_hierarchy_without_view(void)
 {
 	SakuraWorkspaceModel *model = sakura_workspace_model_new();
@@ -3063,6 +3126,8 @@ main(int argc, char **argv)
 	                test_workspace_model_archive_subtrees);
 	g_test_add_func("/workspace/sidebar-archive-filters-projection",
 	                test_sidebar_archive_filters_projection);
+	g_test_add_func("/workspace/agent-snapshot-merge-preserves-page-ownership",
+	                test_agent_snapshot_merge_preserves_desktop_page_ownership);
 	g_test_add_func("/workspace/model-restores-without-view",
 	                test_workspace_model_restores_hierarchy_without_view);
 	g_test_add_func("/workspace/model-snapshots-without-view",

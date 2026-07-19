@@ -364,7 +364,11 @@ sakura_agent_apply_workspace_snapshot(SakuraApp *app,
 		return FALSE;
 
 	sakura_workspace_begin_mutation();
-	sakura_workspace_model_restore_snapshot(app->workspace, snapshot);
+	/* The agent snapshot is intentionally partial: it owns groups/tasks, while
+	 * pages, tabs, and layouts are still desktop-owned. Never use a partial
+	 * payload as a full restore or it can make a live page look orphaned after
+	 * an archive/restart event. */
+	sakura_workspace_model_merge_agent_snapshot(app->workspace, snapshot);
 	if (snapshot->root_directory != NULL &&
 	    snapshot->root_directory[0] != '\0') {
 		g_free(app->workspace->root_group->directory);

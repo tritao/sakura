@@ -840,6 +840,10 @@ gboolean sakura_workspace_model_set_root(SakuraWorkspaceModel *model,
                                           SakuraGroup *root_group);
 gboolean sakura_workspace_model_restore_snapshot(
 	SakuraWorkspaceModel *model, const SakuraSessionSnapshot *snapshot);
+/* Agent snapshots intentionally contain only agent-owned workspace entities.
+ * Merge them without treating desktop-owned pages/layouts as missing. */
+gboolean sakura_workspace_model_merge_agent_snapshot(
+	SakuraWorkspaceModel *model, const SakuraSessionSnapshot *snapshot);
 GPtrArray *sakura_workspace_model_ordered_groups(
 	const SakuraWorkspaceModel *model);
 GPtrArray *sakura_workspace_model_ordered_tasks(
