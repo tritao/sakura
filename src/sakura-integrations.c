@@ -9,6 +9,7 @@
 #define _(String) gettext(String)
 #define GIT_ICON_NAME "git"
 #define GITHUB_ICON_NAME "github"
+#define SAKURA_CODEX_HELPER_PROTOCOL_VERSION "v1"
 
 const gchar *
 sakura_tool_label(SakuraToolKind tool)
@@ -720,15 +721,10 @@ sakura_browser_navigation_changed_cb(GObject *object, GParamSpec *pspec,
 #endif
 
 #ifndef SAKURA_CORE_TEST
-struct sakura_codex_name_update {
-	gchar *tracking_token;
-	gchar *session_id;
-	gchar *name;
-};
-
 enum sakura_codex_session_query_kind {
 	SAKURA_CODEX_SESSION_QUERY_NAME,
-	SAKURA_CODEX_SESSION_QUERY_CWD
+	SAKURA_CODEX_SESSION_QUERY_INFO,
+	SAKURA_CODEX_SESSION_QUERY_SET_NAME
 };
 
 struct sakura_codex_name_query {
@@ -736,6 +732,8 @@ struct sakura_codex_name_query {
 	gchar *tracking_token;
 	gchar *session_id;
 	gchar *fallback_cwd;
+	gchar *new_name;
+	gboolean resume_cwd;
 	gchar *request_line;
 	guint request_id;
 	gsize request_offset;
@@ -814,9 +812,15 @@ sakura_find_codex_name_helper (void)
 
 
 static void
-sakura_codex_resume_cwd_query_complete(
-	struct sakura_codex_name_query *query,
-	const gchar *cwd, const gchar *error_message)
+sakura_codex_name_query_complete(struct sakura_codex_name_query *query,
+	                               const gchar *name,
+	                               const gchar *error_message);
+
+
+static void
+sakura_codex_session_info_complete(struct sakura_codex_name_query *query,
+	                                  const gchar *name, const gchar *cwd,
+	                                  const gchar *error_message)
 {
 	struct sakura_tab *sk_tab;
 	gchar *clean_cwd = NULL;
@@ -825,24 +829,49 @@ sakura_codex_resume_cwd_query_complete(
 	if (sk_tab == NULL)
 		return;
 	if (sk_tab->kind != SAKURA_TAB_CODEX || sakura.session_shutting_down) {
-		sk_tab->codex_resume_cwd_query_active = FALSE;
-		sk_tab->codex_session_query_active = FALSE;
+		if (query->resume_cwd) {
+			sk_tab->codex_resume_cwd_query_active = FALSE;
+			sk_tab->codex_session_query_active = FALSE;
+		}
 		return;
 	}
 	if (g_strcmp0(sk_tab->codex_session_id, query->session_id) != 0) {
-		if (!sk_tab->codex_resume_cwd_query_active) {
+		if (query->resume_cwd) {
+			sk_tab->codex_resume_cwd_query_active = FALSE;
+			sk_tab->codex_session_query_active = FALSE;
+			sakura_codex_sync_name(sk_tab);
+		}
+		else if (!sk_tab->codex_resume_cwd_query_active) {
 			sk_tab->codex_session_query_active = FALSE;
 			sakura_codex_sync_name(sk_tab);
 		}
 		return;
 	}
 
+	if (error_message != NULL) {
+		if (!query->resume_cwd) {
+			sakura_codex_name_query_complete(query, NULL, error_message);
+			return;
+		}
+		sk_tab->codex_resume_cwd_query_active = FALSE;
+		sk_tab->codex_session_query_active = FALSE;
+		sk_tab->codex_resume_cwd_lookup_done = TRUE;
+		g_debug("Could not read Codex session information: %s", error_message);
+		sakura_tab_resume_codex_with_cwd(sk_tab, query->fallback_cwd);
+		sakura_sidebar_update_tab(sk_tab);
+		sakura_codex_sync_name(sk_tab);
+		return;
+	}
+
+	sakura_codex_name_query_complete(query, name, NULL);
+	if (g_strcmp0(sk_tab->codex_session_id, query->session_id) != 0)
+		return;
+	if (!query->resume_cwd)
+		return;
+
 	sk_tab->codex_resume_cwd_query_active = FALSE;
 	sk_tab->codex_session_query_active = FALSE;
 	sk_tab->codex_resume_cwd_lookup_done = TRUE;
-	if (error_message != NULL)
-		g_debug("Could not read Codex session working directory: %s",
-		        error_message);
 	if (cwd != NULL) {
 		clean_cwd = g_strdup(cwd);
 		g_strstrip(clean_cwd);
@@ -867,7 +896,6 @@ sakura_codex_resume_cwd_query_complete(
 	sakura_tab_resume_codex_with_cwd(sk_tab, query->fallback_cwd);
 	sakura_sidebar_update_tab(sk_tab);
 	g_free(clean_cwd);
-	sakura_codex_sync_name(sk_tab);
 }
 
 
@@ -884,7 +912,8 @@ sakura_codex_resolve_resume_cwd_async(SakuraTab *tab, const gchar *fallback_cwd)
 	if (sakura.codex_name_query_queue == NULL)
 		sakura.codex_name_query_queue = g_queue_new();
 	query = g_new0(struct sakura_codex_name_query, 1);
-	query->kind = SAKURA_CODEX_SESSION_QUERY_CWD;
+	query->kind = SAKURA_CODEX_SESSION_QUERY_INFO;
+	query->resume_cwd = TRUE;
 	query->tracking_token = g_strdup(tab->codex_tracking_token);
 	query->session_id = g_strdup(tab->codex_session_id);
 	query->fallback_cwd = g_strdup(fallback_cwd);
@@ -900,6 +929,7 @@ sakura_codex_name_query_free (struct sakura_codex_name_query *query)
 	g_free(query->tracking_token);
 	g_free(query->session_id);
 	g_free(query->fallback_cwd);
+	g_free(query->new_name);
 	g_free(query->request_line);
 	g_free(query);
 }
@@ -963,6 +993,33 @@ sakura_codex_name_helper_clear (gboolean terminate)
 	g_clear_object(&sakura.codex_name_helper_input);
 	g_clear_object(&sakura.codex_name_helper_output);
 	g_clear_object(&sakura.codex_name_helper_process);
+}
+
+
+static void
+sakura_codex_set_name_query_complete(struct sakura_codex_name_query *query,
+                                      const gchar *error_message)
+{
+	struct sakura_tab *sk_tab;
+
+	sk_tab = sakura_find_codex_tab_by_tracking_token(query->tracking_token);
+	if (sk_tab == NULL)
+		return;
+	sk_tab->codex_session_query_active = FALSE;
+	if (sakura.session_shutting_down)
+		return;
+	if (error_message != NULL) {
+		sakura_error(_("Could not rename Codex session: %s"), error_message);
+		return;
+	}
+	if (sk_tab->kind == SAKURA_TAB_CODEX &&
+	    g_strcmp0(sk_tab->codex_session_id, query->session_id) == 0) {
+		g_free(sk_tab->codex_session_name);
+		sk_tab->codex_session_name = g_strdup(query->new_name);
+		if (!sk_tab->label_set_byuser)
+			sakura_sidebar_update_tab(sk_tab);
+		sakura_session_mark_dirty();
+	}
 }
 
 
@@ -1034,12 +1091,36 @@ sakura_codex_name_helper_request_failed (struct sakura_codex_name_query *query,
 		return;
 	sakura.codex_name_query_in_flight = NULL;
 	sakura_codex_name_helper_clear(TRUE);
-	if (query->kind == SAKURA_CODEX_SESSION_QUERY_CWD)
-		sakura_codex_resume_cwd_query_complete(query, NULL, error_message);
+	if (query->kind == SAKURA_CODEX_SESSION_QUERY_INFO)
+		sakura_codex_session_info_complete(query, NULL, NULL, error_message);
+	else if (query->kind == SAKURA_CODEX_SESSION_QUERY_SET_NAME)
+		sakura_codex_set_name_query_complete(query, error_message);
 	else
 		sakura_codex_name_query_complete(query, NULL, error_message);
 	sakura_codex_name_query_free(query);
 	sakura_codex_name_helper_dispatch();
+}
+
+
+static gchar *
+sakura_codex_decode_value(const gchar *encoded)
+{
+	guchar *bytes;
+	gchar *value;
+	gsize length = 0;
+
+	if (encoded == NULL)
+		return NULL;
+	bytes = g_base64_decode(encoded, &length);
+	if (length == 0) {
+		g_free(bytes);
+		return g_strdup("");
+	}
+	if (bytes == NULL)
+		return NULL;
+	value = g_strndup((gchar *)bytes, length);
+	g_free(bytes);
+	return value;
 }
 
 
@@ -1054,8 +1135,9 @@ sakura_codex_name_helper_read_done (GObject *source_object,
 	gchar *line = NULL;
 	gchar **fields = NULL;
 	gchar *decoded = NULL;
-	guchar *decoded_bytes = NULL;
-	gsize decoded_length = 0;
+	gchar *decoded_cwd = NULL;
+	const gchar *status_field;
+	const gchar *payload_field;
 	gchar *end = NULL;
 	guint64 request_id;
 	gboolean valid_response = FALSE;
@@ -1071,10 +1153,21 @@ sakura_codex_name_helper_read_done (GObject *source_object,
 		return;
 	}
 
-	fields = g_strsplit(line, "\t", 3);
+	fields = g_strsplit(line, "\t", 6);
 	request_id = fields[0] != NULL ? g_ascii_strtoull(fields[0], &end, 10) : 0;
-	valid_response = fields[0] != NULL && fields[1] != NULL && fields[2] != NULL &&
-	                end != fields[0] && *end == '\0' &&
+	status_field = fields[1];
+	payload_field = fields[2];
+	if (query->kind != SAKURA_CODEX_SESSION_QUERY_NAME) {
+		valid_response = fields[1] != NULL &&
+		                g_strcmp0(fields[1], SAKURA_CODEX_HELPER_PROTOCOL_VERSION) == 0 &&
+		                fields[2] != NULL && fields[3] != NULL;
+		status_field = fields[2];
+		payload_field = fields[3];
+	}
+	valid_response = valid_response ||
+	                (query->kind == SAKURA_CODEX_SESSION_QUERY_NAME &&
+	                 fields[0] != NULL && fields[1] != NULL && fields[2] != NULL);
+	valid_response = valid_response && end != fields[0] && *end == '\0' &&
 	                request_id == query->request_id;
 	if (!valid_response) {
 		sakura_codex_name_helper_request_failed(query, "invalid response from Codex session name helper");
@@ -1083,25 +1176,46 @@ sakura_codex_name_helper_read_done (GObject *source_object,
 		return;
 	}
 
-	decoded_bytes = g_base64_decode(fields[2], &decoded_length);
-	if (decoded_length == 0)
-		decoded = g_strdup("");
-	else if (decoded_bytes != NULL)
-		decoded = g_strndup((gchar *)decoded_bytes, decoded_length);
+	decoded = sakura_codex_decode_value(payload_field);
 	if (decoded == NULL) {
 		sakura_codex_name_helper_request_failed(query, "invalid encoded response from Codex session name helper");
 		g_strfreev(fields);
 		g_free(line);
 		return;
 	}
+	if (query->kind == SAKURA_CODEX_SESSION_QUERY_INFO &&
+	    g_strcmp0(status_field, "ok") == 0) {
+		if (fields[4] == NULL) {
+			sakura_codex_name_helper_request_failed(
+				query, "invalid session information response");
+			g_free(decoded);
+			g_strfreev(fields);
+			g_free(line);
+			return;
+		}
+		decoded_cwd = sakura_codex_decode_value(fields[4]);
+		if (decoded_cwd == NULL) {
+			sakura_codex_name_helper_request_failed(
+				query, "invalid session working directory response");
+			g_free(decoded);
+			g_strfreev(fields);
+			g_free(line);
+			return;
+		}
+	}
 
 	sakura.codex_name_query_in_flight = NULL;
-	if (query->kind == SAKURA_CODEX_SESSION_QUERY_CWD) {
-		if (g_strcmp0(fields[1], "ok") == 0)
-			sakura_codex_resume_cwd_query_complete(query, decoded, NULL);
+	if (query->kind == SAKURA_CODEX_SESSION_QUERY_INFO) {
+		if (g_strcmp0(status_field, "ok") == 0)
+			sakura_codex_session_info_complete(query, decoded, decoded_cwd, NULL);
 		else
-			sakura_codex_resume_cwd_query_complete(query, NULL, decoded);
-	} else if (g_strcmp0(fields[1], "ok") == 0) {
+			sakura_codex_session_info_complete(query, NULL, NULL, decoded);
+	} else if (query->kind == SAKURA_CODEX_SESSION_QUERY_SET_NAME) {
+		if (g_strcmp0(status_field, "ok") == 0)
+			sakura_codex_set_name_query_complete(query, NULL);
+		else
+			sakura_codex_set_name_query_complete(query, decoded);
+	} else if (g_strcmp0(status_field, "ok") == 0) {
 		sakura_codex_name_query_complete(query, decoded, NULL);
 	} else {
 		sakura_codex_name_query_complete(query, NULL, decoded);
@@ -1109,8 +1223,8 @@ sakura_codex_name_helper_read_done (GObject *source_object,
 	sakura_codex_name_query_free(query);
 	sakura_codex_name_helper_dispatch();
 
-	g_free(decoded_bytes);
 	g_free(decoded);
+	g_free(decoded_cwd);
 	g_strfreev(fields);
 	g_free(line);
 }
@@ -1159,6 +1273,7 @@ sakura_codex_name_helper_dispatch (void)
 	struct sakura_codex_name_query *query;
 	GError *error = NULL;
 	gchar *encoded_session_id;
+	gchar *encoded_name;
 
 	if (sakura.session_shutting_down || sakura.codex_name_query_in_flight != NULL ||
 	    sakura.codex_name_query_queue == NULL ||
@@ -1169,10 +1284,13 @@ sakura_codex_name_helper_dispatch (void)
 	if (!sakura_codex_name_helper_start(&error)) {
 		g_debug("Could not start Codex session name helper: %s",
 		    error != NULL ? error->message : "unknown error");
-		if (query->kind == SAKURA_CODEX_SESSION_QUERY_CWD)
-			sakura_codex_resume_cwd_query_complete(
-				query, NULL,
+		if (query->kind == SAKURA_CODEX_SESSION_QUERY_INFO)
+			sakura_codex_session_info_complete(
+				query, NULL, NULL,
 				error != NULL ? error->message : "helper start failed");
+		else if (query->kind == SAKURA_CODEX_SESSION_QUERY_SET_NAME)
+			sakura_codex_set_name_query_complete(
+				query, error != NULL ? error->message : "helper start failed");
 		else
 			sakura_codex_name_query_complete(
 				query, NULL,
@@ -1188,13 +1306,23 @@ sakura_codex_name_helper_dispatch (void)
 	query->request_id = sakura.codex_name_helper_request_id;
 	encoded_session_id = g_base64_encode((const guchar *)query->session_id,
 	                                     strlen(query->session_id));
-	if (query->kind == SAKURA_CODEX_SESSION_QUERY_CWD)
-		query->request_line = g_strdup_printf("%u\tcwd\t%s\n",
+	if (query->kind == SAKURA_CODEX_SESSION_QUERY_INFO) {
+		query->request_line = g_strdup_printf("%u\t%s\tinfo\t%s\n",
 		                                      query->request_id,
+		                                      SAKURA_CODEX_HELPER_PROTOCOL_VERSION,
 		                                      encoded_session_id);
-	else
+	} else if (query->kind == SAKURA_CODEX_SESSION_QUERY_SET_NAME) {
+		encoded_name = g_base64_encode((const guchar *)query->new_name,
+		                               strlen(query->new_name));
+		query->request_line = g_strdup_printf("%u\t%s\tset-name\t%s\t%s\n",
+		                                      query->request_id,
+		                                      SAKURA_CODEX_HELPER_PROTOCOL_VERSION,
+		                                      encoded_session_id, encoded_name);
+		g_free(encoded_name);
+	} else {
 		query->request_line = g_strdup_printf("%u\t%s\n", query->request_id,
 		                                      encoded_session_id);
+	}
 	query->request_offset = 0;
 	g_free(encoded_session_id);
 	sakura.codex_name_query_in_flight = query;
@@ -1245,72 +1373,10 @@ sakura_codex_sync_name(SakuraTab *tab)
 	sakura_codex_name_helper_dispatch();
 }
 
-
-
-static void
-sakura_codex_name_update_free (struct sakura_codex_name_update *update)
-{
-	if (update == NULL)
-		return;
-	g_free(update->tracking_token);
-	g_free(update->session_id);
-	g_free(update->name);
-	g_free(update);
-}
-
-
-static void
-sakura_codex_set_name_done (GObject *source_object,
-	                         GAsyncResult *result,
-	                         gpointer data)
-{
-	GSubprocess *process = G_SUBPROCESS(source_object);
-	struct sakura_codex_name_update *update = data;
-	struct sakura_tab *sk_tab;
-	gchar *standard_output = NULL;
-	gchar *standard_error = NULL;
-	GError *error = NULL;
-	const gchar *detail = NULL;
-	gboolean completed;
-
-	completed = g_subprocess_communicate_utf8_finish(
-		process, result, &standard_output, &standard_error, &error);
-	sk_tab = sakura_find_codex_tab_by_tracking_token(update->tracking_token);
-
-	if (!completed || !g_subprocess_get_successful(process)) {
-		if (error != NULL)
-			detail = error->message;
-		else if (standard_error != NULL && standard_error[0] != '\0')
-			detail = standard_error;
-		else
-			detail = _("Codex rejected the rename request");
-		if (!sakura.session_shutting_down)
-			sakura_error(_("Could not rename Codex session: %s"), detail);
-	} else if (sk_tab != NULL && sk_tab->kind == SAKURA_TAB_CODEX &&
-	           g_strcmp0(sk_tab->codex_session_id, update->session_id) == 0) {
-		g_free(sk_tab->codex_session_name);
-		sk_tab->codex_session_name = g_strdup(update->name);
-		if (!sk_tab->label_set_byuser)
-			sakura_sidebar_update_tab(sk_tab);
-		sakura_session_mark_dirty();
-	}
-
-	g_clear_error(&error);
-	g_free(standard_output);
-	g_free(standard_error);
-	sakura_codex_name_update_free(update);
-	g_object_unref(process);
-}
-
-
 void
 sakura_codex_set_name_async (struct sakura_tab *sk_tab, const gchar *name)
 {
-	GSubprocess *process;
-	GError *error = NULL;
-	struct sakura_codex_name_update *update;
-	gchar *helper;
-	const gchar *argv[5];
+	struct sakura_codex_name_query *query;
 
 	if (sk_tab == NULL || name == NULL || name[0] == '\0' ||
 	    sk_tab->kind != SAKURA_TAB_CODEX ||
@@ -1318,34 +1384,16 @@ sakura_codex_set_name_async (struct sakura_tab *sk_tab, const gchar *name)
 	    sk_tab->codex_session_id[0] == '\0' || sakura.session_shutting_down)
 		return;
 
-	helper = sakura_find_codex_name_helper();
-	if (helper == NULL) {
-		sakura_error(_("The Codex session helper is not installed."));
-		return;
-	}
-	argv[0] = helper;
-	argv[1] = "--set-name";
-	argv[2] = sk_tab->codex_session_id;
-	argv[3] = name;
-	argv[4] = NULL;
-	process = g_subprocess_newv(argv,
-	                            G_SUBPROCESS_FLAGS_STDOUT_PIPE |
-	                            G_SUBPROCESS_FLAGS_STDERR_PIPE,
-	                            &error);
-	g_free(helper);
-	if (process == NULL) {
-		sakura_error(_("Could not start the Codex session helper: %s"),
-		             error != NULL ? error->message : _("unknown error"));
-		g_clear_error(&error);
-		return;
-	}
-
-	update = g_new0(struct sakura_codex_name_update, 1);
-	update->tracking_token = g_strdup(sk_tab->codex_tracking_token);
-	update->session_id = g_strdup(sk_tab->codex_session_id);
-	update->name = g_strdup(name);
-	g_subprocess_communicate_utf8_async(process, NULL, NULL,
-	                                   sakura_codex_set_name_done, update);
+	if (sakura.codex_name_query_queue == NULL)
+		sakura.codex_name_query_queue = g_queue_new();
+	query = g_new0(struct sakura_codex_name_query, 1);
+	query->kind = SAKURA_CODEX_SESSION_QUERY_SET_NAME;
+	query->tracking_token = g_strdup(sk_tab->codex_tracking_token);
+	query->session_id = g_strdup(sk_tab->codex_session_id);
+	query->new_name = g_strdup(name);
+	sk_tab->codex_session_query_active = TRUE;
+	g_queue_push_tail(sakura.codex_name_query_queue, query);
+	sakura_codex_name_helper_dispatch();
 }
 
 

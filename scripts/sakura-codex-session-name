@@ -9,6 +9,8 @@ import selectors
 import subprocess
 import sys
 
+HELPER_PROTOCOL_VERSION = "v1"
+
 
 def send(process, message):
     process.stdin.write(json.dumps(message) + "\n")
@@ -35,7 +37,7 @@ def receive_response(process, request_id, timeout=10):
 
 
 class CodexAppServer:
-    """Keep one app-server connection open for session name operations."""
+    """Keep one app-server connection open for Sakura session operations."""
 
     def __init__(self):
         self.process = None
@@ -125,6 +127,15 @@ class CodexAppServer:
             return ""
         return cwd.strip()
 
+    def read_info(self, session_id):
+        thread = self._read_thread(session_id)
+        name = thread.get("name")
+        cwd = thread.get("cwd")
+        return (
+            name.strip() if isinstance(name, str) else "",
+            cwd.strip() if isinstance(cwd, str) else "",
+        )
+
     def _read_thread(self, session_id):
         if self.process is None or self.process.poll() is not None:
             self.close()
@@ -213,21 +224,47 @@ def run_server():
     try:
         for line in sys.stdin:
             fields = line.rstrip("\n").split("\t")
+            versioned = False
             if len(fields) == 2:
                 request_id, encoded_session_id = fields
                 operation = "name"
-            elif len(fields) == 3 and fields[1] == "cwd":
+            elif len(fields) == 3 and fields[1] in ("cwd", "info"):
                 request_id, operation, encoded_session_id = fields
+            elif (len(fields) == 4 and fields[1] == HELPER_PROTOCOL_VERSION and
+                  fields[2] == "info"):
+                request_id, _version, operation, encoded_session_id = fields
+                versioned = True
+            elif (len(fields) == 5 and fields[1] == HELPER_PROTOCOL_VERSION and
+                  fields[2] == "set-name"):
+                request_id, _version, operation, encoded_session_id, encoded_name = fields
+                versioned = True
             else:
                 continue
             try:
                 session_id = decode(encoded_session_id)
-                value = (server.read_cwd(session_id) if operation == "cwd"
-                         else server.read_name(session_id))
-                response = f"{request_id}\tok\t{encode(value)}\n"
+                if operation == "cwd":
+                    response = f"{request_id}\tok\t{encode(server.read_cwd(session_id))}\n"
+                elif operation == "info":
+                    name, cwd = server.read_info(session_id)
+                    if versioned:
+                        response = (f"{request_id}\t{HELPER_PROTOCOL_VERSION}\tok\t"
+                                    f"{encode(name)}\t{encode(cwd)}\n")
+                    else:
+                        response = (f"{request_id}\tok\t{encode(name)}\t"
+                                    f"{encode(cwd)}\n")
+                elif operation == "set-name":
+                    server.set_name(session_id, decode(encoded_name))
+                    response = (f"{request_id}\t{HELPER_PROTOCOL_VERSION}\tok\t"
+                                f"{encode('')}\n")
+                else:
+                    response = f"{request_id}\tok\t{encode(server.read_name(session_id))}\n"
             except (OSError, RuntimeError, ValueError, json.JSONDecodeError) as exc:
                 server.close()
-                response = f"{request_id}\terror\t{encode(str(exc))}\n"
+                if versioned:
+                    response = (f"{request_id}\t{HELPER_PROTOCOL_VERSION}\terror\t"
+                                f"{encode(str(exc))}\n")
+                else:
+                    response = f"{request_id}\terror\t{encode(str(exc))}\n"
             sys.stdout.write(response)
             sys.stdout.flush()
     finally:
