@@ -79,12 +79,20 @@ typedef enum {
 	SAKURA_AGENT_COMMAND_INPUT,
 	SAKURA_AGENT_COMMAND_RESIZE,
 	SAKURA_AGENT_COMMAND_CLOSE,
-	SAKURA_AGENT_COMMAND_DETACH
+	SAKURA_AGENT_COMMAND_DETACH,
+	SAKURA_AGENT_COMMAND_UPDATE_PAGE,
+	SAKURA_AGENT_COMMAND_DELETE_PAGE
 } SakuraAgentCommandKind;
 
 typedef struct {
 	SakuraAgentCommandKind kind;
 	gchar *terminal_id;
+	gchar *page_id;
+	gchar *group_id;
+	gchar *task_id;
+	gchar *title;
+	gboolean title_set_by_user;
+	gboolean archived;
 	guint8 *input_data;
 	gsize input_length;
 	guint cols;
@@ -105,6 +113,10 @@ sakura_agent_command_free(SakuraAgentCommand *command)
 	if (command == NULL)
 		return;
 	g_free(command->terminal_id);
+	g_free(command->page_id);
+	g_free(command->group_id);
+	g_free(command->task_id);
+	g_free(command->title);
 	g_free(command->input_data);
 	g_free(command);
 }
@@ -117,9 +129,17 @@ sakura_agent_apply_command_failure_cb(gpointer data)
 	SakuraTab *tab = NULL;
 
 	if (failure->app != NULL && !failure->app->session_shutting_down &&
-	    failure->app->workspace != NULL)
+	    failure->app->workspace != NULL &&
+	    failure->kind != SAKURA_AGENT_COMMAND_UPDATE_PAGE &&
+	    failure->kind != SAKURA_AGENT_COMMAND_DELETE_PAGE)
 		tab = sakura_find_pane_by_terminal_id(failure->terminal_id);
-	if (tab != NULL) {
+	if (failure->kind == SAKURA_AGENT_COMMAND_UPDATE_PAGE)
+		g_warning("Could not update agent page %s: %s",
+		          failure->terminal_id, failure->message);
+	else if (failure->kind == SAKURA_AGENT_COMMAND_DELETE_PAGE)
+		g_warning("Could not delete agent page %s: %s",
+		          failure->terminal_id, failure->message);
+	else if (tab != NULL) {
 		if (failure->kind == SAKURA_AGENT_COMMAND_CLOSE)
 			g_warning("Could not close agent terminal %s: %s",
 			          failure->terminal_id, failure->message);
@@ -146,7 +166,10 @@ sakura_agent_report_command_failure(SakuraApp *app,
 
 	failure->app = app;
 	failure->kind = command->kind;
-	failure->terminal_id = g_strdup(command->terminal_id);
+	failure->terminal_id = g_strdup(
+		command->kind == SAKURA_AGENT_COMMAND_UPDATE_PAGE ||
+		command->kind == SAKURA_AGENT_COMMAND_DELETE_PAGE
+		? command->page_id : command->terminal_id);
 	failure->message = g_strdup(error != NULL ? error->message :
 	                            "agent command failed");
 	if (app->session_shutting_down) {
@@ -189,12 +212,22 @@ sakura_agent_send_command(SakuraControlClientConnection *connection,
 		encoded = sakura_control_encode_detach_terminal_request(
 			request_id, command->terminal_id, request);
 		break;
+	case SAKURA_AGENT_COMMAND_UPDATE_PAGE:
+		encoded = sakura_control_encode_update_page_request(
+			request_id, command->page_id, command->group_id, command->task_id,
+			command->title, command->title_set_by_user, command->archived,
+			request);
+		break;
+	case SAKURA_AGENT_COMMAND_DELETE_PAGE:
+		encoded = sakura_control_encode_delete_page_request(
+			request_id, command->page_id, request);
+		break;
 	default:
 		break;
 	}
 	if (!encoded) {
 		g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT,
-		                    "could not encode terminal command");
+		                    "could not encode agent command");
 		goto out;
 	}
 	if (!sakura_control_client_request(
@@ -205,12 +238,12 @@ sakura_agent_send_command(SakuraControlClientConnection *connection,
 		goto out;
 	if (g_strcmp0(response.request_id, request_id) != 0) {
 		g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_INVALID_DATA,
-		                    "agent response id did not match terminal command");
+		                    "agent response id did not match command");
 		goto out;
 	}
 	if (!response.accepted && !response.has_snapshot) {
 		g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_INVALID_DATA,
-		                    "agent did not accept terminal command");
+		                    "agent did not accept command");
 		goto out;
 	}
 	success = TRUE;
@@ -342,6 +375,28 @@ sakura_agent_enqueue_command(SakuraApp *app, SakuraAgentCommand *command,
 			    g_strcmp0(pending->terminal_id, command->terminal_id) == 0) {
 				pending->cols = command->cols;
 				pending->rows = command->rows;
+				g_mutex_unlock(&app->agent_command_mutex);
+				sakura_agent_command_free(command);
+				return TRUE;
+			}
+		}
+	}
+	if (command->kind == SAKURA_AGENT_COMMAND_UPDATE_PAGE) {
+		for (GList *link = app->agent_command_queue->tail; link != NULL;
+		     link = link->prev) {
+			SakuraAgentCommand *pending = link->data;
+
+			if (pending != NULL &&
+			    pending->kind == SAKURA_AGENT_COMMAND_UPDATE_PAGE &&
+			    g_strcmp0(pending->page_id, command->page_id) == 0) {
+				g_free(pending->group_id);
+				pending->group_id = g_strdup(command->group_id);
+				g_free(pending->task_id);
+				pending->task_id = g_strdup(command->task_id);
+				g_free(pending->title);
+				pending->title = g_strdup(command->title);
+				pending->title_set_by_user = command->title_set_by_user;
+				pending->archived = command->archived;
 				g_mutex_unlock(&app->agent_command_mutex);
 				sakura_agent_command_free(command);
 				return TRUE;
@@ -991,23 +1046,22 @@ sakura_agent_update_page(SakuraApp *app, const gchar *page_id,
 	                       const gchar *title, gboolean title_set_by_user,
 	                       gboolean archived, GError **error)
 {
-	GByteArray *request;
-	gchar *request_id;
-	gboolean result;
+	SakuraAgentCommand *command;
 
-	if (app == NULL || app->agent_socket_path == NULL)
+	if (page_id == NULL || page_id[0] == '\0') {
+		g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT,
+		                    "page id is required");
 		return FALSE;
-	request_id = g_uuid_string_random();
-	request = g_byte_array_new();
-	result = sakura_agent_request_encoded_mutation(
-		app, request_id, request,
-		sakura_control_encode_update_page_request(
-			request_id, page_id, group_id, task_id, title, title_set_by_user,
-			archived, request),
-		"update page", error);
-	g_byte_array_unref(request);
-	g_free(request_id);
-	return result;
+	}
+	command = g_new0(SakuraAgentCommand, 1);
+	command->kind = SAKURA_AGENT_COMMAND_UPDATE_PAGE;
+	command->page_id = g_strdup(page_id);
+	command->group_id = g_strdup(group_id);
+	command->task_id = g_strdup(task_id);
+	command->title = g_strdup(title);
+	command->title_set_by_user = title_set_by_user;
+	command->archived = archived;
+	return sakura_agent_enqueue_command(app, command, error);
 }
 
 
@@ -1015,21 +1069,17 @@ gboolean
 sakura_agent_delete_page(SakuraApp *app, const gchar *page_id,
 	                       GError **error)
 {
-	GByteArray *request;
-	gchar *request_id;
-	gboolean result;
+	SakuraAgentCommand *command;
 
-	if (app == NULL || app->agent_socket_path == NULL)
+	if (page_id == NULL || page_id[0] == '\0') {
+		g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT,
+		                    "page id is required");
 		return FALSE;
-	request_id = g_uuid_string_random();
-	request = g_byte_array_new();
-	result = sakura_agent_request_encoded_mutation(
-		app, request_id, request,
-		sakura_control_encode_delete_page_request(request_id, page_id, request),
-		"delete page", error);
-	g_byte_array_unref(request);
-	g_free(request_id);
-	return result;
+	}
+	command = g_new0(SakuraAgentCommand, 1);
+	command->kind = SAKURA_AGENT_COMMAND_DELETE_PAGE;
+	command->page_id = g_strdup(page_id);
+	return sakura_agent_enqueue_command(app, command, error);
 }
 
 
