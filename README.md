@@ -57,8 +57,10 @@ If Codex asks you to review the new or changed hook, approve it with `/hooks`.
 
 Start or resume Codex tabs from the terminal popup's **Codex** menu. Sakura
 stores the Codex session ID with the workspace and reopens it with
-`codex resume` after the next launch. New and resumed sessions are launched
-with Codex's `--dangerously-bypass-approvals-and-sandbox` mode. Codex commands typed manually inside
+`codex resume` after the next launch. New and resumed sessions use Codex's
+normal approval and sandbox behavior. To explicitly opt into Codex's
+`--dangerously-bypass-approvals-and-sandbox` mode for a Sakura launch, pass
+`--codex-unsafe-mode`. Codex commands typed manually inside
 ordinary Sakura shell tabs are tracked as well. The tracker records the ID at
 session start and again when a prompt is submitted, covering interactive
 session-picker flows. Existing shell tabs created before tracking was enabled

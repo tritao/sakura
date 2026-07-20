@@ -14,7 +14,8 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install --yes \
-            build-essential cmake pkg-config python3 gettext \
+            build-essential cmake pkg-config python3 python3-xlib gettext \
+            protobuf-compiler protobuf-c-compiler libprotobuf-c-dev \
             libglib2.0-dev libgtk-3-dev libvte-2.91-dev libx11-dev \
             xvfb xdotool
 

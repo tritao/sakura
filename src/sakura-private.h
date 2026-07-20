@@ -163,6 +163,7 @@ typedef enum {
 
 typedef struct {
 	gchar *codex_session;
+	gboolean codex_unsafe_mode;
 	gboolean new_session;
 	gboolean new_window;
 	guint ntabs;

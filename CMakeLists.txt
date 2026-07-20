@@ -200,8 +200,14 @@ TARGET_LINK_LIBRARIES (sakura PRIVATE
 	m)
 
 IF (SAKURA_ENABLE_SANITIZERS)
-	TARGET_COMPILE_OPTIONS (sakura PRIVATE -fsanitize=address,undefined -fno-omit-frame-pointer)
-	TARGET_LINK_OPTIONS (sakura PRIVATE -fsanitize=address,undefined)
+	SET (SAKURA_SANITIZER_COMPILE_FLAGS
+		-fsanitize=address,undefined -fno-omit-frame-pointer)
+	SET (SAKURA_SANITIZER_LINK_FLAGS -fsanitize=address,undefined)
+	FOREACH (target sakura sakura-control-client sakura-core sakura-agent)
+		TARGET_COMPILE_OPTIONS (${target} PRIVATE ${SAKURA_SANITIZER_COMPILE_FLAGS})
+	ENDFOREACH ()
+	TARGET_LINK_OPTIONS (sakura PRIVATE ${SAKURA_SANITIZER_LINK_FLAGS})
+	TARGET_LINK_OPTIONS (sakura-agent PRIVATE ${SAKURA_SANITIZER_LINK_FLAGS})
 ENDIF ()
 
 IF (BUILD_TESTING)

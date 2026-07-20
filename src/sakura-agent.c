@@ -1559,10 +1559,10 @@ static gboolean
 sakura_agent_prepare_socket_path(const gchar *socket_path, GError **error)
 {
 	gchar *directory;
-	gboolean directory_exists;
+	struct stat directory_stat;
+	struct stat socket_stat;
 
 	directory = g_path_get_dirname(socket_path);
-	directory_exists = g_file_test(directory, G_FILE_TEST_IS_DIR);
 	if (g_mkdir_with_parents(directory, 0700) != 0) {
 		g_set_error(error, G_FILE_ERROR, g_file_error_from_errno(errno),
 		            "Could not create agent socket directory %s: %s", directory,
@@ -1570,18 +1570,51 @@ sakura_agent_prepare_socket_path(const gchar *socket_path, GError **error)
 		g_free(directory);
 		return FALSE;
 	}
-	if (!directory_exists && chmod(directory, 0700) != 0) {
+	if (chmod(directory, 0700) != 0) {
 		g_set_error(error, G_FILE_ERROR, g_file_error_from_errno(errno),
 		            "Could not secure agent socket directory %s: %s", directory,
 		            g_strerror(errno));
 		g_free(directory);
 		return FALSE;
 	}
+	if (g_stat(directory, &directory_stat) != 0) {
+		g_set_error(error, G_FILE_ERROR, g_file_error_from_errno(errno),
+		            "Could not inspect agent socket directory %s: %s", directory,
+		            g_strerror(errno));
+		g_free(directory);
+		return FALSE;
+	}
+	if (directory_stat.st_uid != getuid() ||
+	    (directory_stat.st_mode & 0777) != 0700) {
+		g_set_error(error, G_FILE_ERROR, G_FILE_ERROR_ACCES,
+		            "Agent socket directory %s is not owned and mode-restricted",
+		            directory);
+		g_free(directory);
+		return FALSE;
+	}
 	g_free(directory);
-	/* The client probes an existing endpoint before starting us. At this
-	 * point an existing path is therefore stale or owned by a process that
-	 * disappeared between the probe and bind. */
-	g_remove(socket_path);
+	if (g_stat(socket_path, &socket_stat) == 0) {
+		if (socket_stat.st_uid != getuid() || !S_ISSOCK(socket_stat.st_mode)) {
+			g_set_error(error, G_FILE_ERROR, G_FILE_ERROR_ACCES,
+			            "Refusing to replace an untrusted agent socket path %s",
+			            socket_path);
+			return FALSE;
+		}
+		/* The client probes an existing endpoint before starting us. At this
+		 * point an owned socket path is stale or owned by a process that
+		 * disappeared between the probe and bind. */
+		if (g_remove(socket_path) != 0 && errno != ENOENT) {
+			g_set_error(error, G_FILE_ERROR, g_file_error_from_errno(errno),
+			            "Could not remove stale agent socket %s: %s", socket_path,
+			            g_strerror(errno));
+			return FALSE;
+		}
+	} else if (errno != ENOENT) {
+		g_set_error(error, G_FILE_ERROR, g_file_error_from_errno(errno),
+		            "Could not inspect agent socket %s: %s", socket_path,
+		            g_strerror(errno));
+		return FALSE;
+	}
 	return TRUE;
 }
 
@@ -1676,9 +1709,31 @@ main(int argc, char **argv)
 		return EXIT_FAILURE;
 	}
 	g_object_unref(address);
-	if (chmod(socket_path, 0600) != 0)
-		g_printerr("Could not secure agent socket %s: %s\n", socket_path,
-		            g_strerror(errno));
+	{
+		struct stat socket_stat;
+		const gchar *security_error = NULL;
+
+		if (chmod(socket_path, 0600) != 0)
+			security_error = g_strerror(errno);
+		else if (g_stat(socket_path, &socket_stat) != 0)
+			security_error = g_strerror(errno);
+		else if (socket_stat.st_uid != getuid() ||
+		         !S_ISSOCK(socket_stat.st_mode) ||
+		         (socket_stat.st_mode & 0777) != 0600)
+			security_error = "socket ownership or mode is not secure";
+		if (security_error != NULL) {
+			g_printerr("Could not secure agent socket %s: %s\n", socket_path,
+			           security_error);
+			g_object_unref(service);
+			sakura_core_workspace_free(workspace);
+			sakura_session_snapshot_free(session_snapshot);
+			g_remove(socket_path);
+			g_free(socket_path);
+			g_free(session_path);
+			g_free(workspace_id);
+			return EXIT_FAILURE;
+		}
+	}
 
 	loop = g_main_loop_new(NULL, FALSE);
 	agent.loop = loop;

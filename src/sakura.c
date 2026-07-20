@@ -552,6 +552,7 @@ static gint option_colorset;
 static gboolean option_new_session;
 static gboolean option_new_window;
 static gchar *option_codex_session;
+static gboolean option_codex_unsafe_mode;
 
 
 static GOptionEntry entries[] = {
@@ -574,6 +575,7 @@ static GOptionEntry entries[] = {
 	{ "new-session", 0, 0, G_OPTION_ARG_NONE, &option_new_session, N_("Start a new workspace instead of restoring the previous one"), NULL },
 	{ "new-window", 0, G_OPTION_FLAG_HIDDEN, G_OPTION_ARG_NONE, &option_new_window, NULL, NULL },
 	{ "codex-session", 0, 0, G_OPTION_ARG_STRING, &option_codex_session, N_("Open a Codex session by ID or name"), "SESSION" },
+	{ "codex-unsafe-mode", 0, 0, G_OPTION_ARG_NONE, &option_codex_unsafe_mode, N_("Run Codex with approvals and sandbox bypassed"), NULL },
 	{ "colorset", 0, 0, G_OPTION_ARG_INT, &option_colorset, N_("Select initial colorset"), NULL },
 	{ NULL }
 };
@@ -4030,6 +4032,7 @@ sakura_run(int argc, char **argv)
 	{
 		SakuraStartupOptions startup_options = {
 			.codex_session = option_codex_session,
+			.codex_unsafe_mode = option_codex_unsafe_mode,
 			.new_session = option_new_session,
 			.new_window = option_new_window,
 			.ntabs = option_ntabs,
