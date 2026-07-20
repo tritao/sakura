@@ -941,6 +941,8 @@ void sakura_startup_begin(const SakuraStartupOptions *options,
                           gpointer data);
 void sakura_startup_stop(void);
 void sakura_startup_terminal_start_pending(SakuraApp *app, gboolean pending);
+/* The sakura_agent_* functions are the desktop backend boundary. GTK code
+ * uses this facade and does not depend on socket framing or protobuf-c. */
 gboolean sakura_agent_start(SakuraApp *app);
 void sakura_agent_apply_pending_snapshot(SakuraApp *app);
 struct sakura_agent_terminal_start_result {

@@ -34,6 +34,21 @@ a replacement transport.
 6. Use fresh snapshots for recovery. Do not add durable event sourcing or a
    terminal-output database in this work.
 
+## Implementation status
+
+As of 2026-07-20, Milestone 1 is implemented and committed. The local agent
+now has snapshot-first reconnect, workspace revision conflicts, bounded
+per-connection outbound queues, transactional terminal cleanup, fail-closed
+socket setup, request deadlines, and cancellation. The default Codex unsafe
+mode is removed; `--codex-unsafe-mode` is an explicit opt-in.
+
+The compact Milestone 2 protocol work is also in progress: the single schema
+contains revisions, stable error codes, capability bits, and terminal output
+offsets with bounded replay and gap detection. The existing `sakura_agent_*`
+desktop API is the backend boundary for now, so no duplicate interface file
+is needed. Gateway, web, and Android work remain intentionally deferred until
+the local protocol and recovery behavior have been exercised further.
+
 ## Ownership model
 
 | State | Owner |

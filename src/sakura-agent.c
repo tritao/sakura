@@ -61,7 +61,7 @@ typedef struct {
 	gboolean reader_started;
 } SakuraTerminalCreate;
 
-#define SAKURA_AGENT_OUTPUT_BUFFER_SIZE (64 * 1024)
+#define SAKURA_AGENT_OUTPUT_BUFFER_SIZE (1024 * 1024)
 #define SAKURA_AGENT_MAX_QUEUED_MESSAGES 1000
 #define SAKURA_AGENT_MAX_QUEUED_BYTES (4 * 1024 * 1024)
 #define SAKURA_AGENT_VERSION "0.1"
