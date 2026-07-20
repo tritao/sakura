@@ -71,7 +71,10 @@ typedef struct {
 	 SAKURA_CONTROL_CAPABILITY_TERMINAL_ATTACH | \
 	 SAKURA_CONTROL_CAPABILITY_EVENT_STREAM | \
 	 SAKURA_CONTROL_CAPABILITY_TERMINAL_RESTART | \
-	 SAKURA_CONTROL_CAPABILITY_GROUP_MOVE)
+	 SAKURA_CONTROL_CAPABILITY_GROUP_MOVE | \
+	 SAKURA_CONTROL_CAPABILITY_WORKSPACE_REVISIONS | \
+	 SAKURA_CONTROL_CAPABILITY_STRUCTURED_ERRORS | \
+	 SAKURA_CONTROL_CAPABILITY_TERMINAL_OUTPUT_OFFSETS)
 
 struct _SakuraAgent {
 	GMainLoop *loop;
@@ -200,6 +203,34 @@ sakura_agent_error(GError **error, const gchar *message)
 {
 	g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT, message);
 	return FALSE;
+}
+
+
+static const gchar *
+sakura_agent_error_code(const GError *error)
+{
+	if (error == NULL)
+		return SAKURA_CONTROL_ERROR_INVALID_ARGUMENT;
+	if (g_str_has_prefix(error->message, "expected revision "))
+		return SAKURA_CONTROL_ERROR_REVISION_CONFLICT;
+	if (g_str_has_prefix(error->message, "terminal output gap:"))
+		return SAKURA_CONTROL_ERROR_INVALID_STATE;
+	switch (error->code) {
+	case G_IO_ERROR_INVALID_ARGUMENT:
+		return SAKURA_CONTROL_ERROR_INVALID_ARGUMENT;
+	case G_IO_ERROR_NOT_FOUND:
+		return SAKURA_CONTROL_ERROR_NOT_FOUND;
+	case G_IO_ERROR_EXISTS:
+		return SAKURA_CONTROL_ERROR_ALREADY_EXISTS;
+	case G_IO_ERROR_NOT_SUPPORTED:
+		return SAKURA_CONTROL_ERROR_UNSUPPORTED;
+	case G_IO_ERROR_PERMISSION_DENIED:
+		return SAKURA_CONTROL_ERROR_UNAUTHORIZED;
+	case G_IO_ERROR_TIMED_OUT:
+		return SAKURA_CONTROL_ERROR_TIMEOUT;
+	default:
+		return SAKURA_CONTROL_ERROR_INTERNAL;
+	}
 }
 
 
@@ -1418,7 +1449,7 @@ sakura_agent_connection_thread(gpointer data)
 			            ", current revision %"G_GUINT64_FORMAT,
 			            decoded.expected_revision,
 			            request->agent->workspace_revision);
-			error_code = "REVISION_CONFLICT";
+			error_code = SAKURA_CONTROL_ERROR_REVISION_CONFLICT;
 		} else if (decoded.kind == SAKURA_CONTROL_REQUEST_SUBSCRIBE_EVENTS) {
 			g_ptr_array_add(request->agent->subscribers, request);
 			sakura_control_encode_accepted_response_with_revision(request_id,
@@ -1478,11 +1509,15 @@ sakura_agent_connection_thread(gpointer data)
 		}
 		if (response->len == 0) {
 			const gchar *message = error != NULL ? error->message : "invalid request";
+			const gchar *response_error_code =
+				g_strcmp0(error_code, "invalid_request") == 0
+				? sakura_agent_error_code(error) : error_code;
 
 			sakura_control_encode_error_response_with_revision(
-				request_id, error_code, message,
+				request_id, response_error_code, message,
 				request->agent->workspace_revision,
-				g_strcmp0(error_code, "REVISION_CONFLICT") == 0, response);
+				g_strcmp0(response_error_code,
+				          SAKURA_CONTROL_ERROR_REVISION_CONFLICT) == 0, response);
 		}
 		if (response != NULL && response->len != 0)
 			sakura_agent_connection_queue(request, response);
