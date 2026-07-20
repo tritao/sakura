@@ -295,6 +295,7 @@ struct sakura_app {
 	gboolean agent_event_stopping;
 	GThread *agent_command_thread;
 	SakuraControlClientConnection *agent_command_connection;
+	GCancellable *agent_command_cancellable;
 	GMutex agent_command_mutex;
 	GCond agent_command_cond;
 	GQueue *agent_command_queue;

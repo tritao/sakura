@@ -12,6 +12,9 @@
 #define SAKURA_CONTROL_CAPABILITY_EVENT_STREAM G_GUINT64_CONSTANT(8)
 #define SAKURA_CONTROL_CAPABILITY_TERMINAL_RESTART G_GUINT64_CONSTANT(16)
 #define SAKURA_CONTROL_CAPABILITY_GROUP_MOVE G_GUINT64_CONSTANT(32)
+#define SAKURA_CONTROL_CONNECT_TIMEOUT_SECONDS 2
+#define SAKURA_CONTROL_HANDSHAKE_TIMEOUT_SECONDS 2
+#define SAKURA_CONTROL_REQUEST_TIMEOUT_SECONDS 5
 
 typedef struct _SakuraControlClientConnection SakuraControlClientConnection;
 
@@ -69,6 +72,9 @@ void sakura_control_client_unref(SakuraControlClientConnection *connection);
 gboolean sakura_control_client_request(
 	SakuraControlClientConnection *connection, const GByteArray *request,
 	GByteArray **response, GError **error);
+gboolean sakura_control_client_request_with_cancellable(
+	SakuraControlClientConnection *connection, const GByteArray *request,
+	GByteArray **response, GCancellable *cancellable, GError **error);
 
 gboolean sakura_control_client_subscribe_events(
 	SakuraControlClientConnection *connection, guint64 after_sequence,

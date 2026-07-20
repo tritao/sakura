@@ -286,12 +286,13 @@ sakura_agent_send_command(SakuraApp *app,
 	    !sakura_control_request_set_expected_revision(
 			request, sakura_agent_workspace_revision_get(app))) {
 		g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_INVALID_DATA,
-		                    "could not add expected workspace revision");
+			"could not add expected workspace revision");
 		goto out;
 	}
-	if (!sakura_control_client_request(
-			connection, request, &response_payload, error) ||
-	    !sakura_control_decode_response(response_payload->data,
+	if (!sakura_control_client_request_with_cancellable(
+			connection, request, &response_payload,
+			app->agent_command_cancellable, error) ||
+		    !sakura_control_decode_response(response_payload->data,
 	                                    response_payload->len, &response,
 	                                    error))
 		goto out;
@@ -402,6 +403,7 @@ sakura_agent_command_start(SakuraApp *app)
 	g_mutex_init(&app->agent_command_mutex);
 	g_cond_init(&app->agent_command_cond);
 	app->agent_command_queue = g_queue_new();
+	app->agent_command_cancellable = g_cancellable_new();
 	app->agent_command_mutex_initialized = TRUE;
 	app->agent_command_stopping = FALSE;
 	app->agent_command_thread = g_thread_new("sakura-agent-commands",
@@ -696,6 +698,8 @@ sakura_agent_command_stop(SakuraApp *app)
 
 	g_mutex_lock(&app->agent_command_mutex);
 	app->agent_command_stopping = TRUE;
+	if (app->agent_command_cancellable != NULL)
+		g_cancellable_cancel(app->agent_command_cancellable);
 	if (app->agent_command_connection != NULL)
 		connection = sakura_control_client_ref(app->agent_command_connection);
 	g_cond_broadcast(&app->agent_command_cond);
@@ -718,6 +722,7 @@ sakura_agent_command_stop(SakuraApp *app)
 		sakura_agent_command_free(g_queue_pop_head(app->agent_command_queue));
 	g_mutex_unlock(&app->agent_command_mutex);
 	g_clear_pointer(&app->agent_command_queue, g_queue_free);
+	g_clear_object(&app->agent_command_cancellable);
 	g_cond_clear(&app->agent_command_cond);
 	g_mutex_clear(&app->agent_command_mutex);
 	app->agent_command_mutex_initialized = FALSE;
@@ -884,8 +889,9 @@ sakura_agent_request_mutation(SakuraApp *app, const gchar *request_id,
 		                    "could not add expected workspace revision");
 		goto out;
 	}
-	if (!sakura_control_client_request(
-			connection, request, &response_payload, error) ||
+	if (!sakura_control_client_request_with_cancellable(
+			connection, request, &response_payload,
+			app->agent_command_cancellable, error) ||
 	    !sakura_control_decode_response(response_payload->data,
 	                                    response_payload->len, &response,
 	                                    error))
@@ -950,8 +956,9 @@ sakura_agent_request_accepted(SakuraApp *app, const gchar *request_id,
 		                    "could not add expected workspace revision");
 		goto out;
 	}
-	if (!sakura_control_client_request(
-			connection, request, &response_payload, error) ||
+	if (!sakura_control_client_request_with_cancellable(
+			connection, request, &response_payload,
+			app->agent_command_cancellable, error) ||
 	    !sakura_control_decode_response(response_payload->data,
 	                                    response_payload->len, &response,
 	                                    error))
@@ -1016,9 +1023,10 @@ sakura_agent_request_attached(SakuraApp *app, const gchar *request_id,
 		                    "could not add expected workspace revision");
 		goto out;
 	}
-	if (!sakura_control_client_request(
-			connection, request, &response_payload, error) ||
-	    !sakura_control_decode_response(response_payload->data,
+	if (!sakura_control_client_request_with_cancellable(
+			connection, request, &response_payload,
+			app->agent_command_cancellable, error) ||
+		    !sakura_control_decode_response(response_payload->data,
 	                                    response_payload->len, &response,
 	                                    error))
 		goto out;
@@ -1762,12 +1770,15 @@ sakura_agent_wait_ready(const gchar *socket_path, const gchar *workspace_id,
 	                     SakuraSessionSnapshot **snapshot,
 	                     GError **error)
 {
-	for (guint attempt = 0; attempt < 50; attempt++) {
+	gint64 deadline = g_get_monotonic_time() + 2 * G_TIME_SPAN_SECOND;
+
+	while (g_get_monotonic_time() < deadline) {
 		if (sakura_agent_request_snapshot(socket_path, workspace_id, snapshot,
 		                                  error))
 			return TRUE;
 		g_clear_error(error);
-		g_usleep(10 * 1000);
+		g_usleep(MIN((gint64)10 * 1000,
+		             deadline - g_get_monotonic_time()));
 	}
 	g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_TIMED_OUT,
 	                    "sakura-agent did not become ready");

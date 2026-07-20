@@ -93,13 +93,17 @@ sakura_control_client_unref(SakuraControlClientConnection *connection)
 }
 
 
-gboolean
-sakura_control_client_request(SakuraControlClientConnection *connection,
-                              const GByteArray *request,
-                              GByteArray **response, GError **error)
+static gboolean
+sakura_control_client_request_with_timeout(
+	SakuraControlClientConnection *connection, const GByteArray *request,
+	GByteArray **response, GCancellable *cancellable, guint timeout,
+	GError **error)
 {
 	GInputStream *input;
 	GOutputStream *output;
+	GSocket *socket;
+	guint previous_timeout;
+	gboolean success;
 
 	if (response != NULL)
 		*response = NULL;
@@ -111,9 +115,37 @@ sakura_control_client_request(SakuraControlClientConnection *connection,
 	}
 	input = g_io_stream_get_input_stream(G_IO_STREAM(connection->connection));
 	output = g_io_stream_get_output_stream(G_IO_STREAM(connection->connection));
-	return sakura_control_frame_write(output, request->data, request->len,
-	                                  NULL, error) &&
-	       sakura_control_frame_read(input, response, NULL, error);
+	socket = g_socket_connection_get_socket(connection->connection);
+	previous_timeout = socket != NULL ? g_socket_get_timeout(socket) : 0;
+	if (socket != NULL)
+		g_socket_set_timeout(socket, timeout);
+	success = sakura_control_frame_write(output, request->data, request->len,
+	                                     cancellable, error) &&
+	          sakura_control_frame_read(input, response, cancellable, error);
+	if (socket != NULL)
+		g_socket_set_timeout(socket, previous_timeout);
+	return success;
+}
+
+
+gboolean
+sakura_control_client_request_with_cancellable(
+	SakuraControlClientConnection *connection, const GByteArray *request,
+	GByteArray **response, GCancellable *cancellable, GError **error)
+{
+	return sakura_control_client_request_with_timeout(
+		connection, request, response, cancellable,
+		SAKURA_CONTROL_REQUEST_TIMEOUT_SECONDS, error);
+}
+
+
+gboolean
+sakura_control_client_request(SakuraControlClientConnection *connection,
+                              const GByteArray *request,
+                              GByteArray **response, GError **error)
+{
+	return sakura_control_client_request_with_cancellable(
+		connection, request, response, NULL, error);
 }
 
 
@@ -446,6 +478,7 @@ sakura_control_client_connect(const gchar *socket_path,
 		return NULL;
 	}
 	client = g_socket_client_new();
+	g_socket_client_set_timeout(client, SAKURA_CONTROL_CONNECT_TIMEOUT_SECONDS);
 	address = g_unix_socket_address_new(socket_path);
 	socket_connection = g_socket_client_connect(
 		client, G_SOCKET_CONNECTABLE(address), NULL, error);
@@ -462,8 +495,9 @@ sakura_control_client_connect(const gchar *socket_path,
 	if (!sakura_control_encode_hello_request(
 		    request_id, SAKURA_CONTROL_PROTOCOL_VERSION, client_name,
 		    workspace_id, request) ||
-	    !sakura_control_client_request(connection, request, &response_payload,
-	                                   error) ||
+	    !sakura_control_client_request_with_timeout(
+			connection, request, &response_payload, NULL,
+			SAKURA_CONTROL_HANDSHAKE_TIMEOUT_SECONDS, error) ||
 	    !sakura_control_decode_response(response_payload->data,
 	                                    response_payload->len, &response,
 	                                    error))
