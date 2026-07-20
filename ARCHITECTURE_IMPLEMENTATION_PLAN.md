@@ -40,7 +40,9 @@ As of 2026-07-20, Milestone 1 is implemented and committed. The local agent
 now has snapshot-first reconnect, workspace revision conflicts, bounded
 per-connection outbound queues, transactional terminal cleanup, fail-closed
 socket setup, request deadlines, and cancellation. The default Codex unsafe
-mode is removed; `--codex-unsafe-mode` is an explicit opt-in.
+mode is removed; `--codex-unsafe-mode` is an explicit opt-in. The desktop
+serializes workspace mutations so its asynchronous terminal startup workers
+cannot race their own revision token.
 
 The compact Milestone 2 protocol work is also in progress: the single schema
 contains revisions, stable error codes, capability bits, and terminal output
