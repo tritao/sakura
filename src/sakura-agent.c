@@ -42,6 +42,23 @@ typedef struct {
 	gboolean stopping;
 } SakuraAgentTerminal;
 
+typedef struct {
+	pid_t child_pid;
+	int pty_fd;
+	SakuraCoreTerminal *core;
+	SakuraCorePage *page;
+	SakuraCoreGroup *previous_page_group;
+	SakuraCoreTask *previous_page_task;
+	gchar *previous_page_title;
+	gchar *previous_page_active_terminal_id;
+	gboolean previous_page_title_set_by_user;
+	gboolean page_created;
+	gboolean terminal_registered;
+	SakuraAgentTerminal *runtime;
+	gboolean runtime_registered;
+	gboolean reader_started;
+} SakuraTerminalCreate;
+
 #define SAKURA_AGENT_OUTPUT_BUFFER_SIZE (64 * 1024)
 #define SAKURA_AGENT_MAX_QUEUED_MESSAGES 1000
 #define SAKURA_AGENT_MAX_QUEUED_BYTES (4 * 1024 * 1024)
@@ -732,6 +749,7 @@ sakura_agent_bind_page_terminal(SakuraAgent *agent, const gchar *page_id,
 	                              SakuraCoreGroup *group,
 	                              SakuraCoreTask *task,
 	                              const gchar *title,
+	                              SakuraTerminalCreate *create,
 	                              GError **error)
 {
 	SakuraCorePage *page;
@@ -745,7 +763,16 @@ sakura_agent_bind_page_terminal(SakuraAgent *agent, const gchar *page_id,
 			sakura_core_page_free(page);
 			return sakura_agent_error(error, "could not register page");
 		}
+		create->page_created = TRUE;
+	} else {
+		create->previous_page_group = page->group;
+		create->previous_page_task = page->task;
+		create->previous_page_title = g_strdup(page->title);
+		create->previous_page_active_terminal_id =
+			g_strdup(page->active_terminal_id);
+		create->previous_page_title_set_by_user = page->title_set_by_user;
 	}
+	create->page = page;
 	page->group = group;
 	page->task = task;
 	g_free(page->active_terminal_id);
@@ -758,24 +785,94 @@ sakura_agent_bind_page_terminal(SakuraAgent *agent, const gchar *page_id,
 }
 
 
+static void
+sakura_agent_terminal_create_cleanup(SakuraAgent *agent,
+	                                  SakuraTerminalCreate *create)
+{
+	if (create == NULL)
+		return;
+	if (create->runtime != NULL) {
+		if (create->reader_started) {
+			sakura_agent_terminal_stop(create->runtime);
+			if (create->runtime->reader_thread != NULL) {
+				g_thread_join(create->runtime->reader_thread);
+				create->runtime->reader_thread = NULL;
+			}
+		}
+		create->runtime->core = NULL;
+		if (create->runtime_registered)
+			g_ptr_array_remove(agent->terminals, create->runtime);
+		else
+			sakura_agent_terminal_free(create->runtime);
+		create->pty_fd = -1;
+		create->child_pid = 0;
+		create->runtime = NULL;
+	}
+	if (create->page != NULL) {
+		if (create->page_created) {
+			sakura_core_workspace_remove_page(agent->workspace, create->page);
+		} else {
+			g_free(create->page->active_terminal_id);
+			create->page->active_terminal_id =
+				create->previous_page_active_terminal_id;
+			create->previous_page_active_terminal_id = NULL;
+			g_free(create->page->title);
+			create->page->title = create->previous_page_title;
+			create->previous_page_title = NULL;
+			create->page->group = create->previous_page_group;
+			create->page->task = create->previous_page_task;
+			create->page->title_set_by_user =
+				create->previous_page_title_set_by_user;
+		}
+		create->page = NULL;
+	}
+	if (create->terminal_registered && create->core != NULL) {
+		if (!sakura_core_workspace_remove_terminal(agent->workspace,
+		                                          create->core))
+			sakura_core_terminal_free(create->core);
+		create->core = NULL;
+	}
+	if (create->pty_fd >= 0) {
+		close(create->pty_fd);
+		create->pty_fd = -1;
+	}
+	if (create->child_pid > 0) {
+		kill(create->child_pid, SIGHUP);
+		waitpid(create->child_pid, NULL, 0);
+		create->child_pid = 0;
+	}
+	g_clear_pointer(&create->previous_page_title, g_free);
+	g_clear_pointer(&create->previous_page_active_terminal_id, g_free);
+}
+
+
+static void
+sakura_agent_terminal_create_clear(SakuraTerminalCreate *create)
+{
+	if (create == NULL)
+		return;
+	g_clear_pointer(&create->previous_page_title, g_free);
+	g_clear_pointer(&create->previous_page_active_terminal_id, g_free);
+}
+
+
 static gboolean
 sakura_agent_create_terminal(SakuraAgent *agent,
 	                           const SakuraControlRequest *request,
 	                           gchar **accepted_id,
 	                           GError **error)
 {
+	SakuraTerminalCreate create = {
+		.pty_fd = -1,
+	};
 	SakuraCoreGroup *group;
 	SakuraCoreTask *task = NULL;
-	SakuraCoreTerminal *core = NULL;
-	SakuraAgentTerminal *terminal = NULL;
 	struct winsize size = { 0 };
 	const gchar *cwd;
 	const gchar *shell;
 	gchar *owned_cwd = NULL;
 	gchar *id = NULL;
 	gchar *title = NULL;
-	int master_fd = -1;
-	pid_t pid;
 
 	group = sakura_agent_request_group(agent, request->group_id, error);
 	if (group == NULL)
@@ -809,68 +906,85 @@ sakura_agent_create_terminal(SakuraAgent *agent,
 	if (shell == NULL || shell[0] == '\0')
 		shell = "/bin/sh";
 	if (request->terminal_id != NULL && request->terminal_id[0] != '\0') {
-		if (!sakura_agent_terminal_id_is_valid(request->terminal_id))
-			return sakura_agent_error(error, "terminal id is invalid");
+		if (!sakura_agent_terminal_id_is_valid(request->terminal_id)) {
+			sakura_agent_error(error, "terminal id is invalid");
+			goto fail;
+		}
 		if (sakura_core_workspace_find_terminal(agent->workspace,
-	                                       request->terminal_id) != NULL)
-			return sakura_agent_error(error, "terminal id is already in use");
+	                                       request->terminal_id) != NULL) {
+			sakura_agent_error(error, "terminal id is already in use");
+			goto fail;
+		}
 		id = g_strdup(request->terminal_id);
 	} else {
 		id = g_uuid_string_random();
 	}
-	pid = forkpty(&master_fd, NULL, NULL, &size);
-	if (pid < 0) {
+	create.child_pid = forkpty(&create.pty_fd, NULL, NULL, &size);
+	if (create.child_pid < 0) {
 		g_set_error(error, G_IO_ERROR, g_io_error_from_errno(errno),
 		            "could not create terminal: %s", g_strerror(errno));
-		g_free(id);
-		g_free(owned_cwd);
-		return FALSE;
+		create.child_pid = 0;
+		goto fail;
 	}
-	if (pid == 0) {
+	if (create.child_pid == 0) {
 		if (chdir(cwd) != 0)
 			_exit(127);
 		execl(shell, shell, "-i", (gchar *)NULL);
 		_exit(127);
 	}
 	title = g_path_get_basename(cwd);
-	core = sakura_core_terminal_new(id, cwd, group, task,
-	                               size.ws_col, size.ws_row);
-	core->title = title;
+	create.core = sakura_core_terminal_new(id, cwd, group, task,
+	                                      size.ws_col, size.ws_row);
+	create.core->title = title;
 	title = NULL;
-	core->status = SAKURA_TERMINAL_RUNNING;
-	if (!sakura_core_workspace_add_terminal(agent->workspace, core)) {
-		kill(pid, SIGHUP);
-		close(master_fd);
-		waitpid(pid, NULL, 0);
-		sakura_core_terminal_free(core);
-		g_free(id);
-		g_free(owned_cwd);
-		return sakura_agent_error(error, "could not register terminal");
+	create.core->status = SAKURA_TERMINAL_RUNNING;
+	if (!sakura_core_workspace_add_terminal(agent->workspace, create.core)) {
+		sakura_agent_error(error, "could not register terminal");
+		goto fail;
 	}
+	create.terminal_registered = TRUE;
 	if (!sakura_agent_bind_page_terminal(agent, request->page_id, id, group,
-	                                     task, core->title, error)) {
-		sakura_core_workspace_remove_terminal(agent->workspace, core);
-		g_free(id);
-		g_free(owned_cwd);
-		return FALSE;
+	                                     task, create.core->title, &create,
+	                                     error)) {
+		goto fail;
 	}
-	terminal = g_new0(SakuraAgentTerminal, 1);
-	terminal->agent = agent;
-	terminal->core = core;
-	terminal->id = g_strdup(id);
-	terminal->output_buffer = g_byte_array_new();
-	terminal->master_fd = master_fd;
-	terminal->pid = pid;
-	g_ptr_array_add(agent->terminals, terminal);
-	terminal->reader_thread = g_thread_new("sakura-terminal-reader",
-	                                       sakura_agent_terminal_reader,
-	                                       terminal);
+	create.runtime = g_new0(SakuraAgentTerminal, 1);
+	create.runtime->agent = agent;
+	create.runtime->core = create.core;
+	create.runtime->id = g_strdup(id);
+	create.runtime->output_buffer = g_byte_array_new();
+	create.runtime->master_fd = create.pty_fd;
+	create.runtime->pid = create.child_pid;
+	g_ptr_array_add(agent->terminals, create.runtime);
+	create.runtime_registered = TRUE;
+	create.runtime->reader_thread = g_thread_new("sakura-terminal-reader",
+	                                             sakura_agent_terminal_reader,
+	                                             create.runtime);
+	create.reader_started = create.runtime->reader_thread != NULL;
+	if (!create.reader_started) {
+		sakura_agent_error(error, "could not start terminal reader");
+		goto fail;
+	}
+	create.core = NULL;
+	create.pty_fd = -1;
+	create.child_pid = 0;
+	create.runtime = NULL;
 	if (accepted_id != NULL)
 		*accepted_id = g_strdup(id);
 	g_free(id);
 	g_free(title);
 	g_free(owned_cwd);
+	sakura_agent_terminal_create_clear(&create);
 	return TRUE;
+
+fail:
+	sakura_agent_terminal_create_cleanup(agent, &create);
+	sakura_core_terminal_free(create.core);
+	g_free(id);
+	g_free(title);
+	g_free(owned_cwd);
+	sakura_agent_terminal_create_clear(&create);
+	return FALSE;
 }
 
 
