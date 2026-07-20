@@ -56,6 +56,8 @@ typedef struct {
 	guint cols;
 	guint rows;
 	guint64 after_sequence;
+	gboolean has_expected_revision;
+	guint64 expected_revision;
 } SakuraControlRequest;
 
 typedef struct {
@@ -76,6 +78,7 @@ typedef struct {
 	guint attached_status;
 	guint8 *attached_output;
 	gsize attached_output_length;
+	guint64 workspace_revision;
 } SakuraControlResponse;
 
 void sakura_control_request_clear(SakuraControlRequest *request);
@@ -93,6 +96,8 @@ gboolean sakura_control_frame_write(GOutputStream *output,
 
 gboolean sakura_control_encode_get_snapshot_request(const gchar *request_id,
 	                                                  GByteArray *payload);
+gboolean sakura_control_request_set_expected_revision(GByteArray *payload,
+	                                                   guint64 revision);
 gboolean sakura_control_encode_hello_request(const gchar *request_id,
 	                                           guint protocol_version,
 	                                           const gchar *client_name,
@@ -169,14 +174,23 @@ gboolean sakura_control_encode_snapshot_response(
 	const gchar *request_id, guint64 sequence,
 	const SakuraCoreWorkspace *workspace,
 	GByteArray *payload);
+gboolean sakura_control_encode_snapshot_response_with_revision(
+	const gchar *request_id, guint64 sequence, guint64 workspace_revision,
+	const SakuraCoreWorkspace *workspace, GByteArray *payload);
 gboolean sakura_control_encode_error_response(const gchar *request_id,
 	                                            const gchar *code,
 	                                            const gchar *message,
 	                                            GByteArray *payload);
+gboolean sakura_control_encode_error_response_with_revision(
+	const gchar *request_id, const gchar *code, const gchar *message,
+	guint64 current_revision, gboolean retryable, GByteArray *payload);
 gboolean sakura_control_encode_accepted_response(const gchar *request_id,
 	                                               const gchar *kind,
 	                                               const gchar *id,
 	                                               GByteArray *payload);
+gboolean sakura_control_encode_accepted_response_with_revision(
+	const gchar *request_id, const gchar *kind, const gchar *id,
+	guint64 workspace_revision, GByteArray *payload);
 gboolean sakura_control_encode_hello_response(const gchar *request_id,
 	                                    guint protocol_version,
 	                                    const gchar *agent_version,
@@ -188,6 +202,9 @@ gboolean sakura_control_encode_terminal_attachment_response(
 	const guint8 *replay_data, gsize replay_data_length, GByteArray *payload);
 gboolean sakura_control_encode_workspace_changed_event(
 	guint64 sequence, const SakuraCoreWorkspace *workspace, GByteArray *payload);
+gboolean sakura_control_encode_workspace_changed_event_with_revision(
+	guint64 sequence, guint64 workspace_revision,
+	const SakuraCoreWorkspace *workspace, GByteArray *payload);
 gboolean sakura_control_encode_terminal_output_event(
 	guint64 sequence, const gchar *terminal_id, const guint8 *data,
 	gsize data_length, gboolean final_chunk, GByteArray *payload);

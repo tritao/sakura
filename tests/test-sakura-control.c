@@ -162,6 +162,13 @@ test_mutation_request_roundtrip(void)
 	g_assert_cmpstr(request.parent_id, ==, "root");
 	g_assert_cmpstr(request.title, ==, "Projects");
 	g_assert_cmpstr(request.directory, ==, "/tmp/projects");
+	g_assert_true(sakura_control_request_set_expected_revision(encoded, 12));
+	sakura_control_request_clear(&request);
+	g_assert_true(sakura_control_decode_request(encoded->data, encoded->len,
+	                                           &request, &error));
+	g_assert_no_error(error);
+	g_assert_true(request.has_expected_revision);
+	g_assert_cmpuint(request.expected_revision, ==, 12);
 	sakura_control_request_clear(&request);
 	g_byte_array_set_size(encoded, 0);
 
@@ -581,6 +588,68 @@ test_agent_call(const gchar *socket_path, const gchar *request_id,
 	                              response);
 	g_io_stream_close(G_IO_STREAM(connection), NULL, NULL);
 	g_object_unref(connection);
+}
+
+
+static void
+test_agent_rejects_stale_revision(void)
+{
+	GSubprocess *process;
+	GSocketConnection *connection;
+	GByteArray *request = g_byte_array_new();
+	GByteArray *response_payload = NULL;
+	SakuraControlResponse response = { 0 };
+	GError *error = NULL;
+	gchar *directory;
+	gchar *socket_path;
+	gchar *session_path;
+
+	directory = g_dir_make_tmp("sakura-agent-revision-XXXXXX", &error);
+	g_assert_no_error(error);
+	socket_path = g_build_filename(directory, "agent.sock", NULL);
+	session_path = g_build_filename(directory, "workspace.session", NULL);
+	process = test_agent_start(socket_path, session_path);
+
+	g_assert_true(sakura_control_encode_create_group_request(
+		"revision-current", "root", "Current", "", request));
+	g_assert_true(sakura_control_request_set_expected_revision(request, 0));
+	test_agent_call(socket_path, "revision-current", request, &response);
+	g_assert_true(response.has_snapshot);
+	g_assert_cmpuint(response.workspace_revision, ==, 1);
+	sakura_control_response_clear(&response);
+	g_byte_array_set_size(request, 0);
+
+	g_assert_true(sakura_control_encode_create_group_request(
+		"revision-stale", "root", "Stale", "", request));
+	g_assert_true(sakura_control_request_set_expected_revision(request, 0));
+	connection = test_agent_connect_wait(socket_path);
+	test_agent_handshake_on_connection(connection);
+	g_assert_true(sakura_control_frame_write(
+		g_io_stream_get_output_stream(G_IO_STREAM(connection)), request->data,
+		request->len, NULL, &error));
+	g_assert_no_error(error);
+	g_assert_true(sakura_control_frame_read(
+		g_io_stream_get_input_stream(G_IO_STREAM(connection)),
+		&response_payload, NULL, &error));
+	g_assert_no_error(error);
+	g_assert_false(sakura_control_decode_response(
+		response_payload->data, response_payload->len, &response, &error));
+	g_assert_error(error, G_IO_ERROR, G_IO_ERROR_INVALID_DATA);
+	g_assert_nonnull(strstr(error->message, "REVISION_CONFLICT"));
+	g_assert_nonnull(strstr(error->message, "current revision 1"));
+	g_clear_error(&error);
+	sakura_control_response_clear(&response);
+	g_clear_pointer(&response_payload, g_byte_array_unref);
+	g_io_stream_close(G_IO_STREAM(connection), NULL, NULL);
+	g_object_unref(connection);
+	test_agent_stop(process);
+	g_byte_array_unref(request);
+	g_remove(session_path);
+	g_remove(socket_path);
+	g_rmdir(directory);
+	g_free(session_path);
+	g_free(socket_path);
+	g_free(directory);
 }
 
 
@@ -1450,6 +1519,8 @@ main(int argc, char **argv)
 	                test_agent_create_and_reload);
 	g_test_add_func("/control/agent-rejects-wrong-workspace",
 	                test_agent_rejects_wrong_workspace);
+	g_test_add_func("/control/agent-rejects-stale-revision",
+	                test_agent_rejects_stale_revision);
 	g_test_add_func("/control/agent-terminal-lifecycle",
 	                test_agent_terminal_lifecycle);
 	result = g_test_run();

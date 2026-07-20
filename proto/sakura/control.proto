@@ -61,6 +61,7 @@ message WorkspaceSnapshot {
   uint64 sequence = 6;
   repeated Terminal terminals = 7;
   repeated Page pages = 8;
+  uint64 workspace_revision = 9;
 }
 
 message EntityRef {
@@ -72,6 +73,7 @@ message Error {
   string code = 1;
   string message = 2;
   bool retryable = 3;
+  uint64 current_revision = 4;
 }
 
 message GetSnapshotRequest {}
@@ -220,6 +222,8 @@ message Request {
     DeletePageRequest delete_page = 21;
     MoveGroupRequest move_group = 22;
   }
+  uint64 expected_revision = 23;
+  bool has_expected_revision = 24;
 }
 
 message Response {
@@ -231,6 +235,7 @@ message Response {
     TerminalAttachment terminal_attachment = 5;
     HelloResponse hello = 6;
   }
+  uint64 workspace_revision = 7;
 }
 
 message HelloResponse {

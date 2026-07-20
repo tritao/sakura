@@ -158,6 +158,7 @@ struct sakura_session_snapshot {
 	gchar *selected_task_id;
 	gchar *active_group_id;
 	gchar *root_directory;
+	guint64 workspace_revision;
 	gboolean sidebar_visible;
 	gint sidebar_width;
 	gboolean show_archived;

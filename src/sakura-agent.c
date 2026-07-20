@@ -54,6 +54,7 @@ struct _SakuraAgent {
 	GPtrArray *subscribers; /* GSocketConnection *, owned references. */
 	GPtrArray *terminals; /* SakuraAgentTerminal *, owned. */
 	guint64 sequence;
+	guint64 workspace_revision;
 	gchar *socket_path;
 };
 
@@ -1070,10 +1071,35 @@ sakura_agent_broadcast_event(SakuraAgent *agent)
 {
 	GByteArray *event = g_byte_array_new();
 
-	if (sakura_control_encode_workspace_changed_event(
-			agent->sequence, agent->workspace, event))
+	if (sakura_control_encode_workspace_changed_event_with_revision(
+			agent->sequence, agent->workspace_revision, agent->workspace, event))
 		sakura_agent_broadcast_payload(agent, event);
 	g_byte_array_unref(event);
+}
+
+
+static gboolean
+sakura_agent_request_changes_workspace(SakuraControlRequestKind kind)
+{
+	switch (kind) {
+	case SAKURA_CONTROL_REQUEST_CREATE_GROUP:
+	case SAKURA_CONTROL_REQUEST_UPDATE_GROUP:
+	case SAKURA_CONTROL_REQUEST_MOVE_GROUP:
+	case SAKURA_CONTROL_REQUEST_SET_GROUP_ARCHIVED:
+	case SAKURA_CONTROL_REQUEST_DELETE_GROUP:
+	case SAKURA_CONTROL_REQUEST_CREATE_TASK:
+	case SAKURA_CONTROL_REQUEST_UPDATE_TASK:
+	case SAKURA_CONTROL_REQUEST_SET_TASK_ARCHIVED:
+	case SAKURA_CONTROL_REQUEST_DELETE_TASK:
+	case SAKURA_CONTROL_REQUEST_UPDATE_PAGE:
+	case SAKURA_CONTROL_REQUEST_DELETE_PAGE:
+	case SAKURA_CONTROL_REQUEST_CREATE_TERMINAL:
+	case SAKURA_CONTROL_REQUEST_CLOSE_TERMINAL:
+	case SAKURA_CONTROL_REQUEST_RESTART_TERMINAL:
+		return TRUE;
+	default:
+		return FALSE;
+	}
 }
 
 
@@ -1105,6 +1131,7 @@ sakura_agent_connection_thread(gpointer data)
 	SakuraAgentTerminal *retired_terminal = NULL;
 	gboolean subscribed = FALSE;
 	gboolean handshaken = FALSE;
+	const gchar *error_code = "invalid_request";
 
 	input = g_io_stream_get_input_stream(G_IO_STREAM(request->connection));
 	output = g_io_stream_get_output_stream(G_IO_STREAM(request->connection));
@@ -1115,6 +1142,7 @@ sakura_agent_connection_thread(gpointer data)
 		decoded = (SakuraControlRequest){ 0 };
 		error = NULL;
 		request_id = "unknown";
+		error_code = "invalid_request";
 		accepted_id = NULL;
 		retired_terminal = NULL;
 		subscribed = FALSE;
@@ -1142,21 +1170,33 @@ sakura_agent_connection_thread(gpointer data)
 		} else if (!handshaken) {
 			g_set_error_literal(&error, G_IO_ERROR, G_IO_ERROR_PERMISSION_DENIED,
 			                    "control hello is required before requests");
+		} else if (sakura_agent_request_changes_workspace(decoded.kind) &&
+		           decoded.has_expected_revision &&
+		           decoded.expected_revision != request->agent->workspace_revision) {
+			g_set_error(&error, G_IO_ERROR, G_IO_ERROR_FAILED,
+			            "expected revision %"G_GUINT64_FORMAT
+			            ", current revision %"G_GUINT64_FORMAT,
+			            decoded.expected_revision,
+			            request->agent->workspace_revision);
+			error_code = "REVISION_CONFLICT";
 		} else if (decoded.kind == SAKURA_CONTROL_REQUEST_SUBSCRIBE_EVENTS) {
 			g_ptr_array_add(request->agent->subscribers,
 			                 g_object_ref(request->connection));
-			sakura_control_encode_accepted_response(request_id,
+			sakura_control_encode_accepted_response_with_revision(request_id,
 			                                        "workspace_events", NULL,
+			                                        request->agent->workspace_revision,
 			                                        response);
 			initial_event = g_byte_array_new();
-			if (!sakura_control_encode_workspace_changed_event(
-				request->agent->sequence, request->agent->workspace,
+			if (!sakura_control_encode_workspace_changed_event_with_revision(
+				request->agent->sequence, request->agent->workspace_revision,
+				request->agent->workspace,
 				initial_event))
 				g_clear_pointer(&initial_event, g_byte_array_unref);
 			subscribed = TRUE;
 		} else if (decoded.kind == SAKURA_CONTROL_REQUEST_GET_SNAPSHOT) {
-			sakura_control_encode_snapshot_response(request_id,
+			sakura_control_encode_snapshot_response_with_revision(request_id,
 		                                       request->agent->sequence,
+		                                       request->agent->workspace_revision,
 		                                       request->agent->workspace,
 		                                       response);
 		} else if (decoded.kind == SAKURA_CONTROL_REQUEST_ATTACH_TERMINAL) {
@@ -1170,23 +1210,29 @@ sakura_agent_connection_thread(gpointer data)
 			}
 		} else if (decoded.kind == SAKURA_CONTROL_REQUEST_DETACH_TERMINAL) {
 			if (sakura_agent_detach_terminal(request->agent, &decoded, &error))
-				sakura_control_encode_accepted_response(
+				sakura_control_encode_accepted_response_with_revision(
 					request_id, "terminal_detached", decoded.terminal_id,
+					request->agent->workspace_revision,
 					response);
 		} else if (sakura_agent_apply_request(request->agent, &decoded,
 		                                      &accepted_id, &retired_terminal,
 		                                      &error)) {
+			if (sakura_agent_request_changes_workspace(decoded.kind))
+				request->agent->workspace_revision++;
 			request->agent->sequence++;
 			if (decoded.kind == SAKURA_CONTROL_REQUEST_CREATE_TERMINAL ||
 			    decoded.kind == SAKURA_CONTROL_REQUEST_RESTART_TERMINAL)
-				sakura_control_encode_accepted_response(
-					request_id, "terminal", accepted_id, response);
+				sakura_control_encode_accepted_response_with_revision(
+					request_id, "terminal", accepted_id,
+					request->agent->workspace_revision, response);
 			else if (decoded.kind == SAKURA_CONTROL_REQUEST_TERMINAL_INPUT)
-				sakura_control_encode_accepted_response(
-					request_id, "terminal_input", decoded.terminal_id, response);
+				sakura_control_encode_accepted_response_with_revision(
+					request_id, "terminal_input", decoded.terminal_id,
+					request->agent->workspace_revision, response);
 			else
-				sakura_control_encode_snapshot_response(
+				sakura_control_encode_snapshot_response_with_revision(
 					request_id, request->agent->sequence,
+					request->agent->workspace_revision,
 					request->agent->workspace, response);
 			sakura_agent_broadcast_event(request->agent);
 		}
@@ -1194,8 +1240,9 @@ sakura_agent_connection_thread(gpointer data)
 		if (response->len == 0) {
 		const gchar *message = error != NULL ? error->message : "invalid request";
 
-		sakura_control_encode_error_response(request_id, "invalid_request",
-		                                    message, response);
+		sakura_control_encode_error_response_with_revision(
+			request_id, error_code, message, request->agent->workspace_revision,
+			g_strcmp0(error_code, "REVISION_CONFLICT") == 0, response);
 	}
 		if (response != NULL && response->len != 0)
 			sakura_control_frame_write(output, response->data, response->len,

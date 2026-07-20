@@ -7,6 +7,10 @@
 #include "sakura-control-transport.h"
 
 
+static void sakura_agent_refresh_after_revision_conflict(SakuraApp *app);
+static gboolean sakura_agent_apply_event_cb(gpointer data);
+
+
 static gchar *
 sakura_agent_socket_path_new(SakuraApp *app)
 {
@@ -57,6 +61,48 @@ sakura_agent_connect(const gchar *socket_path, const gchar *workspace_id,
 	return sakura_control_client_connect(
 		socket_path, workspace_id, SAKURA_AGENT_CLIENT_NAME,
 		SAKURA_AGENT_REQUIRED_CAPABILITIES, error);
+}
+
+
+static guint64
+sakura_agent_workspace_revision_get(SakuraApp *app)
+{
+	guint64 revision;
+
+	if (app == NULL)
+		return 0;
+	if (!app->agent_revision_mutex_initialized)
+		return app->agent_workspace_revision;
+	g_mutex_lock(&app->agent_revision_mutex);
+	revision = app->agent_workspace_revision;
+	g_mutex_unlock(&app->agent_revision_mutex);
+	return revision;
+}
+
+
+static void
+sakura_agent_workspace_revision_set(SakuraApp *app, guint64 revision)
+{
+	if (app == NULL)
+		return;
+	if (!app->agent_revision_mutex_initialized) {
+		app->agent_workspace_revision = revision;
+		return;
+	}
+	g_mutex_lock(&app->agent_revision_mutex);
+	app->agent_workspace_revision = revision;
+	g_mutex_unlock(&app->agent_revision_mutex);
+}
+
+
+static void
+sakura_agent_workspace_revision_init(SakuraApp *app)
+{
+	if (app == NULL || app->agent_revision_mutex_initialized)
+		return;
+	g_mutex_init(&app->agent_revision_mutex);
+	app->agent_revision_mutex_initialized = TRUE;
+	app->agent_workspace_revision = 0;
 }
 
 
@@ -164,6 +210,10 @@ sakura_agent_report_command_failure(SakuraApp *app,
 {
 	SakuraAgentCommandFailure *failure = g_new0(SakuraAgentCommandFailure, 1);
 
+	if (error != NULL &&
+	    g_str_has_prefix(error->message, "agent returned REVISION_CONFLICT:"))
+		sakura_agent_refresh_after_revision_conflict(app);
+
 	failure->app = app;
 	failure->kind = command->kind;
 	failure->terminal_id = g_strdup(
@@ -183,8 +233,9 @@ sakura_agent_report_command_failure(SakuraApp *app,
 
 
 static gboolean
-sakura_agent_send_command(SakuraControlClientConnection *connection,
-	                         SakuraAgentCommand *command, GError **error)
+sakura_agent_send_command(SakuraApp *app,
+	                       SakuraControlClientConnection *connection,
+	                       SakuraAgentCommand *command, GError **error)
 {
 	GByteArray *request = g_byte_array_new();
 	GByteArray *response_payload = NULL;
@@ -230,6 +281,14 @@ sakura_agent_send_command(SakuraControlClientConnection *connection,
 		                    "could not encode agent command");
 		goto out;
 	}
+	if (command->kind != SAKURA_AGENT_COMMAND_INPUT &&
+	    command->kind != SAKURA_AGENT_COMMAND_RESIZE &&
+	    !sakura_control_request_set_expected_revision(
+			request, sakura_agent_workspace_revision_get(app))) {
+		g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_INVALID_DATA,
+		                    "could not add expected workspace revision");
+		goto out;
+	}
 	if (!sakura_control_client_request(
 			connection, request, &response_payload, error) ||
 	    !sakura_control_decode_response(response_payload->data,
@@ -246,8 +305,12 @@ sakura_agent_send_command(SakuraControlClientConnection *connection,
 		                    "agent did not accept command");
 		goto out;
 	}
+	sakura_agent_workspace_revision_set(app, response.workspace_revision);
 	success = TRUE;
 out:
+	if (!success && error != NULL && *error != NULL &&
+	    g_str_has_prefix((*error)->message, "agent returned REVISION_CONFLICT:"))
+		sakura_agent_refresh_after_revision_conflict(app);
 	g_clear_pointer(&response_payload, g_byte_array_unref);
 	sakura_control_response_clear(&response);
 	g_byte_array_unref(request);
@@ -301,7 +364,7 @@ sakura_agent_command_thread(gpointer data)
 			sakura_agent_command_free(command);
 			continue;
 		}
-		if (!sakura_agent_send_command(connection, command, &error)) {
+		if (!sakura_agent_send_command(app, connection, command, &error)) {
 			sakura_agent_report_command_failure(app, command, error);
 			g_clear_error(&error);
 			g_mutex_lock(&app->agent_command_mutex);
@@ -417,6 +480,7 @@ sakura_agent_apply_workspace_snapshot(SakuraApp *app,
 	if (app == NULL || snapshot == NULL || app->workspace == NULL ||
 	    app->session_shutting_down)
 		return FALSE;
+	sakura_agent_workspace_revision_set(app, snapshot->workspace_revision);
 
 	sakura_workspace_begin_mutation();
 	/* The agent snapshot is authoritative for domain relationships. GTK pages,
@@ -748,6 +812,56 @@ out:
 }
 
 
+typedef struct {
+	SakuraApp *app;
+	gchar *socket_path;
+	gchar *workspace_id;
+} SakuraAgentRefreshJob;
+
+
+static gpointer
+sakura_agent_refresh_thread(gpointer data)
+{
+	SakuraAgentRefreshJob *job = data;
+	SakuraSessionSnapshot *snapshot = NULL;
+	GError *error = NULL;
+
+	if (sakura_agent_request_snapshot(job->socket_path, job->workspace_id,
+	                                  &snapshot, &error)) {
+		SakuraAgentEvent *event = g_new0(SakuraAgentEvent, 1);
+
+		event->app = job->app;
+		event->snapshot = snapshot;
+		g_main_context_invoke(NULL, sakura_agent_apply_event_cb, event);
+	} else {
+		g_debug("Could not refresh workspace after revision conflict: %s",
+		        error != NULL ? error->message : "unknown error");
+	}
+	g_clear_error(&error);
+	g_free(job->socket_path);
+	g_free(job->workspace_id);
+	g_free(job);
+	return NULL;
+}
+
+
+static void
+sakura_agent_refresh_after_revision_conflict(SakuraApp *app)
+{
+	SakuraAgentRefreshJob *job;
+
+	if (app == NULL || app->session_shutting_down ||
+	    app->agent_socket_path == NULL || app->workspace_id == NULL)
+		return;
+	job = g_new0(SakuraAgentRefreshJob, 1);
+	job->app = app;
+	job->socket_path = g_strdup(app->agent_socket_path);
+	job->workspace_id = g_strdup(app->workspace_id);
+	g_thread_unref(g_thread_new("sakura-agent-refresh",
+	                            sakura_agent_refresh_thread, job));
+}
+
+
 static gboolean
 sakura_agent_request_mutation(SakuraApp *app, const gchar *request_id,
 	                            GByteArray *request, GError **error)
@@ -764,6 +878,12 @@ sakura_agent_request_mutation(SakuraApp *app, const gchar *request_id,
 		app->agent_socket_path, app->workspace_id, error);
 	if (connection == NULL)
 		return FALSE;
+	if (!sakura_control_request_set_expected_revision(
+			request, sakura_agent_workspace_revision_get(app))) {
+		g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_INVALID_DATA,
+		                    "could not add expected workspace revision");
+		goto out;
+	}
 	if (!sakura_control_client_request(
 			connection, request, &response_payload, error) ||
 	    !sakura_control_decode_response(response_payload->data,
@@ -780,6 +900,7 @@ sakura_agent_request_mutation(SakuraApp *app, const gchar *request_id,
 		                    "agent mutation did not return a snapshot");
 		goto out;
 	}
+	sakura_agent_workspace_revision_set(app, response.workspace_revision);
 	success = TRUE;
 out:
 	g_clear_pointer(&response_payload, g_byte_array_unref);
@@ -823,6 +944,12 @@ sakura_agent_request_accepted(SakuraApp *app, const gchar *request_id,
 		app->agent_socket_path, app->workspace_id, error);
 	if (connection == NULL)
 		return FALSE;
+	if (!sakura_control_request_set_expected_revision(
+			request, sakura_agent_workspace_revision_get(app))) {
+		g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_INVALID_DATA,
+		                    "could not add expected workspace revision");
+		goto out;
+	}
 	if (!sakura_control_client_request(
 			connection, request, &response_payload, error) ||
 	    !sakura_control_decode_response(response_payload->data,
@@ -839,10 +966,14 @@ sakura_agent_request_accepted(SakuraApp *app, const gchar *request_id,
 		                    "agent did not accept terminal request");
 		goto out;
 	}
+	sakura_agent_workspace_revision_set(app, response.workspace_revision);
 	if (accepted_id != NULL)
 		*accepted_id = g_strdup(response.accepted_id);
 	success = TRUE;
 out:
+	if (!success && error != NULL && *error != NULL &&
+	    g_str_has_prefix((*error)->message, "agent returned REVISION_CONFLICT:"))
+		sakura_agent_refresh_after_revision_conflict(app);
 	g_clear_pointer(&response_payload, g_byte_array_unref);
 	sakura_control_response_clear(&response);
 	sakura_control_client_close(connection);
@@ -879,6 +1010,12 @@ sakura_agent_request_attached(SakuraApp *app, const gchar *request_id,
 		app->agent_socket_path, app->workspace_id, error);
 	if (connection == NULL)
 		return FALSE;
+	if (!sakura_control_request_set_expected_revision(
+			request, sakura_agent_workspace_revision_get(app))) {
+		g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_INVALID_DATA,
+		                    "could not add expected workspace revision");
+		goto out;
+	}
 	if (!sakura_control_client_request(
 			connection, request, &response_payload, error) ||
 	    !sakura_control_decode_response(response_payload->data,
@@ -895,6 +1032,7 @@ sakura_agent_request_attached(SakuraApp *app, const gchar *request_id,
 		                    "agent did not attach terminal");
 		goto out;
 	}
+	sakura_agent_workspace_revision_set(app, response.workspace_revision);
 	if (replay_data != NULL) {
 		*replay_data = response.attached_output;
 		response.attached_output = NULL;
@@ -909,6 +1047,9 @@ sakura_agent_request_attached(SakuraApp *app, const gchar *request_id,
 		*status = response.attached_status;
 	success = TRUE;
 out:
+	if (!success && error != NULL && *error != NULL &&
+	    g_str_has_prefix((*error)->message, "agent returned REVISION_CONFLICT:"))
+		sakura_agent_refresh_after_revision_conflict(app);
 	g_clear_pointer(&response_payload, g_byte_array_unref);
 	sakura_control_response_clear(&response);
 	sakura_control_client_close(connection);
@@ -1724,6 +1865,7 @@ sakura_agent_start(SakuraApp *app)
 
 	if (app == NULL)
 		return FALSE;
+	sakura_agent_workspace_revision_init(app);
 	if (app->workspace_id == NULL || app->workspace_id[0] == '\0')
 		app->workspace_id = g_uuid_string_random();
 	app->agent_supervisor_stopping = FALSE;
@@ -1796,4 +1938,8 @@ sakura_agent_stop(SakuraApp *app)
 		g_clear_object(&app->agent_process);
 	}
 	g_clear_pointer(&app->agent_socket_path, g_free);
+	if (app->agent_revision_mutex_initialized) {
+		g_mutex_clear(&app->agent_revision_mutex);
+		app->agent_revision_mutex_initialized = FALSE;
+	}
 }

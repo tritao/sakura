@@ -299,6 +299,9 @@ struct sakura_app {
 	GQueue *agent_command_queue;
 	gboolean agent_command_mutex_initialized;
 	gboolean agent_command_stopping;
+	GMutex agent_revision_mutex;
+	gboolean agent_revision_mutex_initialized;
+	guint64 agent_workspace_revision;
 	GDataInputStream *codex_name_helper_output;
 	GOutputStream *codex_name_helper_input;
 	GQueue *codex_name_query_queue;

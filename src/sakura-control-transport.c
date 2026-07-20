@@ -66,6 +66,8 @@ sakura_control_request_clear(SakuraControlRequest *request)
 	request->cols = 0;
 	request->rows = 0;
 	request->after_sequence = 0;
+	request->has_expected_revision = FALSE;
+	request->expected_revision = 0;
 }
 
 
@@ -91,6 +93,7 @@ sakura_control_response_clear(SakuraControlResponse *response)
 	response->attached_rows = 0;
 	response->attached_status = 0;
 	response->attached_output_length = 0;
+	response->workspace_revision = 0;
 }
 
 
@@ -175,6 +178,34 @@ sakura_control_encode_get_snapshot_request(const gchar *request_id,
 	request.body_case = SAKURA__CONTROL__V1__REQUEST__BODY_GET_SNAPSHOT;
 	request.get_snapshot = &get_snapshot;
 	return sakura_control_pack_message(&request.base, payload);
+}
+
+
+gboolean
+sakura_control_request_set_expected_revision(GByteArray *payload,
+	                                             guint64 revision)
+{
+	Sakura__Control__V1__Request *request;
+	GByteArray *encoded;
+	gboolean success;
+
+	if (payload == NULL || payload->len == 0)
+		return FALSE;
+	request = sakura__control__v1__request__unpack(
+		NULL, payload->len, payload->data);
+	if (request == NULL)
+		return FALSE;
+	request->has_expected_revision = TRUE;
+	request->expected_revision = revision;
+	encoded = g_byte_array_new();
+	success = sakura_control_pack_message(&request->base, encoded);
+	if (success) {
+		g_byte_array_set_size(payload, 0);
+		g_byte_array_append(payload, encoded->data, encoded->len);
+	}
+	g_byte_array_unref(encoded);
+	sakura__control__v1__request__free_unpacked(request, NULL);
+	return success;
 }
 
 
@@ -720,6 +751,8 @@ sakura_control_decode_request(const guint8 *payload,
 		return sakura_control_error(error, "invalid control request");
 	if (decoded->request_id[0] != '\0')
 		request->request_id = g_strdup(decoded->request_id);
+	request->has_expected_revision = decoded->has_expected_revision;
+	request->expected_revision = decoded->expected_revision;
 	switch (decoded->body_case) {
 	case SAKURA__CONTROL__V1__REQUEST__BODY_GET_SNAPSHOT:
 		if (decoded->get_snapshot != NULL)
@@ -981,7 +1014,7 @@ sakura_control_fill_page(Sakura__Control__V1__Page *message,
 static void
 sakura_control_fill_snapshot(
 	Sakura__Control__V1__WorkspaceSnapshot *snapshot,
-	const SakuraCoreWorkspace *workspace)
+	const SakuraCoreWorkspace *workspace, guint64 workspace_revision)
 {
 	GPtrArray *groups;
 	GPtrArray *tasks;
@@ -1061,6 +1094,7 @@ sakura_control_fill_snapshot(
 	snapshot->root_directory = (gchar *)sakura_control_string(
 		workspace->root_group != NULL ? workspace->root_group->directory : NULL);
 	snapshot->sequence = 0;
+	snapshot->workspace_revision = workspace_revision;
 }
 
 
@@ -1089,6 +1123,16 @@ sakura_control_encode_snapshot_response(const gchar *request_id,
 	                                    const SakuraCoreWorkspace *workspace,
 	                                    GByteArray *payload)
 {
+	return sakura_control_encode_snapshot_response_with_revision(
+		request_id, sequence, 0, workspace, payload);
+}
+
+
+gboolean
+sakura_control_encode_snapshot_response_with_revision(
+	const gchar *request_id, guint64 sequence, guint64 workspace_revision,
+	const SakuraCoreWorkspace *workspace, GByteArray *payload)
+{
 	Sakura__Control__V1__WorkspaceSnapshot snapshot =
 		SAKURA__CONTROL__V1__WORKSPACE_SNAPSHOT__INIT;
 	Sakura__Control__V1__Response response =
@@ -1096,9 +1140,10 @@ sakura_control_encode_snapshot_response(const gchar *request_id,
 
 	if (request_id == NULL || workspace == NULL || payload == NULL)
 		return FALSE;
-	sakura_control_fill_snapshot(&snapshot, workspace);
+	sakura_control_fill_snapshot(&snapshot, workspace, workspace_revision);
 	snapshot.sequence = sequence;
 	response.request_id = (gchar *)request_id;
+	response.workspace_revision = workspace_revision;
 	response.body_case = SAKURA__CONTROL__V1__RESPONSE__BODY_SNAPSHOT;
 	response.snapshot = &snapshot;
 
@@ -1117,6 +1162,16 @@ sakura_control_encode_error_response(const gchar *request_id,
 	                                   const gchar *message,
 	                                   GByteArray *payload)
 {
+	return sakura_control_encode_error_response_with_revision(
+		request_id, code, message, 0, FALSE, payload);
+}
+
+
+gboolean
+sakura_control_encode_error_response_with_revision(
+	const gchar *request_id, const gchar *code, const gchar *message,
+	guint64 current_revision, gboolean retryable, GByteArray *payload)
+{
 	Sakura__Control__V1__Error error_message =
 		SAKURA__CONTROL__V1__ERROR__INIT;
 	Sakura__Control__V1__Response response =
@@ -1126,6 +1181,8 @@ sakura_control_encode_error_response(const gchar *request_id,
 		return FALSE;
 	error_message.code = (gchar *)sakura_control_string(code);
 	error_message.message = (gchar *)sakura_control_string(message);
+	error_message.current_revision = current_revision;
+	error_message.retryable = retryable;
 	response.request_id = (gchar *)request_id;
 	response.body_case = SAKURA__CONTROL__V1__RESPONSE__BODY_ERROR;
 	response.error = &error_message;
@@ -1139,6 +1196,16 @@ sakura_control_encode_accepted_response(const gchar *request_id,
 	                                      const gchar *id,
 	                                      GByteArray *payload)
 {
+	return sakura_control_encode_accepted_response_with_revision(
+		request_id, kind, id, 0, payload);
+}
+
+
+gboolean
+sakura_control_encode_accepted_response_with_revision(
+	const gchar *request_id, const gchar *kind, const gchar *id,
+	guint64 workspace_revision, GByteArray *payload)
+{
 	Sakura__Control__V1__EntityRef accepted =
 		SAKURA__CONTROL__V1__ENTITY_REF__INIT;
 	Sakura__Control__V1__Response response =
@@ -1149,6 +1216,7 @@ sakura_control_encode_accepted_response(const gchar *request_id,
 	accepted.kind = (gchar *)sakura_control_string(kind);
 	accepted.id = (gchar *)sakura_control_string(id);
 	response.request_id = (gchar *)request_id;
+	response.workspace_revision = workspace_revision;
 	response.body_case = SAKURA__CONTROL__V1__RESPONSE__BODY_ACCEPTED;
 	response.accepted = &accepted;
 	return sakura_control_pack_message(&response.base, payload);
@@ -1212,6 +1280,16 @@ gboolean
 sakura_control_encode_workspace_changed_event(
 	guint64 sequence, const SakuraCoreWorkspace *workspace, GByteArray *payload)
 {
+	return sakura_control_encode_workspace_changed_event_with_revision(
+		sequence, 0, workspace, payload);
+}
+
+
+gboolean
+sakura_control_encode_workspace_changed_event_with_revision(
+	guint64 sequence, guint64 workspace_revision,
+	const SakuraCoreWorkspace *workspace, GByteArray *payload)
+{
 	Sakura__Control__V1__WorkspaceSnapshot snapshot =
 		SAKURA__CONTROL__V1__WORKSPACE_SNAPSHOT__INIT;
 	Sakura__Control__V1__WorkspaceChanged changed =
@@ -1220,7 +1298,7 @@ sakura_control_encode_workspace_changed_event(
 
 	if (workspace == NULL || payload == NULL)
 		return FALSE;
-	sakura_control_fill_snapshot(&snapshot, workspace);
+	sakura_control_fill_snapshot(&snapshot, workspace, workspace_revision);
 	snapshot.sequence = sequence;
 	changed.snapshot = &snapshot;
 	event.sequence = sequence;
@@ -1305,12 +1383,14 @@ sakura_control_decode_response(const guint8 *payload,
 		return sakura_control_error(error, "invalid control response");
 	if (decoded->request_id[0] != '\0')
 		response->request_id = g_strdup(decoded->request_id);
+	response->workspace_revision = decoded->workspace_revision;
 	if (decoded->body_case == SAKURA__CONTROL__V1__RESPONSE__BODY_ERROR &&
 	    decoded->error != NULL) {
 		g_set_error(error, G_IO_ERROR, G_IO_ERROR_INVALID_DATA,
-		            "agent returned %s: %s",
+		            "agent returned %s: %s (current revision %"G_GUINT64_FORMAT")",
 		            sakura_control_string(decoded->error->code),
-		            sakura_control_string(decoded->error->message));
+		            sakura_control_string(decoded->error->message),
+		            decoded->error->current_revision);
 		sakura__control__v1__response__free_unpacked(decoded, NULL);
 		return FALSE;
 	}
@@ -1337,6 +1417,8 @@ sakura_control_decode_response(const guint8 *payload,
 		response->capabilities = decoded->hello->capabilities;
 		response->workspace_id = g_strdup(decoded->hello->workspace_id);
 	}
+	if (has_snapshot)
+		response->workspace_revision = decoded->snapshot->workspace_revision;
 	if (attached) {
 		Sakura__Control__V1__TerminalAttachment *attachment =
 			decoded->terminal_attachment;
@@ -1377,6 +1459,7 @@ sakura_control_decode_workspace_snapshot(
 		return sakura_control_error(error, "invalid workspace snapshot");
 	*snapshot = NULL;
 	decoded_snapshot = sakura_session_snapshot_new();
+	decoded_snapshot->workspace_revision = wire_snapshot->workspace_revision;
 	g_free(decoded_snapshot->active_group_id);
 	decoded_snapshot->active_group_id = g_strdup(wire_snapshot->active_group_id);
 	decoded_snapshot->root_directory = g_strdup(wire_snapshot->root_directory);
