@@ -2221,6 +2221,7 @@ sakura_label_clicked_cb (GtkWidget *widget, GdkEventButton *button_event,
 	    page < 0 || tab == NULL)
 		return FALSE;
 	if (button_event->button == 1) {
+		sakura_focus_tab_cancel_pending();
 		gtk_widget_grab_focus(tab->vte);
 		return FALSE;
 	}
@@ -2259,6 +2260,9 @@ sakura_term_buttonpressed_cb (GtkWidget *widget,
 	tab = sakura_tab_for_vte(VTE_TERMINAL(widget));
 	if (tab == NULL)
 		return FALSE;
+	/* A real terminal click supersedes any delayed focus requested by a prior
+	 * sidebar/notebook selection. */
+	sakura_focus_tab_cancel_pending();
 	sakura.workspace->active_tab = tab;
 	sakura.workspace->active_page = tab->page;
 	if (tab->page != NULL)
@@ -2489,6 +2493,7 @@ sakura_notebook_focus_cb (GtkWindow *window, GdkEvent *event, void *data)
 {
 	SakuraTab *tab;
 	gint page;
+	gboolean was_focus_syncing;
 
 	(void)window;
 	(void)data;
@@ -2502,13 +2507,18 @@ sakura_notebook_focus_cb (GtkWindow *window, GdkEvent *event, void *data)
 
 	/* When clicking a tab label, the notebook may receive focus instead of the
 	 * terminal. Return focus to the active content surface. */
+	was_focus_syncing = sakura.sidebar_focus_syncing;
 #ifdef HAVE_WEBKITGTK
 	if (tab->browser != NULL) {
+		sakura.sidebar_focus_syncing = TRUE;
 		gtk_widget_grab_focus(tab->browser);
+		sakura.sidebar_focus_syncing = was_focus_syncing;
 		return FALSE;
 	}
 #endif
+	sakura.sidebar_focus_syncing = TRUE;
 	gtk_widget_grab_focus(tab->vte);
+	sakura.sidebar_focus_syncing = was_focus_syncing;
 	return FALSE;
 }
 
@@ -2526,10 +2536,15 @@ sakura_pane_focus_in_cb(GtkWidget *widget, GdkEventFocus *event, gpointer data)
 	tab->page->active_tab = tab;
 	if (!sakura.session_restoring)
 		sakura_tab_clear_attention(tab);
-	if (tab->page->panes != NULL && tab->page->panes->len <= 1)
-		sakura_sidebar_queue_select_node(tab->page->sidebar_node);
-	else
-		sakura_sidebar_queue_select_node(tab->sidebar_node);
+	/* A focus request issued by Sakura already has an authoritative selection
+	 * request queued by its caller. Treating this programmatic focus as a new
+	 * user selection can overwrite a task/group row on the next main-loop tick. */
+	if (!sakura.sidebar_focus_syncing) {
+		if (tab->page->panes != NULL && tab->page->panes->len <= 1)
+			sakura_sidebar_queue_select_node(tab->page->sidebar_node);
+		else
+			sakura_sidebar_queue_select_node(tab->sidebar_node);
+	}
 	sakura_sidebar_update_page(tab->page);
 	sakura_workspace_mark_changed(SAKURA_WORKSPACE_CHANGE_SELECTION);
 	return FALSE;

@@ -3233,7 +3233,9 @@ sakura_destroy_cleanup(void)
 	}
 	sakura.sidebar_root = NULL;
 	sakura.active_group_scope = NULL;
+	sakura_focus_tab_cancel_pending();
 	g_clear_pointer(&sakura.workspace_pending_notebook_terminal_id, g_free);
+	g_clear_pointer(&sakura.sidebar_selection_id, g_free);
 	g_clear_pointer(&sakura.sidebar_expansion_keys, g_hash_table_destroy);
 	sakura_codex_name_helper_shutdown();
 	sakura_agent_stop(&sakura);
@@ -3313,6 +3315,7 @@ sakura_destroy()
 	}
 	sakura_startup_stop();
 	sakura_sidebar_cancel_pending_selection();
+	sakura_focus_tab_cancel_pending();
 	/* The window and its child widgets must finish their destroy dispatch before
 	 * model records are released. sakura_destroy_cleanup() runs after gtk_main
 	 * returns, when no GTK callback can observe those records. */

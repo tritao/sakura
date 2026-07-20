@@ -204,6 +204,17 @@ struct sakura_app {
 	GtkTreeRowReference *sidebar_pending_selection;
 	SakuraSidebarSelectionReason sidebar_pending_selection_reason;
 	guint sidebar_selection_source_id;
+	/* Sidebar selection is a projection of stable workspace identity. Keep the
+	 * identity across a GtkTreeStore rebuild instead of accepting GTK's
+	 * neighbour selection after a row disappears. */
+	SakuraSidebarNodeType sidebar_selection_type;
+	gchar *sidebar_selection_id;
+	gboolean sidebar_selection_valid;
+	/* Focus requested by Sakura must not be interpreted as a user focus event
+	 * that writes a second sidebar selection. */
+	guint focus_tab_source_id;
+	GtkWidget *focus_tab_pending_vte;
+	gboolean sidebar_focus_syncing;
 	gboolean sidebar_visible;
 	gint sidebar_width;
 	GtkWidget *notebook;
@@ -839,6 +850,7 @@ void sakura_sidebar_queue_select_node_with_reason(
 	SakuraSidebarNode *node, SakuraSidebarSelectionReason reason);
 void sakura_sidebar_select_created_tab(SakuraTab *tab);
 void sakura_sidebar_cancel_pending_selection(void);
+void sakura_focus_tab_cancel_pending(void);
 void sakura_sidebar_apply_default_expansion(void);
 void sakura_sidebar_collapse_all(void);
 void sakura_sidebar_rebuild_projection(void);
