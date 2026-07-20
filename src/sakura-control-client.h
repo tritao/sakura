@@ -25,6 +25,8 @@ typedef struct {
 	guint status;
 	guint8 *output;
 	gsize output_length;
+	guint64 output_start_offset;
+	guint64 output_end_offset;
 } SakuraControlTerminalAttachment;
 
 typedef enum {
@@ -39,6 +41,8 @@ typedef struct {
 	gchar *terminal_id;
 	guint8 *data;
 	gsize data_length;
+	guint64 start_offset;
+	guint64 end_offset;
 	gboolean final_chunk;
 	guint status;
 	gchar *message;

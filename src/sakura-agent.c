@@ -35,6 +35,8 @@ typedef struct {
 	SakuraCoreTerminal *core;
 	gchar *id;
 	GByteArray *output_buffer;
+	guint64 output_start_offset;
+	guint64 output_end_offset;
 	guint attached_clients;
 	int master_fd;
 	GPid pid;
@@ -360,10 +362,13 @@ sakura_agent_terminal_buffer_output(SakuraAgentTerminal *terminal,
 	    data == NULL || data_length == 0)
 		return;
 	g_byte_array_append(terminal->output_buffer, data, data_length);
+	terminal->output_end_offset += data_length;
 	if (terminal->output_buffer->len > SAKURA_AGENT_OUTPUT_BUFFER_SIZE) {
 		excess = terminal->output_buffer->len - SAKURA_AGENT_OUTPUT_BUFFER_SIZE;
 		g_byte_array_remove_range(terminal->output_buffer, 0, excess);
 	}
+	terminal->output_start_offset =
+		terminal->output_end_offset - terminal->output_buffer->len;
 }
 
 
@@ -384,14 +389,16 @@ sakura_agent_terminal_reader(gpointer data)
 			if (terminal->stopping)
 				break;
 			GByteArray *event = g_byte_array_new();
+			guint64 start_offset;
 
 			g_mutex_lock(&agent->state_mutex);
+			start_offset = terminal->output_end_offset;
 			if (!terminal->stopping)
 				sakura_agent_terminal_buffer_output(terminal, buffer, count);
 			if (!terminal->stopping &&
-			    sakura_control_encode_terminal_output_event(
-				    ++agent->sequence, terminal->id, buffer, count, FALSE,
-				    event))
+			    sakura_control_encode_terminal_output_event_with_offsets(
+				    ++agent->sequence, terminal->id, start_offset,
+				    start_offset + count, buffer, count, FALSE, event))
 				sakura_agent_broadcast_payload(agent, event);
 			g_mutex_unlock(&agent->state_mutex);
 			g_byte_array_unref(event);
@@ -1085,8 +1092,9 @@ sakura_agent_attach_terminal(SakuraAgent *agent,
 			kill(terminal->pid, SIGWINCH);
 	}
 	terminal->attached_clients++;
-	if (!sakura_control_encode_terminal_attachment_response(
-			request_id, terminal->core,
+	if (!sakura_control_encode_terminal_attachment_response_with_offsets(
+			request_id, terminal->core, terminal->output_start_offset,
+			terminal->output_end_offset,
 			terminal->output_buffer != NULL ? terminal->output_buffer->data : NULL,
 			terminal->output_buffer != NULL ? terminal->output_buffer->len : 0,
 			response)) {

@@ -56,6 +56,8 @@ typedef struct {
 	guint cols;
 	guint rows;
 	guint64 after_sequence;
+	gboolean has_after_output_offset;
+	guint64 after_output_offset;
 	gboolean has_expected_revision;
 	guint64 expected_revision;
 } SakuraControlRequest;
@@ -78,6 +80,8 @@ typedef struct {
 	guint attached_status;
 	guint8 *attached_output;
 	gsize attached_output_length;
+	guint64 attached_output_start_offset;
+	guint64 attached_output_end_offset;
 	guint64 workspace_revision;
 } SakuraControlResponse;
 
@@ -200,6 +204,10 @@ gboolean sakura_control_encode_hello_response(const gchar *request_id,
 gboolean sakura_control_encode_terminal_attachment_response(
 	const gchar *request_id, const SakuraCoreTerminal *terminal,
 	const guint8 *replay_data, gsize replay_data_length, GByteArray *payload);
+gboolean sakura_control_encode_terminal_attachment_response_with_offsets(
+	const gchar *request_id, const SakuraCoreTerminal *terminal,
+	guint64 replay_start_offset, guint64 replay_end_offset,
+	const guint8 *replay_data, gsize replay_data_length, GByteArray *payload);
 gboolean sakura_control_encode_workspace_changed_event(
 	guint64 sequence, const SakuraCoreWorkspace *workspace, GByteArray *payload);
 gboolean sakura_control_encode_workspace_changed_event_with_revision(
@@ -208,6 +216,10 @@ gboolean sakura_control_encode_workspace_changed_event_with_revision(
 gboolean sakura_control_encode_terminal_output_event(
 	guint64 sequence, const gchar *terminal_id, const guint8 *data,
 	gsize data_length, gboolean final_chunk, GByteArray *payload);
+gboolean sakura_control_encode_terminal_output_event_with_offsets(
+	guint64 sequence, const gchar *terminal_id, guint64 start_offset,
+	guint64 end_offset, const guint8 *data, gsize data_length,
+	gboolean final_chunk, GByteArray *payload);
 gboolean sakura_control_encode_terminal_status_event(
 	guint64 sequence, const gchar *terminal_id, guint status,
 	const gchar *message, GByteArray *payload);
@@ -225,6 +237,11 @@ gboolean sakura_control_decode_terminal_output_event(
 	const guint8 *payload, gsize payload_length, guint64 *sequence,
 	gchar **terminal_id, guint8 **data, gsize *data_length,
 	gboolean *final_chunk, GError **error);
+gboolean sakura_control_decode_terminal_output_event_with_offsets(
+	const guint8 *payload, gsize payload_length, guint64 *sequence,
+	gchar **terminal_id, guint64 *start_offset, guint64 *end_offset,
+	guint8 **data, gsize *data_length, gboolean *final_chunk,
+	GError **error);
 gboolean sakura_control_decode_terminal_status_event(
 	const guint8 *payload, gsize payload_length, guint64 *sequence,
 	gchar **terminal_id, guint *status, gchar **message, GError **error);

@@ -66,6 +66,8 @@ sakura_control_request_clear(SakuraControlRequest *request)
 	request->cols = 0;
 	request->rows = 0;
 	request->after_sequence = 0;
+	request->has_after_output_offset = FALSE;
+	request->after_output_offset = 0;
 	request->has_expected_revision = FALSE;
 	request->expected_revision = 0;
 }
@@ -93,6 +95,8 @@ sakura_control_response_clear(SakuraControlResponse *response)
 	response->attached_rows = 0;
 	response->attached_status = 0;
 	response->attached_output_length = 0;
+	response->attached_output_start_offset = 0;
+	response->attached_output_end_offset = 0;
 	response->workspace_revision = 0;
 }
 
@@ -1254,6 +1258,17 @@ sakura_control_encode_terminal_attachment_response(
 	const gchar *request_id, const SakuraCoreTerminal *terminal,
 	const guint8 *replay_data, gsize replay_data_length, GByteArray *payload)
 {
+	return sakura_control_encode_terminal_attachment_response_with_offsets(
+		request_id, terminal, 0, 0, replay_data, replay_data_length, payload);
+}
+
+
+gboolean
+sakura_control_encode_terminal_attachment_response_with_offsets(
+	const gchar *request_id, const SakuraCoreTerminal *terminal,
+	guint64 replay_start_offset, guint64 replay_end_offset,
+	const guint8 *replay_data, gsize replay_data_length, GByteArray *payload)
+{
 	Sakura__Control__V1__TerminalAttachment attachment =
 		SAKURA__CONTROL__V1__TERMINAL_ATTACHMENT__INIT;
 	Sakura__Control__V1__Response response =
@@ -1268,6 +1283,8 @@ sakura_control_encode_terminal_attachment_response(
 	attachment.status = terminal->status;
 	attachment.replay_data.data = (guint8 *)replay_data;
 	attachment.replay_data.len = replay_data_length;
+	attachment.replay_start_offset = replay_start_offset;
+	attachment.replay_end_offset = replay_end_offset;
 	response.request_id = (gchar *)request_id;
 	response.body_case =
 		SAKURA__CONTROL__V1__RESPONSE__BODY_TERMINAL_ATTACHMENT;
@@ -1321,6 +1338,17 @@ sakura_control_encode_terminal_output_event(guint64 sequence,
 	                                          gboolean final_chunk,
 	                                          GByteArray *payload)
 {
+	return sakura_control_encode_terminal_output_event_with_offsets(
+		sequence, terminal_id, 0, 0, data, data_length, final_chunk, payload);
+}
+
+
+gboolean
+sakura_control_encode_terminal_output_event_with_offsets(
+	guint64 sequence, const gchar *terminal_id, guint64 start_offset,
+	guint64 end_offset, const guint8 *data, gsize data_length,
+	gboolean final_chunk, GByteArray *payload)
+{
 	Sakura__Control__V1__TerminalOutput output =
 		SAKURA__CONTROL__V1__TERMINAL_OUTPUT__INIT;
 	Sakura__Control__V1__Event event = SAKURA__CONTROL__V1__EVENT__INIT;
@@ -1332,6 +1360,8 @@ sakura_control_encode_terminal_output_event(guint64 sequence,
 	output.data.data = (guint8 *)data;
 	output.data.len = data_length;
 	output.final_chunk = final_chunk;
+	output.start_offset = start_offset;
+	output.end_offset = end_offset;
 	event.sequence = sequence;
 	event.body_case = SAKURA__CONTROL__V1__EVENT__BODY_TERMINAL_OUTPUT;
 	event.terminal_output = &output;
@@ -1427,6 +1457,8 @@ sakura_control_decode_response(const guint8 *payload,
 		response->attached_cols = attachment->cols;
 		response->attached_rows = attachment->rows;
 		response->attached_status = attachment->status;
+		response->attached_output_start_offset = attachment->replay_start_offset;
+		response->attached_output_end_offset = attachment->replay_end_offset;
 		response->attached_output_length = attachment->replay_data.len;
 		if (response->attached_output_length != 0) {
 			response->attached_output = g_malloc(
@@ -1582,13 +1614,32 @@ sakura_control_decode_terminal_output_event(const guint8 *payload,
 	                                           gboolean *final_chunk,
 	                                           GError **error)
 {
+	guint64 start_offset = 0;
+	guint64 end_offset = 0;
+
+	return sakura_control_decode_terminal_output_event_with_offsets(
+		payload, payload_length, sequence, terminal_id, &start_offset,
+		&end_offset, data, data_length, final_chunk, error);
+}
+
+
+gboolean
+sakura_control_decode_terminal_output_event_with_offsets(
+	const guint8 *payload, gsize payload_length, guint64 *sequence,
+	gchar **terminal_id, guint64 *start_offset, guint64 *end_offset,
+	guint8 **data, gsize *data_length, gboolean *final_chunk,
+	GError **error)
+{
 	Sakura__Control__V1__Event *decoded;
 	Sakura__Control__V1__TerminalOutput *output;
 
 	if (payload == NULL || sequence == NULL || terminal_id == NULL ||
-	    data == NULL || data_length == NULL || final_chunk == NULL)
+	    start_offset == NULL || end_offset == NULL || data == NULL ||
+	    data_length == NULL || final_chunk == NULL)
 		return sakura_control_error(error, "invalid terminal output event");
 	*terminal_id = NULL;
+	*start_offset = 0;
+	*end_offset = 0;
 	*data = NULL;
 	*data_length = 0;
 	*final_chunk = FALSE;
@@ -1603,6 +1654,8 @@ sakura_control_decode_terminal_output_event(const guint8 *payload,
 	output = decoded->terminal_output;
 	*sequence = decoded->sequence;
 	*terminal_id = g_strdup(output->terminal_id);
+	*start_offset = output->start_offset;
+	*end_offset = output->end_offset;
 	*data_length = output->data.len;
 	if (*data_length != 0) {
 		*data = g_malloc(*data_length);

@@ -99,6 +99,40 @@ test_snapshot_response_roundtrip(void)
 
 
 static void
+test_terminal_output_offsets_roundtrip(void)
+{
+	const guint8 data[] = { 'a', 'b', 'c' };
+	GByteArray *encoded = g_byte_array_new();
+	guint64 sequence = 0;
+	guint64 start_offset = 0;
+	guint64 end_offset = 0;
+	gchar *terminal_id = NULL;
+	guint8 *decoded_data = NULL;
+	gsize data_length = 0;
+	gboolean final_chunk = FALSE;
+	GError *error = NULL;
+
+	g_assert_true(sakura_control_encode_terminal_output_event_with_offsets(
+		7, "terminal-1", 42, 45, data, sizeof(data), FALSE, encoded));
+	g_assert_true(sakura_control_decode_terminal_output_event_with_offsets(
+		encoded->data, encoded->len, &sequence, &terminal_id, &start_offset,
+		&end_offset, &decoded_data, &data_length, &final_chunk, &error));
+	g_assert_no_error(error);
+	g_assert_cmpuint(sequence, ==, 7);
+	g_assert_cmpstr(terminal_id, ==, "terminal-1");
+	g_assert_cmpuint(start_offset, ==, 42);
+	g_assert_cmpuint(end_offset, ==, 45);
+	g_assert_cmpuint(data_length, ==, sizeof(data));
+	g_assert_cmpmem(decoded_data, data_length, data, sizeof(data));
+	g_assert_false(final_chunk);
+
+	g_free(terminal_id);
+	g_free(decoded_data);
+	g_byte_array_unref(encoded);
+}
+
+
+static void
 test_hello_roundtrip(void)
 {
 	GByteArray *request_payload = g_byte_array_new();
@@ -1513,6 +1547,8 @@ main(int argc, char **argv)
 	                test_snapshot_response_roundtrip);
 	g_test_add_func("/control/hello-roundtrip",
 	                test_hello_roundtrip);
+	g_test_add_func("/control/terminal-output-offsets-roundtrip",
+	                test_terminal_output_offsets_roundtrip);
 	g_test_add_func("/control/mutation-request-roundtrip",
 	                test_mutation_request_roundtrip);
 	g_test_add_func("/control/agent-create-and-reload",

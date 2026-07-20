@@ -22,6 +22,8 @@ sakura_control_terminal_attachment_clear(
 	attachment->rows = 0;
 	attachment->status = 0;
 	attachment->output_length = 0;
+	attachment->output_start_offset = 0;
+	attachment->output_end_offset = 0;
 }
 
 
@@ -332,6 +334,8 @@ sakura_control_client_attach_terminal(
 	attachment->rows = response.attached_rows;
 	attachment->status = response.attached_status;
 	attachment->output_length = response.attached_output_length;
+	attachment->output_start_offset = response.attached_output_start_offset;
+	attachment->output_end_offset = response.attached_output_end_offset;
 	if (attachment->output_length != 0) {
 		attachment->output = g_malloc(attachment->output_length);
 		memcpy(attachment->output, response.attached_output,
@@ -428,9 +432,10 @@ sakura_control_client_read_event(SakuraControlClientConnection *connection,
 	if (!sakura_control_client_read_frame(connection, &payload, cancellable,
 	                                      error))
 		return FALSE;
-	if (sakura_control_decode_terminal_output_event(
+	if (sakura_control_decode_terminal_output_event_with_offsets(
 		    payload->data, payload->len, &event->sequence, &event->terminal_id,
-		    &event->data, &event->data_length, &event->final_chunk,
+		    &event->start_offset, &event->end_offset, &event->data,
+		    &event->data_length, &event->final_chunk,
 		    &decode_error)) {
 		event->type = SAKURA_CONTROL_CLIENT_EVENT_TERMINAL_OUTPUT;
 		g_byte_array_unref(payload);
