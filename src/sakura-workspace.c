@@ -6303,7 +6303,8 @@ sakura_sidebar_apply_expansion_keys(GtkTreeModel *model,
 		}
 		path = gtk_tree_model_get_path(model, &iter);
 		should_expand = key != NULL && g_hash_table_contains(expanded, key);
-		if (should_expand)
+		if (should_expand &&
+		    !gtk_tree_view_row_expanded(GTK_TREE_VIEW(sakura.sidebar_tree), path))
 			gtk_tree_view_expand_row(GTK_TREE_VIEW(sakura.sidebar_tree), path, FALSE);
 		if (gtk_tree_model_iter_has_child(model, &iter))
 			sakura_sidebar_apply_expansion_keys(model, &iter, expanded);

@@ -739,6 +739,7 @@ struct sakura_codex_name_query {
 	gchar *request_line;
 	guint request_id;
 	gsize request_offset;
+	gboolean abandoned;
 };
 
 static void sakura_codex_name_helper_dispatch(void);
@@ -1201,6 +1202,12 @@ sakura_codex_name_helper_read_done (GObject *source_object,
 	gboolean valid_response = FALSE;
 
 	line = g_data_input_stream_read_line_finish(stream, result, NULL, &error);
+	if (query->abandoned) {
+		g_clear_error(&error);
+		g_free(line);
+		sakura_codex_name_query_free(query);
+		return;
+	}
 	if (error != NULL) {
 		sakura_codex_name_helper_request_failed(query, error->message);
 		g_error_free(error);
@@ -1304,6 +1311,11 @@ sakura_codex_name_helper_write_done (GObject *source_object,
 	gssize bytes_written;
 
 	bytes_written = g_output_stream_write_finish(stream, result, &error);
+	if (query->abandoned) {
+		g_clear_error(&error);
+		sakura_codex_name_query_free(query);
+		return;
+	}
 	if (bytes_written <= 0) {
 		if (error == NULL)
 			g_set_error_literal(&error, G_IO_ERROR, G_IO_ERROR_FAILED,
@@ -1401,11 +1413,14 @@ sakura_codex_name_helper_shutdown (void)
 {
 	struct sakura_codex_name_query *query;
 
-	sakura_codex_name_helper_clear(TRUE);
 	query = sakura.codex_name_query_in_flight;
-	sakura.codex_name_query_in_flight = NULL;
-	if (query != NULL)
-		sakura_codex_name_query_free(query);
+	if (query != NULL) {
+		/* An async stream operation still owns the callback's user data. Keep
+		 * the query until that callback observes the shutdown marker. */
+		query->abandoned = TRUE;
+		sakura.codex_name_query_in_flight = NULL;
+	}
+	sakura_codex_name_helper_clear(TRUE);
 	if (sakura.codex_name_query_queue != NULL) {
 		while ((query = g_queue_pop_head(sakura.codex_name_query_queue)) != NULL)
 			sakura_codex_name_query_free(query);

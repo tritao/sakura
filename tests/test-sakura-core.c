@@ -100,6 +100,7 @@ test_workspace_restore_snapshot(void)
 	GError *error = NULL;
 
 	snapshot->root_directory = g_strdup("/tmp/project");
+	g_free(snapshot->active_group_id);
 	snapshot->active_group_id = g_strdup("group-a");
 	group->id = g_strdup("group-a");
 	group->parent_id = g_strdup("root");
