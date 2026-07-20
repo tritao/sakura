@@ -158,6 +158,9 @@ gboolean sakura_control_encode_close_terminal_request(
 gboolean sakura_control_encode_attach_terminal_request(
 	const gchar *request_id, const gchar *terminal_id, guint cols, guint rows,
 	GByteArray *payload);
+gboolean sakura_control_encode_attach_terminal_request_after_offset(
+	const gchar *request_id, const gchar *terminal_id, guint cols, guint rows,
+	guint64 after_output_offset, GByteArray *payload);
 gboolean sakura_control_encode_detach_terminal_request(
 	const gchar *request_id, const gchar *terminal_id, GByteArray *payload);
 gboolean sakura_control_encode_restart_terminal_request(

@@ -177,6 +177,8 @@ message AttachTerminalRequest {
   string terminal_id = 1;
   uint32 cols = 2;
   uint32 rows = 3;
+  uint64 after_output_offset = 4;
+  bool has_after_output_offset = 5;
 }
 
 message DetachTerminalRequest {

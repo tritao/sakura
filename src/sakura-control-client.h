@@ -97,6 +97,10 @@ gboolean sakura_control_client_attach_terminal(
 	SakuraControlClientConnection *connection, const gchar *terminal_id,
 	guint cols, guint rows, SakuraControlTerminalAttachment *attachment,
 	GError **error);
+gboolean sakura_control_client_attach_terminal_after_offset(
+	SakuraControlClientConnection *connection, const gchar *terminal_id,
+	guint cols, guint rows, guint64 after_output_offset,
+	SakuraControlTerminalAttachment *attachment, GError **error);
 gboolean sakura_control_client_terminal_input(
 	SakuraControlClientConnection *connection, const gchar *terminal_id,
 	const guint8 *data, gsize data_length, GError **error);

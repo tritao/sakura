@@ -1067,6 +1067,10 @@ sakura_agent_attach_terminal(SakuraAgent *agent,
 {
 	SakuraAgentTerminal *terminal;
 	struct winsize size = { 0 };
+	const guint8 *replay_data = NULL;
+	gsize replay_length = 0;
+	guint64 replay_start_offset = 0;
+	guint64 replay_end_offset = 0;
 
 	if (workspace_changed != NULL)
 		*workspace_changed = FALSE;
@@ -1092,11 +1096,28 @@ sakura_agent_attach_terminal(SakuraAgent *agent,
 			kill(terminal->pid, SIGWINCH);
 	}
 	terminal->attached_clients++;
+	replay_start_offset = terminal->output_start_offset;
+	replay_end_offset = terminal->output_end_offset;
+	if (request->has_after_output_offset) {
+		if (request->after_output_offset < replay_start_offset) {
+			terminal->attached_clients--;
+			return sakura_agent_error(error, "terminal output gap: requested offset is no longer retained");
+		}
+		if (request->after_output_offset > replay_end_offset) {
+			terminal->attached_clients--;
+			return sakura_agent_error(error, "terminal output offset is ahead of the retained output");
+		}
+		replay_start_offset = request->after_output_offset;
+	}
+	if (terminal->output_buffer != NULL &&
+	    replay_start_offset < replay_end_offset) {
+		replay_data = terminal->output_buffer->data +
+		               (replay_start_offset - terminal->output_start_offset);
+		replay_length = replay_end_offset - replay_start_offset;
+	}
 	if (!sakura_control_encode_terminal_attachment_response_with_offsets(
-			request_id, terminal->core, terminal->output_start_offset,
-			terminal->output_end_offset,
-			terminal->output_buffer != NULL ? terminal->output_buffer->data : NULL,
-			terminal->output_buffer != NULL ? terminal->output_buffer->len : 0,
+			request_id, terminal->core, replay_start_offset, replay_end_offset,
+			replay_data, replay_length,
 			response)) {
 		terminal->attached_clients--;
 		return sakura_agent_error(error, "could not encode terminal attachment");

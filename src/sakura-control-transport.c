@@ -626,10 +626,43 @@ sakura_control_encode_close_terminal_request(const gchar *request_id,
 }
 
 
+static gboolean sakura_control_encode_attach_terminal_request_internal(
+	const gchar *request_id, const gchar *terminal_id, guint cols, guint rows,
+	gboolean has_after_output_offset, guint64 after_output_offset,
+	GByteArray *payload);
+
+
 gboolean
 sakura_control_encode_attach_terminal_request(const gchar *request_id,
 	                                             const gchar *terminal_id,
 	                                             guint cols, guint rows,
+	                                             GByteArray *payload)
+{
+	return sakura_control_encode_attach_terminal_request_internal(
+		request_id, terminal_id, cols, rows, FALSE, 0, payload);
+}
+
+
+gboolean
+sakura_control_encode_attach_terminal_request_after_offset(
+	                                             const gchar *request_id,
+	                                             const gchar *terminal_id,
+	                                             guint cols, guint rows,
+	                                             guint64 after_output_offset,
+	                                             GByteArray *payload)
+{
+	return sakura_control_encode_attach_terminal_request_internal(
+		request_id, terminal_id, cols, rows, TRUE, after_output_offset, payload);
+}
+
+
+static gboolean
+sakura_control_encode_attach_terminal_request_internal(
+	                                             const gchar *request_id,
+	                                             const gchar *terminal_id,
+	                                             guint cols, guint rows,
+	                                             gboolean has_after_output_offset,
+	                                             guint64 after_output_offset,
 	                                             GByteArray *payload)
 {
 	Sakura__Control__V1__AttachTerminalRequest attach =
@@ -643,6 +676,10 @@ sakura_control_encode_attach_terminal_request(const gchar *request_id,
 	attach.terminal_id = (gchar *)terminal_id;
 	attach.cols = cols;
 	attach.rows = rows;
+	if (has_after_output_offset) {
+		attach.has_after_output_offset = TRUE;
+		attach.after_output_offset = after_output_offset;
+	}
 	request.request_id = (gchar *)request_id;
 	request.body_case = SAKURA__CONTROL__V1__REQUEST__BODY_ATTACH_TERMINAL;
 	request.attach_terminal = &attach;
@@ -902,6 +939,10 @@ sakura_control_decode_request(const guint8 *payload,
 				decoded->attach_terminal->terminal_id);
 			request->cols = decoded->attach_terminal->cols;
 			request->rows = decoded->attach_terminal->rows;
+			request->has_after_output_offset =
+				decoded->attach_terminal->has_after_output_offset;
+			request->after_output_offset =
+				decoded->attach_terminal->after_output_offset;
 		}
 		break;
 	case SAKURA__CONTROL__V1__REQUEST__BODY_DETACH_TERMINAL:

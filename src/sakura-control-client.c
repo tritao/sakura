@@ -307,6 +307,17 @@ sakura_control_client_attach_terminal(
 	guint cols, guint rows, SakuraControlTerminalAttachment *attachment,
 	GError **error)
 {
+	return sakura_control_client_attach_terminal_after_offset(
+		connection, terminal_id, cols, rows, 0, attachment, error);
+}
+
+
+gboolean
+sakura_control_client_attach_terminal_after_offset(
+	SakuraControlClientConnection *connection, const gchar *terminal_id,
+	guint cols, guint rows, guint64 after_output_offset,
+	SakuraControlTerminalAttachment *attachment, GError **error)
+{
 	GByteArray *request = g_byte_array_new();
 	SakuraControlResponse response = { 0 };
 	gchar *request_id = g_uuid_string_random();
@@ -314,8 +325,8 @@ sakura_control_client_attach_terminal(
 
 	if (attachment != NULL)
 		sakura_control_terminal_attachment_clear(attachment);
-	if (!sakura_control_encode_attach_terminal_request(
-		    request_id, terminal_id, cols, rows, request) ||
+	if (!sakura_control_encode_attach_terminal_request_after_offset(
+		    request_id, terminal_id, cols, rows, after_output_offset, request) ||
 	    !sakura_control_client_call(connection, request_id, request, &response,
 	                                error))
 		goto out;
