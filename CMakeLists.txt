@@ -311,6 +311,15 @@ IF (BUILD_TESTING)
 		TARGET_LINK_OPTIONS (sakura-workspace-gtk-test PRIVATE
 			-fsanitize=address,undefined)
 	ENDIF ()
+	IF (SAKURA_ENABLE_SANITIZERS)
+		FOREACH (target sakura-core-model-test sakura-control-test
+		                 sakura-control-client-api-test)
+			TARGET_COMPILE_OPTIONS (${target} PRIVATE
+				-fsanitize=address,undefined -fno-omit-frame-pointer)
+			TARGET_LINK_OPTIONS (${target} PRIVATE
+				-fsanitize=address,undefined)
+		ENDFOREACH ()
+	ENDIF ()
 ENDIF (BUILD_TESTING)
 
 IF (Python3_Interpreter_FOUND)
