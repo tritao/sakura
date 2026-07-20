@@ -65,6 +65,11 @@ typedef struct {
 typedef struct {
 	gchar *request_id;
 	gboolean has_snapshot;
+	gboolean has_error;
+	gchar *error_code;
+	gchar *error_message;
+	gboolean error_retryable;
+	guint64 error_current_revision;
 	gboolean accepted;
 	gchar *accepted_kind;
 	gchar *accepted_id;
@@ -85,8 +90,16 @@ typedef struct {
 	guint64 workspace_revision;
 } SakuraControlResponse;
 
+typedef struct {
+	const gchar *remote_code;
+	gboolean retryable;
+	guint64 current_revision;
+} SakuraControlRemoteError;
+
 void sakura_control_request_clear(SakuraControlRequest *request);
 void sakura_control_response_clear(SakuraControlResponse *response);
+gboolean sakura_control_response_get_remote_error(
+	const SakuraControlResponse *response, SakuraControlRemoteError *remote_error);
 
 gboolean sakura_control_frame_read(GInputStream *input,
 	                                  GByteArray **payload,

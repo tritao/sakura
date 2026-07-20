@@ -12,6 +12,33 @@ sakura_control_error(GError **error, const gchar *message)
 }
 
 
+static SakuraControlError
+sakura_control_error_code(const gchar *remote_code)
+{
+	if (g_strcmp0(remote_code, SAKURA_CONTROL_ERROR_INVALID_ARGUMENT) == 0)
+		return SAKURA_CONTROL_ERROR_CODE_INVALID_ARGUMENT;
+	if (g_strcmp0(remote_code, SAKURA_CONTROL_ERROR_NOT_FOUND) == 0)
+		return SAKURA_CONTROL_ERROR_CODE_NOT_FOUND;
+	if (g_strcmp0(remote_code, SAKURA_CONTROL_ERROR_ALREADY_EXISTS) == 0)
+		return SAKURA_CONTROL_ERROR_CODE_ALREADY_EXISTS;
+	if (g_strcmp0(remote_code, SAKURA_CONTROL_ERROR_REVISION_CONFLICT) == 0)
+		return SAKURA_CONTROL_ERROR_CODE_REVISION_CONFLICT;
+	if (g_strcmp0(remote_code, SAKURA_CONTROL_ERROR_INVALID_STATE) == 0)
+		return SAKURA_CONTROL_ERROR_CODE_INVALID_STATE;
+	if (g_strcmp0(remote_code, SAKURA_CONTROL_ERROR_UNSUPPORTED) == 0)
+		return SAKURA_CONTROL_ERROR_CODE_UNSUPPORTED;
+	if (g_strcmp0(remote_code, SAKURA_CONTROL_ERROR_UNAUTHORIZED) == 0)
+		return SAKURA_CONTROL_ERROR_CODE_UNAUTHORIZED;
+	if (g_strcmp0(remote_code, SAKURA_CONTROL_ERROR_TIMEOUT) == 0)
+		return SAKURA_CONTROL_ERROR_CODE_TIMEOUT;
+	if (g_strcmp0(remote_code, SAKURA_CONTROL_ERROR_INTERNAL) == 0)
+		return SAKURA_CONTROL_ERROR_CODE_INTERNAL;
+	if (g_strcmp0(remote_code, SAKURA_CONTROL_ERROR_OUTPUT_GAP) == 0)
+		return SAKURA_CONTROL_ERROR_CODE_OUTPUT_GAP;
+	return SAKURA_CONTROL_ERROR_CODE_FAILED;
+}
+
+
 static const gchar *
 sakura_control_string(const gchar *value)
 {
@@ -79,6 +106,8 @@ sakura_control_response_clear(SakuraControlResponse *response)
 	if (response == NULL)
 		return;
 	g_clear_pointer(&response->request_id, g_free);
+	g_clear_pointer(&response->error_code, g_free);
+	g_clear_pointer(&response->error_message, g_free);
 	g_clear_pointer(&response->accepted_kind, g_free);
 	g_clear_pointer(&response->accepted_id, g_free);
 	g_clear_pointer(&response->agent_version, g_free);
@@ -86,6 +115,9 @@ sakura_control_response_clear(SakuraControlResponse *response)
 	g_clear_pointer(&response->attached_terminal_id, g_free);
 	g_clear_pointer(&response->attached_output, g_free);
 	response->has_snapshot = FALSE;
+	response->has_error = FALSE;
+	response->error_retryable = FALSE;
+	response->error_current_revision = 0;
 	response->accepted = FALSE;
 	response->hello = FALSE;
 	response->hello_protocol_version = 0;
@@ -98,6 +130,25 @@ sakura_control_response_clear(SakuraControlResponse *response)
 	response->attached_output_start_offset = 0;
 	response->attached_output_end_offset = 0;
 	response->workspace_revision = 0;
+}
+
+
+gboolean
+sakura_control_response_get_remote_error(
+	const SakuraControlResponse *response,
+	SakuraControlRemoteError *remote_error)
+{
+	if (remote_error != NULL)
+		*remote_error = (SakuraControlRemoteError){ 0 };
+	if (response == NULL || !response->has_error ||
+	    response->error_code == NULL)
+		return FALSE;
+	if (remote_error != NULL) {
+		remote_error->remote_code = response->error_code;
+		remote_error->retryable = response->error_retryable;
+		remote_error->current_revision = response->error_current_revision;
+	}
+	return TRUE;
 }
 
 
@@ -1457,11 +1508,16 @@ sakura_control_decode_response(const guint8 *payload,
 	response->workspace_revision = decoded->workspace_revision;
 	if (decoded->body_case == SAKURA__CONTROL__V1__RESPONSE__BODY_ERROR &&
 	    decoded->error != NULL) {
-		g_set_error(error, G_IO_ERROR, G_IO_ERROR_INVALID_DATA,
-		            "agent returned %s: %s (current revision %"G_GUINT64_FORMAT")",
-		            sakura_control_string(decoded->error->code),
-		            sakura_control_string(decoded->error->message),
-		            decoded->error->current_revision);
+		response->has_error = TRUE;
+		response->error_code = g_strdup(
+			sakura_control_string(decoded->error->code));
+		response->error_message = g_strdup(
+			sakura_control_string(decoded->error->message));
+		response->error_retryable = decoded->error->retryable;
+		response->error_current_revision = decoded->error->current_revision;
+		g_set_error(error, SAKURA_CONTROL_ERROR_DOMAIN,
+		            sakura_control_error_code(decoded->error->code), "%s",
+		            response->error_message);
 		sakura__control__v1__response__free_unpacked(decoded, NULL);
 		return FALSE;
 	}

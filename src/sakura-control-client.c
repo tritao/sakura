@@ -2,12 +2,62 @@
 
 #include "sakura-control-transport.h"
 
+#include <errno.h>
+#include <sys/stat.h>
 #include <string.h>
+#include <unistd.h>
 
 struct _SakuraControlClientConnection {
 	GSocketConnection *connection;
 	gint ref_count;
 };
+
+static gboolean sakura_control_client_error(GError **error, GQuark domain,
+	                                            gint code,
+	                                            const gchar *message);
+
+
+GQuark
+sakura_control_error_quark(void)
+{
+	return g_quark_from_static_string("sakura-control-error-quark");
+}
+
+
+gboolean
+sakura_control_validate_local_endpoint(const gchar *socket_path,
+                                       GError **error)
+{
+	struct stat endpoint_stat;
+
+	if (socket_path == NULL || socket_path[0] == '\0')
+		return sakura_control_client_error(
+			error, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT,
+			"control socket path is required");
+	if (lstat(socket_path, &endpoint_stat) != 0) {
+		g_set_error(error, G_FILE_ERROR, g_file_error_from_errno(errno),
+		            "could not inspect control endpoint %s: %s", socket_path,
+		            g_strerror(errno));
+		return FALSE;
+	}
+	if (S_ISLNK(endpoint_stat.st_mode)) {
+		g_set_error(error, G_FILE_ERROR, G_FILE_ERROR_INVAL,
+		            "control endpoint %s must not be a symlink", socket_path);
+		return FALSE;
+	}
+	if (!S_ISSOCK(endpoint_stat.st_mode)) {
+		g_set_error(error, G_FILE_ERROR, G_FILE_ERROR_INVAL,
+		            "control endpoint %s is not a socket", socket_path);
+		return FALSE;
+	}
+	if (endpoint_stat.st_uid != getuid()) {
+		g_set_error(error, G_FILE_ERROR, G_FILE_ERROR_PERM,
+		            "control endpoint %s is not owned by the current user",
+		            socket_path);
+		return FALSE;
+	}
+	return TRUE;
+}
 
 
 void
@@ -307,8 +357,48 @@ sakura_control_client_attach_terminal(
 	guint cols, guint rows, SakuraControlTerminalAttachment *attachment,
 	GError **error)
 {
-	return sakura_control_client_attach_terminal_after_offset(
-		connection, terminal_id, cols, rows, 0, attachment, error);
+	GByteArray *request = g_byte_array_new();
+	SakuraControlResponse response = { 0 };
+	gchar *request_id = g_uuid_string_random();
+	gboolean success = FALSE;
+
+	if (attachment != NULL)
+		sakura_control_terminal_attachment_clear(attachment);
+	if (!sakura_control_encode_attach_terminal_request(
+		    request_id, terminal_id, cols, rows, request) ||
+	    !sakura_control_client_call(connection, request_id, request, &response,
+	                                error))
+		goto out;
+	if (!response.attached) {
+		g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_INVALID_DATA,
+		                    "Sakura agent did not attach the terminal");
+		goto out;
+	}
+	if (attachment == NULL) {
+		g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT,
+		                    "terminal attachment output is required");
+		goto out;
+	}
+	attachment->terminal_id = g_strdup(response.attached_terminal_id);
+	attachment->cols = response.attached_cols;
+	attachment->rows = response.attached_rows;
+	attachment->status = response.attached_status;
+	attachment->output_length = response.attached_output_length;
+	attachment->output_start_offset = response.attached_output_start_offset;
+	attachment->output_end_offset = response.attached_output_end_offset;
+	if (attachment->output_length != 0) {
+		attachment->output = g_malloc(attachment->output_length);
+		memcpy(attachment->output, response.attached_output,
+		       attachment->output_length);
+	}
+	success = TRUE;
+out:
+	if (!success && attachment != NULL)
+		sakura_control_terminal_attachment_clear(attachment);
+	sakura_control_response_clear(&response);
+	g_byte_array_unref(request);
+	g_free(request_id);
+	return success;
 }
 
 
@@ -495,6 +585,10 @@ sakura_control_client_connect(const gchar *socket_path,
 	}
 	client = g_socket_client_new();
 	g_socket_client_set_timeout(client, SAKURA_CONTROL_CONNECT_TIMEOUT_SECONDS);
+	if (!sakura_control_validate_local_endpoint(socket_path, error)) {
+		g_object_unref(client);
+		return NULL;
+	}
 	address = g_unix_socket_address_new(socket_path);
 	socket_connection = g_socket_client_connect(
 		client, G_SOCKET_CONNECTABLE(address), NULL, error);

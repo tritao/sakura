@@ -17,6 +17,7 @@
 #include <pcre2.h>
 
 #include "sakura-private.h"
+#include "sakura-control-client.h"
 
 #define _(String) gettext(String)
 
@@ -614,8 +615,9 @@ sakura_tab_agent_input_cb(gint fd, GIOCondition condition, gpointer data)
 static gboolean
 sakura_tab_finish_agent_terminal_start(
 	SakuraTab *tab, gboolean attached, const gchar *created_terminal_id,
-	guint8 *replay_data, gsize replay_length, guint attached_cols,
-	guint attached_rows, guint attached_status, GError **error)
+	guint8 *replay_data, gsize replay_length, guint64 replay_start_offset,
+	guint64 replay_end_offset, guint attached_cols, guint attached_rows,
+	guint attached_status, GError **error)
 {
 	VtePty *proxy_pty = NULL;
 	struct termios termios = { 0 };
@@ -686,7 +688,9 @@ sakura_tab_finish_agent_terminal_start(
 			tab->agent_cols = attached_cols;
 		if (attached_rows != 0)
 			tab->agent_rows = attached_rows;
-		sakura_tab_agent_feed_output(tab, replay_data, replay_length);
+		tab->agent_last_output_offset = replay_end_offset;
+		sakura_tab_agent_feed_output(tab, replay_data, replay_length,
+		                              replay_start_offset, replay_end_offset);
 		if (attached_status != 0)
 			sakura_tab_agent_status(tab, attached_status, "terminal attached");
 	}
@@ -762,6 +766,7 @@ sakura_tab_agent_start_async_done(SakuraAgentTerminalStartResult *result,
 	    sakura_tab_finish_agent_terminal_start(
 			tab, result->attached, result->created_terminal_id,
 			result->replay_data, result->replay_length,
+			result->replay_start_offset, result->replay_end_offset,
 			result->attached_cols, result->attached_rows,
 			result->attached_status, &error)) {
 		result->replay_data = NULL;
@@ -801,6 +806,8 @@ sakura_tab_start_agent_terminal(SakuraTab *tab, const gchar *cwd)
 	gchar *created_terminal_id = NULL;
 	guint8 *replay_data = NULL;
 	gsize replay_length = 0;
+	guint64 replay_start_offset = 0;
+	guint64 replay_end_offset = 0;
 	guint attached_cols = 0;
 	guint attached_rows = 0;
 	guint attached_status = 0;
@@ -836,9 +843,26 @@ sakura_tab_start_agent_terminal(SakuraTab *tab, const gchar *cwd)
 	}
 	g_clear_error(&error);
 
-	attached = sakura_agent_attach_terminal(
-		&sakura, tab->terminal_id, cols, rows, &replay_data, &replay_length,
-		&attached_cols, &attached_rows, &attached_status, &error);
+	attached = sakura_agent_attach_terminal_after_offset(
+		&sakura, tab->terminal_id, cols, rows,
+		tab->agent_last_output_offset, &replay_data, &replay_length,
+		&replay_start_offset, &replay_end_offset, &attached_cols,
+		&attached_rows, &attached_status, &error);
+	if (!attached) {
+		if (error != NULL && error->domain == SAKURA_CONTROL_ERROR_DOMAIN &&
+		    error->code == SAKURA_CONTROL_ERROR_CODE_OUTPUT_GAP) {
+			/* An offset outside the retained ring is unusable. The offset-free
+			 * attach asks the agent for the oldest retained bytes. */
+			g_clear_error(&error);
+			if (tab->vte != NULL)
+				vte_terminal_reset(VTE_TERMINAL(tab->vte), TRUE, TRUE);
+			tab->agent_last_output_offset = 0;
+			attached = sakura_agent_attach_terminal_from_oldest(
+				&sakura, tab->terminal_id, cols, rows, &replay_data,
+				&replay_length, &replay_start_offset, &replay_end_offset,
+				&attached_cols, &attached_rows, &attached_status, &error);
+		}
+	}
 	if (!attached) {
 		g_clear_error(&error);
 		if (!sakura_agent_create_terminal(&sakura, tab->terminal_id, page_id,
@@ -848,9 +872,11 @@ sakura_tab_start_agent_terminal(SakuraTab *tab, const gchar *cwd)
 			g_free(replay_data);
 			return FALSE;
 		}
+		tab->agent_last_output_offset = 0;
 	}
 	if (!sakura_tab_finish_agent_terminal_start(
 			tab, attached, created_terminal_id, replay_data, replay_length,
+			replay_start_offset, replay_end_offset,
 			attached_cols, attached_rows, attached_status, &error)) {
 		g_clear_error(&error);
 		g_free(created_terminal_id);
@@ -985,12 +1011,25 @@ sakura_tab_restart_agent_terminal(SakuraTab *tab)
 
 void
 sakura_tab_agent_feed_output(SakuraTab *tab, const guint8 *data,
-                             gsize data_length)
+                             gsize data_length, guint64 start_offset,
+                             guint64 end_offset)
 {
-	if (tab == NULL || !tab->agent_backed || tab->vte == NULL ||
-	    data == NULL || data_length == 0)
+	gsize skip = 0;
+
+	if (tab == NULL || !tab->agent_backed || tab->vte == NULL)
 		return;
-	vte_terminal_feed(VTE_TERMINAL(tab->vte), (const gchar *)data, data_length);
+	if (end_offset >= start_offset &&
+	    end_offset <= tab->agent_last_output_offset)
+		return;
+	if (end_offset >= start_offset && start_offset < tab->agent_last_output_offset)
+		skip = MIN((guint64)data_length,
+		           tab->agent_last_output_offset - start_offset);
+	if (end_offset >= start_offset && end_offset >= tab->agent_last_output_offset)
+		tab->agent_last_output_offset = end_offset;
+	if (data == NULL || data_length == 0 || skip >= data_length)
+		return;
+	vte_terminal_feed(VTE_TERMINAL(tab->vte),
+	                  (const gchar *)data + skip, data_length - skip);
 }
 
 

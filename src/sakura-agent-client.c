@@ -11,6 +11,14 @@ static void sakura_agent_refresh_after_revision_conflict(SakuraApp *app);
 static gboolean sakura_agent_apply_event_cb(gpointer data);
 
 
+static gboolean
+sakura_agent_error_is_revision_conflict(const GError *error)
+{
+	return error != NULL && error->domain == SAKURA_CONTROL_ERROR_DOMAIN &&
+	       error->code == SAKURA_CONTROL_ERROR_CODE_REVISION_CONFLICT;
+}
+
+
 static gchar *
 sakura_agent_socket_path_new(SakuraApp *app)
 {
@@ -122,6 +130,8 @@ typedef struct {
 	gchar *terminal_id;
 	guint8 *data;
 	gsize data_length;
+	guint64 start_offset;
+	guint64 end_offset;
 	guint status;
 	gchar *message;
 	gboolean output;
@@ -215,8 +225,7 @@ sakura_agent_report_command_failure(SakuraApp *app,
 {
 	SakuraAgentCommandFailure *failure = g_new0(SakuraAgentCommandFailure, 1);
 
-	if (error != NULL &&
-	    g_str_has_prefix(error->message, "agent returned REVISION_CONFLICT:"))
+	if (sakura_agent_error_is_revision_conflict(error))
 		sakura_agent_refresh_after_revision_conflict(app);
 
 	failure->app = app;
@@ -323,8 +332,8 @@ sakura_agent_send_command(SakuraApp *app,
 out:
 	if (mutation_locked)
 		g_mutex_unlock(&app->agent_workspace_mutation_mutex);
-	if (!success && error != NULL && *error != NULL &&
-	    g_str_has_prefix((*error)->message, "agent returned REVISION_CONFLICT:"))
+	if (!success && error != NULL &&
+	    sakura_agent_error_is_revision_conflict(*error))
 		sakura_agent_refresh_after_revision_conflict(app);
 	g_clear_pointer(&response_payload, g_byte_array_unref);
 	sakura_control_response_clear(&response);
@@ -584,7 +593,9 @@ sakura_agent_apply_terminal_event_cb(gpointer data)
 		tab = sakura_find_pane_by_terminal_id(event->terminal_id);
 	if (tab != NULL) {
 		if (event->output)
-			sakura_tab_agent_feed_output(tab, event->data, event->data_length);
+			sakura_tab_agent_feed_output(tab, event->data, event->data_length,
+			                              event->start_offset,
+			                              event->end_offset);
 		else
 			sakura_tab_agent_status(tab, event->status, event->message);
 	}
@@ -632,11 +643,12 @@ sakura_agent_event_thread(gpointer data)
 			g_clear_error(&error);
 			terminal_event = g_new0(SakuraAgentTerminalEvent, 1);
 			terminal_event->app = app;
-			if (sakura_control_decode_terminal_output_event(
+			if (sakura_control_decode_terminal_output_event_with_offsets(
 				payload->data, payload->len, &terminal_sequence,
 				&terminal_event->terminal_id,
-				&terminal_event->data, &terminal_event->data_length, &final_chunk,
-				&error)) {
+				&terminal_event->start_offset, &terminal_event->end_offset,
+				&terminal_event->data, &terminal_event->data_length,
+				&final_chunk, &error)) {
 				terminal_event->output = TRUE;
 				(void)terminal_sequence;
 				(void)final_chunk;
@@ -1006,8 +1018,8 @@ sakura_agent_request_accepted(SakuraApp *app, const gchar *request_id,
 out:
 	if (mutation_locked)
 		g_mutex_unlock(&app->agent_workspace_mutation_mutex);
-	if (!success && error != NULL && *error != NULL &&
-	    g_str_has_prefix((*error)->message, "agent returned REVISION_CONFLICT:"))
+	if (!success && error != NULL &&
+	    sakura_agent_error_is_revision_conflict(*error))
 		sakura_agent_refresh_after_revision_conflict(app);
 	g_clear_pointer(&response_payload, g_byte_array_unref);
 	sakura_control_response_clear(&response);
@@ -1020,8 +1032,10 @@ out:
 static gboolean
 sakura_agent_request_attached(SakuraApp *app, const gchar *request_id,
 	                            GByteArray *request, guint8 **replay_data,
-	                            gsize *replay_length, guint *cols, guint *rows,
-	                            guint *status, GError **error)
+	                            gsize *replay_length,
+	                            guint64 *replay_start_offset,
+	                            guint64 *replay_end_offset, guint *cols,
+	                            guint *rows, guint *status, GError **error)
 {
 	SakuraControlClientConnection *connection;
 	GByteArray *response_payload = NULL;
@@ -1032,6 +1046,10 @@ sakura_agent_request_attached(SakuraApp *app, const gchar *request_id,
 		*replay_data = NULL;
 	if (replay_length != NULL)
 		*replay_length = 0;
+	if (replay_start_offset != NULL)
+		*replay_start_offset = 0;
+	if (replay_end_offset != NULL)
+		*replay_end_offset = 0;
 	if (cols != NULL)
 		*cols = 0;
 	if (rows != NULL)
@@ -1075,6 +1093,10 @@ sakura_agent_request_attached(SakuraApp *app, const gchar *request_id,
 	}
 	if (replay_length != NULL)
 		*replay_length = response.attached_output_length;
+	if (replay_start_offset != NULL)
+		*replay_start_offset = response.attached_output_start_offset;
+	if (replay_end_offset != NULL)
+		*replay_end_offset = response.attached_output_end_offset;
 	if (cols != NULL)
 		*cols = response.attached_cols;
 	if (rows != NULL)
@@ -1083,8 +1105,8 @@ sakura_agent_request_attached(SakuraApp *app, const gchar *request_id,
 		*status = response.attached_status;
 	success = TRUE;
 out:
-	if (!success && error != NULL && *error != NULL &&
-	    g_str_has_prefix((*error)->message, "agent returned REVISION_CONFLICT:"))
+	if (!success && error != NULL &&
+	    sakura_agent_error_is_revision_conflict(*error))
 		sakura_agent_refresh_after_revision_conflict(app);
 	g_clear_pointer(&response_payload, g_byte_array_unref);
 	sakura_control_response_clear(&response);
@@ -1439,7 +1461,72 @@ sakura_agent_attach_terminal(SakuraApp *app, const gchar *terminal_id,
 	} else {
 		result = sakura_agent_request_attached(
 			app, request_id, request, replay_data, replay_length,
+			NULL, NULL,
 			attached_cols, attached_rows, status, error);
+	}
+	g_byte_array_unref(request);
+	g_free(request_id);
+	return result;
+}
+
+
+gboolean
+sakura_agent_attach_terminal_after_offset(
+	SakuraApp *app, const gchar *terminal_id, guint cols, guint rows,
+	guint64 after_output_offset, guint8 **replay_data, gsize *replay_length,
+	guint64 *replay_start_offset, guint64 *replay_end_offset,
+	guint *attached_cols, guint *attached_rows, guint *status, GError **error)
+{
+	GByteArray *request;
+	gchar *request_id;
+	gboolean encoded;
+	gboolean result;
+
+	request_id = g_uuid_string_random();
+	request = g_byte_array_new();
+	encoded = sakura_control_encode_attach_terminal_request_after_offset(
+		request_id, terminal_id, cols, rows, after_output_offset, request);
+	if (!encoded) {
+		g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT,
+		                    "could not encode attach terminal request");
+		result = FALSE;
+	} else {
+		result = sakura_agent_request_attached(
+			app, request_id, request, replay_data, replay_length,
+			replay_start_offset, replay_end_offset, attached_cols,
+			attached_rows, status, error);
+	}
+	g_byte_array_unref(request);
+	g_free(request_id);
+	return result;
+}
+
+
+gboolean
+sakura_agent_attach_terminal_from_oldest(
+	SakuraApp *app, const gchar *terminal_id, guint cols, guint rows,
+	guint8 **replay_data, gsize *replay_length, guint64 *replay_start_offset,
+	guint64 *replay_end_offset, guint *attached_cols, guint *attached_rows,
+	guint *status, GError **error)
+{
+	GByteArray *request;
+	gchar *request_id;
+	gboolean encoded;
+	gboolean result;
+
+	request_id = g_uuid_string_random();
+	request = g_byte_array_new();
+	encoded = sakura_control_encode_attach_terminal_request(
+		request_id, terminal_id, cols, rows, request);
+	if (!encoded) {
+		g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT,
+		                    "could not encode attach terminal request");
+		result = FALSE;
+	} else {
+		result = sakura_agent_request_attached(
+			app, request_id, request, replay_data, replay_length,
+			replay_start_offset, replay_end_offset, attached_cols,
+			attached_rows, status, error);
 	}
 	g_byte_array_unref(request);
 	g_free(request_id);
@@ -1551,9 +1638,10 @@ sakura_agent_terminal_start_worker(gpointer data, gpointer user_data)
 	result = g_new0(SakuraAgentTerminalStartResult, 1);
 	result->app = job->app;
 	result->requested_terminal_id = g_strdup(job->terminal_id);
-	result->attached = sakura_agent_attach_terminal(
+	result->attached = sakura_agent_attach_terminal_from_oldest(
 		job->app, job->terminal_id, job->cols, job->rows,
 		&result->replay_data, &result->replay_length,
+		&result->replay_start_offset, &result->replay_end_offset,
 		&result->attached_cols, &result->attached_rows,
 		&result->attached_status, &error);
 	if (!result->attached) {

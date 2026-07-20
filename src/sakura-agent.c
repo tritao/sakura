@@ -113,6 +113,7 @@ sakura_agent_connection_queue(SakuraAgentConnection *connection,
 	                             GByteArray *payload)
 {
 	gboolean queued = FALSE;
+	gboolean overflowed = FALSE;
 
 	if (connection == NULL || payload == NULL)
 		return FALSE;
@@ -125,13 +126,22 @@ sakura_agent_connection_queue(SakuraAgentConnection *connection,
 		connection->outbound_bytes += payload->len;
 		queued = TRUE;
 	} else if (!connection->outbound_stopping) {
-		/* Drop queued data and let the writer close the connection. This keeps
-		 * a client that stopped reading from consuming unbounded memory. */
+		/* Drop queued data and stop the socket immediately. A writer that has
+		 * already exited cannot wake the reader by itself. */
 		connection->outbound_stopping = TRUE;
 		sakura_agent_connection_clear_queue_locked(connection);
+		overflowed = TRUE;
 	}
 	g_cond_signal(&connection->outbound_cond);
 	g_mutex_unlock(&connection->outbound_mutex);
+	if (overflowed) {
+		GSocket *socket = g_socket_connection_get_socket(connection->connection);
+
+		if (socket != NULL)
+			g_socket_shutdown(socket, TRUE, TRUE, NULL);
+		else
+			g_io_stream_close(G_IO_STREAM(connection->connection), NULL, NULL);
+	}
 	return queued;
 }
 
@@ -213,8 +223,10 @@ sakura_agent_error_code(const GError *error)
 		return SAKURA_CONTROL_ERROR_INVALID_ARGUMENT;
 	if (g_str_has_prefix(error->message, "expected revision "))
 		return SAKURA_CONTROL_ERROR_REVISION_CONFLICT;
-	if (g_str_has_prefix(error->message, "terminal output gap:"))
-		return SAKURA_CONTROL_ERROR_INVALID_STATE;
+	if (g_str_has_prefix(error->message, "terminal output gap:") ||
+	    g_str_has_prefix(error->message,
+	                     "terminal output offset is ahead"))
+		return SAKURA_CONTROL_ERROR_OUTPUT_GAP;
 	switch (error->code) {
 	case G_IO_ERROR_INVALID_ARGUMENT:
 		return SAKURA_CONTROL_ERROR_INVALID_ARGUMENT;
@@ -1487,24 +1499,33 @@ sakura_agent_connection_thread(gpointer data)
 		} else if (sakura_agent_apply_request(request->agent, &decoded,
 		                                      &accepted_id, &retired_terminal,
 		                                      &error)) {
-			if (sakura_agent_request_changes_workspace(decoded.kind))
+			gboolean workspace_changed =
+				sakura_agent_request_changes_workspace(decoded.kind);
+
+			if (workspace_changed)
 				request->agent->workspace_revision++;
-			request->agent->sequence++;
+			if (workspace_changed)
+				request->agent->sequence++;
 			if (decoded.kind == SAKURA_CONTROL_REQUEST_CREATE_TERMINAL ||
 			    decoded.kind == SAKURA_CONTROL_REQUEST_RESTART_TERMINAL)
 				sakura_control_encode_accepted_response_with_revision(
 					request_id, "terminal", accepted_id,
 					request->agent->workspace_revision, response);
-			else if (decoded.kind == SAKURA_CONTROL_REQUEST_TERMINAL_INPUT)
+			else if (decoded.kind == SAKURA_CONTROL_REQUEST_TERMINAL_INPUT ||
+			         decoded.kind == SAKURA_CONTROL_REQUEST_TERMINAL_RESIZE)
 				sakura_control_encode_accepted_response_with_revision(
-					request_id, "terminal_input", decoded.terminal_id,
+					request_id,
+					decoded.kind == SAKURA_CONTROL_REQUEST_TERMINAL_INPUT
+					? "terminal_input" : "terminal_resize",
+					decoded.terminal_id,
 					request->agent->workspace_revision, response);
 			else
 				sakura_control_encode_snapshot_response_with_revision(
 					request_id, request->agent->sequence,
 					request->agent->workspace_revision,
 					request->agent->workspace, response);
-			sakura_agent_broadcast_event(request->agent);
+			if (workspace_changed)
+				sakura_agent_broadcast_event(request->agent);
 		}
 		}
 		if (response->len == 0) {

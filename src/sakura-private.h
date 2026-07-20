@@ -508,6 +508,7 @@ struct sakura_tab {
 	guint agent_proxy_input_source_id;
 	guint agent_cols;
 	guint agent_rows;
+	guint64 agent_last_output_offset;
 	gboolean agent_backed;
 	gboolean agent_start_pending;
 	gboolean agent_terminal_exited;
@@ -607,7 +608,8 @@ gboolean sakura_tab_start_agent_terminal(SakuraTab *tab, const gchar *cwd);
 gboolean sakura_tab_start_deferred_runtime(SakuraTab *tab);
 gboolean sakura_tab_restart_agent_terminal(SakuraTab *tab);
 void sakura_tab_agent_feed_output(SakuraTab *tab, const guint8 *data,
-                                  gsize data_length);
+                                  gsize data_length, guint64 start_offset,
+                                  guint64 end_offset);
 void sakura_tab_agent_status(SakuraTab *tab, guint status,
                              const gchar *message);
 void sakura_tab_sync_agent_size(SakuraTab *tab);
@@ -966,6 +968,8 @@ struct sakura_agent_terminal_start_result {
 	gchar *created_terminal_id;
 	guint8 *replay_data;
 	gsize replay_length;
+	guint64 replay_start_offset;
+	guint64 replay_end_offset;
 	guint attached_cols;
 	guint attached_rows;
 	guint attached_status;
@@ -1027,6 +1031,16 @@ gboolean sakura_agent_attach_terminal(
 	SakuraApp *app, const gchar *terminal_id, guint cols, guint rows,
 	guint8 **replay_data, gsize *replay_length, guint *attached_cols,
 	guint *attached_rows, guint *status, GError **error);
+gboolean sakura_agent_attach_terminal_after_offset(
+	SakuraApp *app, const gchar *terminal_id, guint cols, guint rows,
+	guint64 after_output_offset, guint8 **replay_data, gsize *replay_length,
+	guint64 *replay_start_offset, guint64 *replay_end_offset,
+	guint *attached_cols, guint *attached_rows, guint *status, GError **error);
+gboolean sakura_agent_attach_terminal_from_oldest(
+	SakuraApp *app, const gchar *terminal_id, guint cols, guint rows,
+	guint8 **replay_data, gsize *replay_length, guint64 *replay_start_offset,
+	guint64 *replay_end_offset, guint *attached_cols, guint *attached_rows,
+	guint *status, GError **error);
 gboolean sakura_agent_terminal_input(SakuraApp *app, const gchar *terminal_id,
                                      const guint8 *data, gsize data_length,
                                      GError **error);

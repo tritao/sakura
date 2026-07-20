@@ -28,6 +28,26 @@
 #define SAKURA_CONTROL_ERROR_UNAUTHORIZED "UNAUTHORIZED"
 #define SAKURA_CONTROL_ERROR_TIMEOUT "TIMEOUT"
 #define SAKURA_CONTROL_ERROR_INTERNAL "INTERNAL_ERROR"
+#define SAKURA_CONTROL_ERROR_OUTPUT_GAP "OUTPUT_GAP"
+
+typedef enum {
+	SAKURA_CONTROL_ERROR_CODE_FAILED,
+	SAKURA_CONTROL_ERROR_CODE_INVALID_ARGUMENT,
+	SAKURA_CONTROL_ERROR_CODE_NOT_FOUND,
+	SAKURA_CONTROL_ERROR_CODE_ALREADY_EXISTS,
+	SAKURA_CONTROL_ERROR_CODE_REVISION_CONFLICT,
+	SAKURA_CONTROL_ERROR_CODE_INVALID_STATE,
+	SAKURA_CONTROL_ERROR_CODE_UNSUPPORTED,
+	SAKURA_CONTROL_ERROR_CODE_UNAUTHORIZED,
+	SAKURA_CONTROL_ERROR_CODE_TIMEOUT,
+	SAKURA_CONTROL_ERROR_CODE_INTERNAL,
+	SAKURA_CONTROL_ERROR_CODE_OUTPUT_GAP
+} SakuraControlError;
+
+#define SAKURA_CONTROL_ERROR_DOMAIN (sakura_control_error_quark())
+#define SAKURA_CONTROL_ERROR SAKURA_CONTROL_ERROR_DOMAIN
+
+GQuark sakura_control_error_quark(void);
 
 typedef struct _SakuraControlClientConnection SakuraControlClientConnection;
 
@@ -66,6 +86,8 @@ typedef struct {
 void sakura_control_terminal_attachment_clear(
 	SakuraControlTerminalAttachment *attachment);
 void sakura_control_client_event_clear(SakuraControlClientEvent *event);
+gboolean sakura_control_validate_local_endpoint(const gchar *socket_path,
+	GError **error);
 
 /*
  * Opens a local agent connection and completes the protocol handshake.
