@@ -304,6 +304,8 @@ struct sakura_app {
 	GMutex agent_revision_mutex;
 	gboolean agent_revision_mutex_initialized;
 	guint64 agent_workspace_revision;
+	GMutex agent_workspace_mutation_mutex;
+	gboolean agent_workspace_mutation_mutex_initialized;
 	GDataInputStream *codex_name_helper_output;
 	GOutputStream *codex_name_helper_input;
 	GQueue *codex_name_query_queue;

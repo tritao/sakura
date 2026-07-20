@@ -104,7 +104,9 @@ sakura_agent_workspace_revision_init(SakuraApp *app)
 	if (app == NULL || app->agent_revision_mutex_initialized)
 		return;
 	g_mutex_init(&app->agent_revision_mutex);
+	g_mutex_init(&app->agent_workspace_mutation_mutex);
 	app->agent_revision_mutex_initialized = TRUE;
+	app->agent_workspace_mutation_mutex_initialized = TRUE;
 	app->agent_workspace_revision = 0;
 }
 
@@ -246,6 +248,7 @@ sakura_agent_send_command(SakuraApp *app,
 	gchar *request_id = g_uuid_string_random();
 	gboolean encoded = FALSE;
 	gboolean success = FALSE;
+	gboolean mutation_locked = FALSE;
 
 	switch (command->kind) {
 	case SAKURA_AGENT_COMMAND_INPUT:
@@ -286,6 +289,12 @@ sakura_agent_send_command(SakuraApp *app,
 	}
 	if (command->kind != SAKURA_AGENT_COMMAND_INPUT &&
 	    command->kind != SAKURA_AGENT_COMMAND_RESIZE &&
+	    app->agent_workspace_mutation_mutex_initialized) {
+		g_mutex_lock(&app->agent_workspace_mutation_mutex);
+		mutation_locked = TRUE;
+	}
+	if (command->kind != SAKURA_AGENT_COMMAND_INPUT &&
+	    command->kind != SAKURA_AGENT_COMMAND_RESIZE &&
 	    !sakura_control_request_set_expected_revision(
 			request, sakura_agent_workspace_revision_get(app))) {
 		g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_INVALID_DATA,
@@ -312,6 +321,8 @@ sakura_agent_send_command(SakuraApp *app,
 	sakura_agent_workspace_revision_set(app, response.workspace_revision);
 	success = TRUE;
 out:
+	if (mutation_locked)
+		g_mutex_unlock(&app->agent_workspace_mutation_mutex);
 	if (!success && error != NULL && *error != NULL &&
 	    g_str_has_prefix((*error)->message, "agent returned REVISION_CONFLICT:"))
 		sakura_agent_refresh_after_revision_conflict(app);
@@ -878,6 +889,7 @@ sakura_agent_request_mutation(SakuraApp *app, const gchar *request_id,
 	GByteArray *response_payload = NULL;
 	SakuraControlResponse response = { 0 };
 	gboolean success = FALSE;
+	gboolean mutation_locked = FALSE;
 
 	if (app == NULL || app->agent_socket_path == NULL || request_id == NULL ||
 	    request == NULL)
@@ -886,6 +898,10 @@ sakura_agent_request_mutation(SakuraApp *app, const gchar *request_id,
 		app->agent_socket_path, app->workspace_id, error);
 	if (connection == NULL)
 		return FALSE;
+	if (app->agent_workspace_mutation_mutex_initialized) {
+		g_mutex_lock(&app->agent_workspace_mutation_mutex);
+		mutation_locked = TRUE;
+	}
 	if (!sakura_control_request_set_expected_revision(
 			request, sakura_agent_workspace_revision_get(app))) {
 		g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_INVALID_DATA,
@@ -912,6 +928,8 @@ sakura_agent_request_mutation(SakuraApp *app, const gchar *request_id,
 	sakura_agent_workspace_revision_set(app, response.workspace_revision);
 	success = TRUE;
 out:
+	if (mutation_locked)
+		g_mutex_unlock(&app->agent_workspace_mutation_mutex);
 	g_clear_pointer(&response_payload, g_byte_array_unref);
 	sakura_control_response_clear(&response);
 	sakura_control_client_close(connection);
@@ -943,6 +961,7 @@ sakura_agent_request_accepted(SakuraApp *app, const gchar *request_id,
 	GByteArray *response_payload = NULL;
 	SakuraControlResponse response = { 0 };
 	gboolean success = FALSE;
+	gboolean mutation_locked = FALSE;
 
 	if (accepted_id != NULL)
 		*accepted_id = NULL;
@@ -953,6 +972,10 @@ sakura_agent_request_accepted(SakuraApp *app, const gchar *request_id,
 		app->agent_socket_path, app->workspace_id, error);
 	if (connection == NULL)
 		return FALSE;
+	if (app->agent_workspace_mutation_mutex_initialized) {
+		g_mutex_lock(&app->agent_workspace_mutation_mutex);
+		mutation_locked = TRUE;
+	}
 	if (!sakura_control_request_set_expected_revision(
 			request, sakura_agent_workspace_revision_get(app))) {
 		g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_INVALID_DATA,
@@ -981,6 +1004,8 @@ sakura_agent_request_accepted(SakuraApp *app, const gchar *request_id,
 		*accepted_id = g_strdup(response.accepted_id);
 	success = TRUE;
 out:
+	if (mutation_locked)
+		g_mutex_unlock(&app->agent_workspace_mutation_mutex);
 	if (!success && error != NULL && *error != NULL &&
 	    g_str_has_prefix((*error)->message, "agent returned REVISION_CONFLICT:"))
 		sakura_agent_refresh_after_revision_conflict(app);
@@ -1955,5 +1980,9 @@ sakura_agent_stop(SakuraApp *app)
 	if (app->agent_revision_mutex_initialized) {
 		g_mutex_clear(&app->agent_revision_mutex);
 		app->agent_revision_mutex_initialized = FALSE;
+	}
+	if (app->agent_workspace_mutation_mutex_initialized) {
+		g_mutex_clear(&app->agent_workspace_mutation_mutex);
+		app->agent_workspace_mutation_mutex_initialized = FALSE;
 	}
 }
