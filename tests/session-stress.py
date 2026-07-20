@@ -600,7 +600,10 @@ def visible_rows_for_expansion(groups, terminals, expanded):
                 rows.append(("page", index))
 
     visit("root")
-    return rows
+    return [
+        (kind, terminals[item] if kind == "page" else item)
+        for kind, item in rows
+    ]
 
 
 def start_xvfb():
@@ -868,40 +871,6 @@ def visual_rows_for_session(value):
     ]
 
 
-def visual_group_depth(groups, group_id):
-    depth = 0
-    seen = set()
-    while group_id != "root":
-        if group_id in seen or group_id not in groups:
-            raise AssertionError(f"invalid group hierarchy at {group_id}")
-        seen.add(group_id)
-        group_id = groups[group_id]
-        depth += 1
-    return depth
-
-
-def visual_row_depth(row, groups, terminal_parents):
-    if row[0] == "group":
-        return visual_group_depth(groups, row[1])
-    return visual_group_depth(groups, terminal_parents[row[1]]) + 1
-
-
-def visual_rows_after_page_move(rows, value, source_id, target_group):
-    terminal_parents = {
-        terminal_id: value[1][index]
-        for index, terminal_id in enumerate(value[2])
-    }
-    rows.remove(("page", source_id))
-    target_index = rows.index(("group", target_group))
-    target_depth = visual_group_depth(value[0], target_group)
-    insert_index = target_index + 1
-    while (insert_index < len(rows) and
-           visual_row_depth(rows[insert_index], value[0], terminal_parents) >
-           target_depth):
-        insert_index += 1
-    rows.insert(insert_index, ("page", source_id))
-
-
 def run_sidebar_expansion_case(binary, config_file, session_file, env, log_file):
     """Exercise group toggles, selection, projection restore, and restart."""
     write_fixture(config_file, session_file, active_group_id="group-c")
@@ -979,7 +948,32 @@ def run_drag_regression_case(binary, config_file, session_file, env, log_file):
         )
         expected_groups = dict(current[0])
         visual_rows = visual_rows_for_session(current)
+        delta_collapsed = False
         for expected_source, target_group in steps:
+            if expected_source == "group-c":
+                # Keep the source row on screen for the upward drag. The
+                # nested Delta group is unrelated to this move, so collapsing
+                # it makes the deterministic pointer path fit the small test
+                # viewport while retaining the real nested-group hierarchy.
+                if not delta_collapsed:
+                    expanded_rows = visual_rows_for_session(current)
+                    sidebar_toggle_group(
+                        window, env, expanded_rows,
+                        expanded_rows.index(("group", "group-d")),
+                    )
+                    wait_for_session(
+                        session_file,
+                        lambda value: ("group", "group-d") not in
+                        (read_expanded_sidebar(session_file) or set()),
+                    )
+                    delta_collapsed = True
+                current = read_session(session_file)
+                expanded = {("group", "root")}
+                expanded.update(("group", group_id)
+                                for group_id in current[0]
+                                if group_id != "group-d")
+                visual_rows = visible_rows_for_expansion(
+                    current[0], current[1], expanded)
             actual_source = terminal_parent(current, source_id)
             if actual_source != expected_source:
                 raise AssertionError(
@@ -999,7 +993,18 @@ def run_drag_regression_case(binary, config_file, session_file, env, log_file):
             )
             if current[0] != expected_groups:
                 raise AssertionError("group model changed during page drag")
-            visual_rows_after_page_move(visual_rows, current, source_id, target_group)
+            # The session snapshot is the canonical sibling order. Rebuild the
+            # row map after each move so pointer coordinates follow the same
+            # stable ordering that the sidebar projection uses.
+            if delta_collapsed:
+                expanded = {("group", "root")}
+                expanded.update(("group", group_id)
+                                for group_id in current[0]
+                                if group_id != "group-d")
+                visual_rows = visible_rows_for_expansion(
+                    current[0], current[1], expanded)
+            else:
+                visual_rows = visual_rows_for_session(current)
 
             # Selecting the moved page must make its owning group the active
             # scope; otherwise the tab bar can retain the previous group.
