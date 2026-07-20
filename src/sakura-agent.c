@@ -21,6 +21,13 @@ typedef struct _SakuraAgent SakuraAgent;
 typedef struct {
 	GSocketConnection *connection;
 	SakuraAgent *agent;
+	GMutex outbound_mutex;
+	GCond outbound_cond;
+	GQueue *outbound;
+	guint outbound_messages;
+	gsize outbound_bytes;
+	gboolean outbound_stopping;
+	GThread *writer_thread;
 } SakuraAgentConnection;
 
 typedef struct {
@@ -36,6 +43,8 @@ typedef struct {
 } SakuraAgentTerminal;
 
 #define SAKURA_AGENT_OUTPUT_BUFFER_SIZE (64 * 1024)
+#define SAKURA_AGENT_MAX_QUEUED_MESSAGES 1000
+#define SAKURA_AGENT_MAX_QUEUED_BYTES (4 * 1024 * 1024)
 #define SAKURA_AGENT_VERSION "0.1"
 #define SAKURA_AGENT_CAPABILITIES \
 	(SAKURA_CONTROL_CAPABILITY_WORKSPACE | \
@@ -51,7 +60,7 @@ struct _SakuraAgent {
 	SakuraSessionSnapshot *session_snapshot;
 	gchar *workspace_id;
 	GMutex state_mutex;
-	GPtrArray *subscribers; /* GSocketConnection *, owned references. */
+	GPtrArray *subscribers; /* SakuraAgentConnection *, state_mutex protected. */
 	GPtrArray *terminals; /* SakuraAgentTerminal *, owned. */
 	guint64 sequence;
 	guint64 workspace_revision;
@@ -62,6 +71,109 @@ struct _SakuraAgent {
 static void sakura_agent_broadcast_event(SakuraAgent *agent);
 static void sakura_agent_broadcast_payload(SakuraAgent *agent,
 	                                        GByteArray *payload);
+
+
+static void
+sakura_agent_connection_clear_queue_locked(SakuraAgentConnection *connection)
+{
+	while (!g_queue_is_empty(connection->outbound)) {
+		GByteArray *payload = g_queue_pop_head(connection->outbound);
+
+		g_byte_array_unref(payload);
+	}
+	connection->outbound_messages = 0;
+	connection->outbound_bytes = 0;
+}
+
+
+static gboolean
+sakura_agent_connection_queue(SakuraAgentConnection *connection,
+	                             GByteArray *payload)
+{
+	gboolean queued = FALSE;
+
+	if (connection == NULL || payload == NULL)
+		return FALSE;
+	g_mutex_lock(&connection->outbound_mutex);
+	if (!connection->outbound_stopping &&
+	    connection->outbound_messages < SAKURA_AGENT_MAX_QUEUED_MESSAGES &&
+	    payload->len <= SAKURA_AGENT_MAX_QUEUED_BYTES - connection->outbound_bytes) {
+		g_queue_push_tail(connection->outbound, g_byte_array_ref(payload));
+		connection->outbound_messages++;
+		connection->outbound_bytes += payload->len;
+		queued = TRUE;
+	} else if (!connection->outbound_stopping) {
+		/* Drop queued data and let the writer close the connection. This keeps
+		 * a client that stopped reading from consuming unbounded memory. */
+		connection->outbound_stopping = TRUE;
+		sakura_agent_connection_clear_queue_locked(connection);
+	}
+	g_cond_signal(&connection->outbound_cond);
+	g_mutex_unlock(&connection->outbound_mutex);
+	return queued;
+}
+
+
+static gpointer
+sakura_agent_connection_writer(gpointer data)
+{
+	SakuraAgentConnection *connection = data;
+	GOutputStream *output;
+
+	output = g_io_stream_get_output_stream(G_IO_STREAM(connection->connection));
+	for (;;) {
+		GByteArray *payload = NULL;
+		GError *error = NULL;
+
+		g_mutex_lock(&connection->outbound_mutex);
+		while (g_queue_is_empty(connection->outbound) &&
+		       !connection->outbound_stopping)
+			g_cond_wait(&connection->outbound_cond,
+			            &connection->outbound_mutex);
+		if (connection->outbound_stopping) {
+			sakura_agent_connection_clear_queue_locked(connection);
+			g_mutex_unlock(&connection->outbound_mutex);
+			break;
+		}
+		payload = g_queue_pop_head(connection->outbound);
+		connection->outbound_messages--;
+		connection->outbound_bytes -= payload->len;
+		g_mutex_unlock(&connection->outbound_mutex);
+
+		if (!sakura_control_frame_write(output, payload->data, payload->len,
+		                               NULL, &error)) {
+			g_clear_error(&error);
+			g_byte_array_unref(payload);
+			g_mutex_lock(&connection->outbound_mutex);
+			connection->outbound_stopping = TRUE;
+			sakura_agent_connection_clear_queue_locked(connection);
+			g_cond_broadcast(&connection->outbound_cond);
+			g_mutex_unlock(&connection->outbound_mutex);
+			g_io_stream_close(G_IO_STREAM(connection->connection), NULL, NULL);
+			break;
+		}
+		g_byte_array_unref(payload);
+	}
+	return NULL;
+}
+
+
+static void
+sakura_agent_connection_stop_writer(SakuraAgentConnection *connection)
+{
+	if (connection == NULL)
+		return;
+	g_mutex_lock(&connection->outbound_mutex);
+	connection->outbound_stopping = TRUE;
+	sakura_agent_connection_clear_queue_locked(connection);
+	g_cond_broadcast(&connection->outbound_cond);
+	g_mutex_unlock(&connection->outbound_mutex);
+	g_io_stream_close(G_IO_STREAM(connection->connection), NULL, NULL);
+	if (connection->writer_thread != NULL) {
+		g_thread_join(connection->writer_thread);
+		connection->writer_thread = NULL;
+	}
+}
 
 
 static gboolean
@@ -1038,30 +1150,16 @@ sakura_agent_apply_request(SakuraAgent *agent,
 }
 
 
-static gboolean
-sakura_agent_send_payload(GSocketConnection *connection,
-	                         GByteArray *payload, GError **error)
-{
-	return sakura_control_frame_write(
-		g_io_stream_get_output_stream(G_IO_STREAM(connection)), payload->data,
-		payload->len, NULL, error);
-}
-
-
 static void
 sakura_agent_broadcast_payload(SakuraAgent *agent, GByteArray *payload)
 {
-	for (guint index = 0; index < agent->subscribers->len;) {
-		GSocketConnection *connection = g_ptr_array_index(
+	for (guint index = 0; index < agent->subscribers->len; index++) {
+		SakuraAgentConnection *connection = g_ptr_array_index(
 			agent->subscribers, index);
-		GError *error = NULL;
 
-		if (sakura_agent_send_payload(connection, payload, &error)) {
-			index++;
-			continue;
-		}
-		g_clear_error(&error);
-		g_ptr_array_remove_index(agent->subscribers, index);
+		/* This only touches the bounded in-memory queue. The writer thread is
+		 * the sole owner of socket output. */
+		sakura_agent_connection_queue(connection, payload);
 	}
 }
 
@@ -1104,7 +1202,8 @@ sakura_agent_request_changes_workspace(SakuraControlRequestKind kind)
 
 
 static void
-sakura_agent_remove_subscriber(SakuraAgent *agent, GSocketConnection *connection)
+sakura_agent_remove_subscriber(SakuraAgent *agent,
+	                             SakuraAgentConnection *connection)
 {
 	for (guint index = 0; index < agent->subscribers->len; index++) {
 		if (g_ptr_array_index(agent->subscribers, index) == connection) {
@@ -1120,7 +1219,6 @@ sakura_agent_connection_thread(gpointer data)
 {
 	SakuraAgentConnection *request = data;
 	GInputStream *input;
-	GOutputStream *output;
 	GByteArray *payload = NULL;
 	GByteArray *response = NULL;
 	GByteArray *initial_event = NULL;
@@ -1134,7 +1232,6 @@ sakura_agent_connection_thread(gpointer data)
 	const gchar *error_code = "invalid_request";
 
 	input = g_io_stream_get_input_stream(G_IO_STREAM(request->connection));
-	output = g_io_stream_get_output_stream(G_IO_STREAM(request->connection));
 	for (;;) {
 		payload = NULL;
 		response = g_byte_array_new();
@@ -1180,8 +1277,7 @@ sakura_agent_connection_thread(gpointer data)
 			            request->agent->workspace_revision);
 			error_code = "REVISION_CONFLICT";
 		} else if (decoded.kind == SAKURA_CONTROL_REQUEST_SUBSCRIBE_EVENTS) {
-			g_ptr_array_add(request->agent->subscribers,
-			                 g_object_ref(request->connection));
+			g_ptr_array_add(request->agent->subscribers, request);
 			sakura_control_encode_accepted_response_with_revision(request_id,
 			                                        "workspace_events", NULL,
 			                                        request->agent->workspace_revision,
@@ -1236,20 +1332,19 @@ sakura_agent_connection_thread(gpointer data)
 					request->agent->workspace, response);
 			sakura_agent_broadcast_event(request->agent);
 		}
-	}
+		}
 		if (response->len == 0) {
-		const gchar *message = error != NULL ? error->message : "invalid request";
+			const gchar *message = error != NULL ? error->message : "invalid request";
 
-		sakura_control_encode_error_response_with_revision(
-			request_id, error_code, message, request->agent->workspace_revision,
-			g_strcmp0(error_code, "REVISION_CONFLICT") == 0, response);
-	}
+			sakura_control_encode_error_response_with_revision(
+				request_id, error_code, message,
+				request->agent->workspace_revision,
+				g_strcmp0(error_code, "REVISION_CONFLICT") == 0, response);
+		}
 		if (response != NULL && response->len != 0)
-			sakura_control_frame_write(output, response->data, response->len,
-		                           NULL, NULL);
+			sakura_agent_connection_queue(request, response);
 		if (subscribed && initial_event != NULL)
-			sakura_control_frame_write(output, initial_event->data, initial_event->len,
-		                           NULL, NULL);
+			sakura_agent_connection_queue(request, initial_event);
 		g_mutex_unlock(&request->agent->state_mutex);
 		if (retired_terminal != NULL) {
 			sakura_agent_terminal_free(retired_terminal);
@@ -1260,8 +1355,9 @@ sakura_agent_connection_thread(gpointer data)
 				g_clear_pointer(&payload, g_byte_array_unref);
 			g_clear_error(&error);
 			g_mutex_lock(&request->agent->state_mutex);
-			sakura_agent_remove_subscriber(request->agent, request->connection);
+			sakura_agent_remove_subscriber(request->agent, request);
 			g_mutex_unlock(&request->agent->state_mutex);
+			subscribed = FALSE;
 			g_clear_pointer(&payload, g_byte_array_unref);
 			g_clear_pointer(&response, g_byte_array_unref);
 			g_clear_pointer(&initial_event, g_byte_array_unref);
@@ -1282,8 +1378,16 @@ sakura_agent_connection_thread(gpointer data)
 	g_clear_pointer(&initial_event, g_byte_array_unref);
 	sakura_control_request_clear(&decoded);
 	g_free(accepted_id);
-	g_io_stream_close(G_IO_STREAM(request->connection), NULL, NULL);
+	if (subscribed) {
+		g_mutex_lock(&request->agent->state_mutex);
+		sakura_agent_remove_subscriber(request->agent, request);
+		g_mutex_unlock(&request->agent->state_mutex);
+	}
+	sakura_agent_connection_stop_writer(request);
 	g_object_unref(request->connection);
+	g_queue_free(request->outbound);
+	g_mutex_clear(&request->outbound_mutex);
+	g_cond_clear(&request->outbound_cond);
 	g_free(request);
 	return NULL;
 }
@@ -1303,6 +1407,12 @@ sakura_agent_incoming_cb(GSocketService *service,
 	request = g_new0(SakuraAgentConnection, 1);
 	request->connection = g_object_ref(connection);
 	request->agent = agent;
+	request->outbound = g_queue_new();
+	g_mutex_init(&request->outbound_mutex);
+	g_cond_init(&request->outbound_cond);
+	request->writer_thread = g_thread_new("sakura-agent-writer",
+	                                      sakura_agent_connection_writer,
+	                                      request);
 	g_thread_unref(g_thread_new("sakura-agent-client",
 	                            sakura_agent_connection_thread, request));
 	return TRUE;
@@ -1461,7 +1571,7 @@ main(int argc, char **argv)
 	agent.workspace = workspace;
 	agent.session_snapshot = session_snapshot;
 	agent.workspace_id = g_strdup(session_snapshot->workspace_id);
-	agent.subscribers = g_ptr_array_new_with_free_func(g_object_unref);
+	agent.subscribers = g_ptr_array_new();
 	agent.terminals = g_ptr_array_new_with_free_func(
 		(GDestroyNotify)sakura_agent_terminal_free);
 	agent.socket_path = socket_path;
