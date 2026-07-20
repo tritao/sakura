@@ -2815,7 +2815,7 @@ test_sidebar_archive_filters_projection(void)
 
 
 static void
-test_agent_snapshot_merge_preserves_desktop_page_ownership(void)
+test_agent_snapshot_merge_uses_agent_page_ownership(void)
 {
 	SakuraSidebarNode *group_node;
 	SakuraSidebarNode *omitted_group_node;
@@ -2841,8 +2841,8 @@ test_agent_snapshot_merge_preserves_desktop_page_ownership(void)
 	g_assert_true(page->sidebar_node != NULL);
 	g_assert_true(page->sidebar_node->parent == group->sidebar_node);
 
-	/* The agent owns page metadata, while the desktop retains the GTK
-	 * surface/layout records needed to render it. */
+	/* The agent owns page metadata and relationships, while the desktop retains
+	 * the GTK surface/layout records needed to render it. */
 	agent_snapshot = sakura_session_snapshot_new();
 	group_record = g_new0(SakuraSessionGroupRecord, 1);
 	group_record->id = g_strdup(group->id);
@@ -2852,8 +2852,7 @@ test_agent_snapshot_merge_preserves_desktop_page_ownership(void)
 	g_ptr_array_add(agent_snapshot->groups, group_record);
 	page_record = g_new0(SakuraSessionPageRecord, 1);
 	page_record->id = g_strdup(page->id);
-	/* Simulate the stale agent record produced before page ownership was
-	 * initialized before runtime startup. */
+	/* The desktop starts with a stale local parent; the agent snapshot must win. */
 	page_record->parent_id = g_strdup("root");
 	page_record->group_id = g_strdup("root");
 	page_record->title = g_strdup("Agent-owned page");
@@ -2862,7 +2861,7 @@ test_agent_snapshot_merge_preserves_desktop_page_ownership(void)
 	sakura.agent_pending_snapshot = agent_snapshot;
 	agent_snapshot = NULL;
 	sakura_agent_apply_pending_snapshot(&sakura);
-	g_assert_true(page->group == group);
+	g_assert_true(page->group == sakura.workspace->root_group);
 	g_assert_true(group->archived);
 	g_assert_cmpstr(page->title, ==, "Agent-owned page");
 	/* A partial agent payload must not delete another live model entity just
@@ -2870,15 +2869,14 @@ test_agent_snapshot_merge_preserves_desktop_page_ownership(void)
 	g_assert_true(test_workspace_model_group_by_id(
 		sakura.workspace, omitted_group->id) == omitted_group);
 
-	/* The page is hidden only by the projection policy and comes back when
-	 * archived content is requested; the agent merge never destroys it. */
+	/* The archived group remains in the model, while the page follows the
+	 * authoritative root relationship. */
 	sakura_sidebar_rebuild_projection();
-	g_assert_null(page->sidebar_node);
+	g_assert_nonnull(page->sidebar_node);
 	sakura.show_archived = TRUE;
 	sakura_sidebar_rebuild_projection();
-	g_assert_nonnull(group->sidebar_node);
 	g_assert_nonnull(page->sidebar_node);
-	g_assert_true(page->sidebar_node->parent == group->sidebar_node);
+	g_assert_true(page->sidebar_node->parent == sakura.sidebar_root);
 
 	sakura_session_snapshot_free(agent_snapshot);
 	test_sidebar_remove_group(group->sidebar_node);
@@ -3314,8 +3312,8 @@ main(int argc, char **argv)
 	                test_workspace_model_archive_subtrees);
 	g_test_add_func("/workspace/sidebar-archive-filters-projection",
 	                test_sidebar_archive_filters_projection);
-	g_test_add_func("/workspace/agent-snapshot-merge-preserves-page-ownership",
-	                test_agent_snapshot_merge_preserves_desktop_page_ownership);
+	g_test_add_func("/workspace/agent-snapshot-merge-uses-agent-page-ownership",
+	                test_agent_snapshot_merge_uses_agent_page_ownership);
 	g_test_add_func("/workspace/model-restores-without-view",
 	                test_workspace_model_restores_hierarchy_without_view);
 	g_test_add_func("/workspace/model-snapshots-without-view",

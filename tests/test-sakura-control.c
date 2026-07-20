@@ -72,16 +72,26 @@ test_snapshot_response_roundtrip(void)
 	SakuraCoreWorkspace *workspace = test_workspace_new();
 	GByteArray *encoded = g_byte_array_new();
 	SakuraControlResponse response = { 0 };
+	SakuraSessionSnapshot *snapshot = NULL;
+	guint64 sequence = 0;
 	GError *error = NULL;
 
-	g_assert_true(sakura_control_encode_snapshot_response("request-2", 0,
+	g_assert_true(sakura_control_encode_snapshot_response("request-2", 7,
 	                                                     workspace, encoded));
 	g_assert_true(sakura_control_decode_response(encoded->data, encoded->len,
 	                                            &response, &error));
 	g_assert_no_error(error);
 	g_assert_cmpstr(response.request_id, ==, "request-2");
 	g_assert_true(response.has_snapshot);
+	g_assert_true(sakura_control_decode_snapshot_response(
+		encoded->data, encoded->len, &sequence, &snapshot, &error));
+	g_assert_no_error(error);
+	g_assert_cmpuint(sequence, ==, 7);
+	g_assert_nonnull(snapshot);
+	g_assert_nonnull(snapshot->groups);
+	g_assert_cmpuint(snapshot->groups->len, ==, 0);
 
+	sakura_session_snapshot_free(snapshot);
 	sakura_control_response_clear(&response);
 	g_byte_array_unref(encoded);
 	sakura_core_workspace_free(workspace);

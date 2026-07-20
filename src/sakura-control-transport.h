@@ -198,6 +198,9 @@ gboolean sakura_control_decode_response(const guint8 *payload,
 	                                      gsize payload_length,
 	                                      SakuraControlResponse *response,
 	                                      GError **error);
+gboolean sakura_control_decode_snapshot_response(
+	const guint8 *payload, gsize payload_length, guint64 *sequence,
+	SakuraSessionSnapshot **snapshot, GError **error);
 gboolean sakura_control_decode_workspace_changed_event(
 	const guint8 *payload, gsize payload_length, guint64 *sequence,
 	SakuraSessionSnapshot **snapshot, GError **error);

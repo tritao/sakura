@@ -1366,28 +1366,16 @@ sakura_control_decode_response(const guint8 *payload,
 }
 
 
-gboolean
-sakura_control_decode_workspace_changed_event(
-	const guint8 *payload, gsize payload_length, guint64 *sequence,
-	SakuraSessionSnapshot **snapshot, GError **error)
+static gboolean
+sakura_control_decode_workspace_snapshot(
+	Sakura__Control__V1__WorkspaceSnapshot *wire_snapshot,
+	guint64 sequence, SakuraSessionSnapshot **snapshot, GError **error)
 {
-	Sakura__Control__V1__Event *decoded;
-	Sakura__Control__V1__WorkspaceSnapshot *wire_snapshot;
 	SakuraSessionSnapshot *decoded_snapshot;
 
-	if (payload == NULL || sequence == NULL || snapshot == NULL)
-		return sakura_control_error(error, "invalid control event");
+	if (wire_snapshot == NULL || snapshot == NULL)
+		return sakura_control_error(error, "invalid workspace snapshot");
 	*snapshot = NULL;
-	decoded = sakura__control__v1__event__unpack(NULL, payload_length, payload);
-	if (decoded == NULL ||
-	    decoded->body_case != SAKURA__CONTROL__V1__EVENT__BODY_WORKSPACE_CHANGED ||
-	    decoded->workspace_changed == NULL ||
-	    decoded->workspace_changed->snapshot == NULL) {
-		if (decoded != NULL)
-			sakura__control__v1__event__free_unpacked(decoded, NULL);
-		return sakura_control_error(error, "unsupported control event");
-	}
-	wire_snapshot = decoded->workspace_changed->snapshot;
 	decoded_snapshot = sakura_session_snapshot_new();
 	g_free(decoded_snapshot->active_group_id);
 	decoded_snapshot->active_group_id = g_strdup(wire_snapshot->active_group_id);
@@ -1437,10 +1425,67 @@ sakura_control_decode_workspace_changed_event(
 		page->active_terminal_id = g_strdup(wire_page->active_terminal_id);
 		g_ptr_array_add(decoded_snapshot->pages, page);
 	}
-	*sequence = decoded->sequence;
+	(void)sequence;
 	*snapshot = decoded_snapshot;
-	sakura__control__v1__event__free_unpacked(decoded, NULL);
 	return TRUE;
+}
+
+
+gboolean
+sakura_control_decode_snapshot_response(const guint8 *payload,
+	                                       gsize payload_length,
+	                                       guint64 *sequence,
+	                                       SakuraSessionSnapshot **snapshot,
+	                                       GError **error)
+{
+	Sakura__Control__V1__Response *decoded;
+	gboolean success;
+
+	if (payload == NULL || sequence == NULL || snapshot == NULL)
+		return sakura_control_error(error, "invalid snapshot response");
+	*sequence = 0;
+	*snapshot = NULL;
+	decoded = sakura__control__v1__response__unpack(NULL, payload_length, payload);
+	if (decoded == NULL ||
+	    decoded->body_case != SAKURA__CONTROL__V1__RESPONSE__BODY_SNAPSHOT ||
+	    decoded->snapshot == NULL) {
+		if (decoded != NULL)
+			sakura__control__v1__response__free_unpacked(decoded, NULL);
+		return sakura_control_error(error, "unsupported snapshot response");
+	}
+	success = sakura_control_decode_workspace_snapshot(
+		decoded->snapshot, decoded->snapshot->sequence, snapshot, error);
+	*sequence = decoded->snapshot->sequence;
+	sakura__control__v1__response__free_unpacked(decoded, NULL);
+	return success;
+}
+
+
+gboolean
+sakura_control_decode_workspace_changed_event(
+	const guint8 *payload, gsize payload_length, guint64 *sequence,
+	SakuraSessionSnapshot **snapshot, GError **error)
+{
+	Sakura__Control__V1__Event *decoded;
+	gboolean success;
+
+	if (payload == NULL || sequence == NULL || snapshot == NULL)
+		return sakura_control_error(error, "invalid control event");
+	*snapshot = NULL;
+	decoded = sakura__control__v1__event__unpack(NULL, payload_length, payload);
+	if (decoded == NULL ||
+	    decoded->body_case != SAKURA__CONTROL__V1__EVENT__BODY_WORKSPACE_CHANGED ||
+	    decoded->workspace_changed == NULL ||
+	    decoded->workspace_changed->snapshot == NULL) {
+		if (decoded != NULL)
+			sakura__control__v1__event__free_unpacked(decoded, NULL);
+		return sakura_control_error(error, "unsupported control event");
+	}
+	success = sakura_control_decode_workspace_snapshot(
+		decoded->workspace_changed->snapshot, decoded->sequence, snapshot, error);
+	*sequence = decoded->sequence;
+	sakura__control__v1__event__free_unpacked(decoded, NULL);
+	return success;
 }
 
 
