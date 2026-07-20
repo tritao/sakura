@@ -90,6 +90,7 @@ static gchar *sakura_sidebar_expansion_key(SakuraSidebarExpansionKind kind,
 	                                           const gchar *id);
 static void sakura_sidebar_ensure_expansion_state(void);
 static void sakura_sidebar_sync_expansion_state_from_view(void);
+static void sakura_sidebar_restore_expansion_keys(GHashTable *expanded);
 static void sakura_sidebar_reveal_node(SakuraSidebarNode *node,
 	                                       gboolean expand_node);
 static void sakura_sidebar_select_node_now(SakuraSidebarNode *node);
@@ -5014,7 +5015,9 @@ sakura_sidebar_row_expansion_changed_cb(GtkTreeView *tree,
 {
 	SakuraSidebarNode *node = NULL;
 	SakuraSidebarExpansionKind kind;
+	GtkTreePath *parent_path = NULL;
 	gchar *key;
+	gboolean parent_collapsed = FALSE;
 
 	(void)data;
 	if (tree != GTK_TREE_VIEW(sakura.sidebar_tree) || sakura.sidebar_syncing ||
@@ -5030,10 +5033,31 @@ sakura_sidebar_row_expansion_changed_cb(GtkTreeView *tree,
 	key = sakura_sidebar_expansion_key(kind, node->id);
 	if (key == NULL)
 		return;
-	if (gtk_tree_view_row_expanded(tree, path))
+	if (gtk_tree_view_row_expanded(tree, path)) {
 		g_hash_table_add(sakura.sidebar_expansion_keys, key);
-	else {
-		g_hash_table_remove(sakura.sidebar_expansion_keys, key);
+		/* Reopening a group should restore any nested rows that were expanded
+		 * before the group was collapsed. GTK collapses those descendants as a
+		 * side effect, but their stable-ID choices remain in the table. */
+		{
+			gboolean was_syncing = sakura.sidebar_syncing;
+
+			sakura.sidebar_syncing = TRUE;
+			sakura_sidebar_restore_expansion_keys(sakura.sidebar_expansion_keys);
+			sakura.sidebar_syncing = was_syncing;
+		}
+	} else {
+		/* Collapsing a parent hides its descendants and GTK may emit a
+		 * row-collapsed notification for those rows as well. Preserve their
+		 * stable-ID expansion choices; only a row whose visible parent remains
+		 * expanded represents an explicit user collapse of that row. */
+		if (gtk_tree_path_get_depth(path) > 1) {
+			parent_path = gtk_tree_path_copy(path);
+			gtk_tree_path_up(parent_path);
+			parent_collapsed = !gtk_tree_view_row_expanded(tree, parent_path);
+			gtk_tree_path_free(parent_path);
+		}
+		if (!parent_collapsed)
+			g_hash_table_remove(sakura.sidebar_expansion_keys, key);
 		g_free(key);
 	}
 	sakura.sidebar_expansion_initialized = TRUE;
@@ -6104,7 +6128,9 @@ sakura_sidebar_ensure_expansion_state(void)
 static void
 sakura_sidebar_collect_expanded_keys(GtkTreeModel *model,
                                      GtkTreeIter *parent,
-                                     GHashTable *expanded)
+                                     GHashTable *expanded,
+                                     GHashTable *previous,
+                                     gboolean ancestors_expanded)
 {
 	GtkTreeIter iter;
 	gboolean valid;
@@ -6118,18 +6144,36 @@ sakura_sidebar_collect_expanded_keys(GtkTreeModel *model,
 		SakuraSidebarNode *node = NULL;
 		SakuraSidebarExpansionKind kind;
 		GtkTreePath *path;
+		gboolean row_expanded = TRUE;
 
 		gtk_tree_model_get(model, &iter, SAKURA_SIDEBAR_COLUMN_NODE, &node, -1);
-		path = gtk_tree_model_get_path(model, &iter);
-		if (node != NULL && sakura_sidebar_node_expansion_kind(node, &kind) &&
-		    gtk_tree_view_row_expanded(GTK_TREE_VIEW(sakura.sidebar_tree), path)) {
-			gchar *key = sakura_sidebar_expansion_key(kind, node->id);
-			if (key != NULL)
+		if (node != NULL && sakura_sidebar_node_expansion_kind(node, &kind)) {
+			gchar *key;
+
+			path = gtk_tree_model_get_path(model, &iter);
+			row_expanded = gtk_tree_view_row_expanded(
+				GTK_TREE_VIEW(sakura.sidebar_tree), path);
+			key = sakura_sidebar_expansion_key(kind, node->id);
+			if (ancestors_expanded) {
+				if (row_expanded && key != NULL)
+					g_hash_table_add(expanded, key);
+				else
+					g_free(key);
+			} else if (key != NULL && previous != NULL &&
+			           g_hash_table_contains(previous, key)) {
+				/* GTK hides descendants when a parent is collapsed, but that does
+				 * not mean the user collapsed each descendant. Keep its stable-ID
+				 * expansion choice so reopening the parent restores the subtree. */
 				g_hash_table_add(expanded, key);
+			} else {
+				g_free(key);
+			}
+			gtk_tree_path_free(path);
 		}
-		gtk_tree_path_free(path);
 		if (gtk_tree_model_iter_has_child(model, &iter))
-			sakura_sidebar_collect_expanded_keys(model, &iter, expanded);
+			sakura_sidebar_collect_expanded_keys(
+				model, &iter, expanded, previous,
+				ancestors_expanded && row_expanded);
 		valid = gtk_tree_model_iter_next(model, &iter);
 	}
 }
@@ -6138,12 +6182,21 @@ sakura_sidebar_collect_expanded_keys(GtkTreeModel *model,
 static void
 sakura_sidebar_sync_expansion_state_from_view(void)
 {
+	GHashTable *previous;
+	GHashTableIter hash_iter;
+	gpointer key;
+
 	sakura_sidebar_ensure_expansion_state();
+	previous = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
+	g_hash_table_iter_init(&hash_iter, sakura.sidebar_expansion_keys);
+	while (g_hash_table_iter_next(&hash_iter, &key, NULL))
+		g_hash_table_add(previous, g_strdup(key));
 	g_hash_table_remove_all(sakura.sidebar_expansion_keys);
 	if (sakura.sidebar_tree != NULL && sakura.sidebar_model != NULL)
 		sakura_sidebar_collect_expanded_keys(
 			GTK_TREE_MODEL(sakura.sidebar_model), NULL,
-			sakura.sidebar_expansion_keys);
+			sakura.sidebar_expansion_keys, previous, TRUE);
+	g_hash_table_destroy(previous);
 	sakura.sidebar_expansion_initialized = TRUE;
 }
 

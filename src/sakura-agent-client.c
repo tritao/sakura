@@ -502,6 +502,8 @@ static gboolean
 sakura_agent_apply_workspace_snapshot(SakuraApp *app,
                                        SakuraSessionSnapshot *snapshot)
 {
+	gboolean scope_needs_default = FALSE;
+
 	if (app == NULL || snapshot == NULL || app->workspace == NULL ||
 	    app->session_shutting_down)
 		return FALSE;
@@ -518,11 +520,13 @@ sakura_agent_apply_workspace_snapshot(SakuraApp *app,
 		app->workspace->root_group->directory = g_strdup(
 			snapshot->root_directory);
 	}
-	sakura_sidebar_rebuild_projection();
 	if (app->workspace->active_task != NULL &&
 	    sakura_workspace_model_task_is_archived(
 			app->workspace, app->workspace->active_task))
+	{
 		app->workspace->active_task = NULL;
+		scope_needs_default = TRUE;
+	}
 	if (app->workspace->active_group != NULL &&
 	    sakura_workspace_model_group_is_archived(
 			app->workspace, app->workspace->active_group)) {
@@ -530,7 +534,9 @@ sakura_agent_apply_workspace_snapshot(SakuraApp *app,
 		app->active_group_scope = app->sidebar_root;
 		if (app->sidebar_root != NULL)
 			sakura_sidebar_set_scope(app->sidebar_root);
+		scope_needs_default = TRUE;
 	}
+	sakura_sidebar_rebuild_projection();
 	sakura_workspace_mark_changed(SAKURA_WORKSPACE_CHANGE_STRUCTURE |
 	                              SAKURA_WORKSPACE_CHANGE_METADATA);
 	sakura_workspace_end_mutation();
@@ -538,6 +544,8 @@ sakura_agent_apply_workspace_snapshot(SakuraApp *app,
 	 * session file as well. Otherwise the next agent restart can reintroduce its
 	 * previous hierarchy. */
 	sakura_session_mark_dirty();
+	if (scope_needs_default && !app->session_shutting_down)
+		sakura_select_scope_default();
 	return TRUE;
 }
 

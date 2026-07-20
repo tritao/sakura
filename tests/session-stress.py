@@ -581,7 +581,7 @@ def visible_rows(groups, terminals):
     return rows
 
 
-def visible_rows_for_expansion(groups, terminals, expanded):
+def visible_rows_for_expansion(groups, terminals, expanded, terminal_ids=None):
     children = {"root": []}
     for group_id, parent in groups.items():
         children.setdefault(parent, []).append(group_id)
@@ -601,7 +601,8 @@ def visible_rows_for_expansion(groups, terminals, expanded):
 
     visit("root")
     return [
-        (kind, terminals[item] if kind == "page" else item)
+        (kind, (terminal_ids[item] if terminal_ids is not None else item)
+         if kind == "page" else item)
         for kind, item in rows
     ]
 
@@ -935,6 +936,11 @@ def run_drag_regression_case(binary, config_file, session_file, env, log_file):
     """Exercise nested-group page moves and verify scope after each drag."""
     write_fixture(config_file, session_file, active_group_id="group-c")
     process, window = launch_sakura(binary, config_file, env, log_file)
+    # The fixture's restored terminal geometry is intentionally compact. Give
+    # the drag regression enough vertical room that source and destination
+    # rows can be exercised without relying on pointer auto-scroll.
+    run(["xdotool", "windowsize", window, "1000", "800"], env)
+    time.sleep(0.3)
     source_id = "stress-terminal-01"
     steps = [
         ("group-b", "group-a"),
@@ -948,14 +954,16 @@ def run_drag_regression_case(binary, config_file, session_file, env, log_file):
         )
         expected_groups = dict(current[0])
         visual_rows = visual_rows_for_session(current)
-        delta_collapsed = False
+        collapsed_groups = set()
         for expected_source, target_group in steps:
             if expected_source == "group-c":
                 # Keep the source row on screen for the upward drag. The
-                # nested Delta group is unrelated to this move, so collapsing
-                # it makes the deterministic pointer path fit the small test
-                # viewport while retaining the real nested-group hierarchy.
-                if not delta_collapsed:
+                # nested Delta group and Beta subtree are unrelated to this
+                # move, so collapsing them makes the deterministic pointer
+                # path fit the small test viewport while retaining the real
+                # nested-group hierarchy. Beta itself remains visible as the
+                # destination row.
+                if "group-d" not in collapsed_groups:
                     expanded_rows = visual_rows_for_session(current)
                     sidebar_toggle_group(
                         window, env, expanded_rows,
@@ -966,14 +974,29 @@ def run_drag_regression_case(binary, config_file, session_file, env, log_file):
                         lambda value: ("group", "group-d") not in
                         (read_expanded_sidebar(session_file) or set()),
                     )
-                    delta_collapsed = True
+                    collapsed_groups.add("group-d")
+                if "group-b" not in collapsed_groups:
+                    current = read_session(session_file)
+                    expanded_rows = visual_rows_for_session(current)
+                    sidebar_toggle_group(
+                        window, env, expanded_rows,
+                        expanded_rows.index(("group", "group-b")),
+                    )
+                    wait_for_session(
+                        session_file,
+                        lambda value: ("group", "group-b") not in
+                        (read_expanded_sidebar(session_file) or set()),
+                    )
+                    collapsed_groups.add("group-b")
                 current = read_session(session_file)
                 expanded = {("group", "root")}
                 expanded.update(("group", group_id)
                                 for group_id in current[0]
-                                if group_id != "group-d")
+                                if group_id not in collapsed_groups)
                 visual_rows = visible_rows_for_expansion(
-                    current[0], current[1], expanded)
+                    current[0], current[1], expanded, current[2])
+                run(["xdotool", "windowsize", window, "1000", "800"], env)
+                time.sleep(0.3)
             actual_source = terminal_parent(current, source_id)
             if actual_source != expected_source:
                 raise AssertionError(
@@ -993,16 +1016,31 @@ def run_drag_regression_case(binary, config_file, session_file, env, log_file):
             )
             if current[0] != expected_groups:
                 raise AssertionError("group model changed during page drag")
+            if target_group == "group-b" and "group-b" in collapsed_groups:
+                # The final move lands in Beta, which was collapsed only to
+                # keep its destination row on screen. Reopen it before the
+                # selection assertion so the moved page row is available.
+                expanded_rows = visual_rows_for_session(current)
+                sidebar_toggle_group(
+                    window, env, expanded_rows,
+                    expanded_rows.index(("group", "group-b")),
+                )
+                wait_for_session(
+                    session_file,
+                    lambda value: ("group", "group-b") in
+                    (read_expanded_sidebar(session_file) or set()),
+                )
+                collapsed_groups.remove("group-b")
             # The session snapshot is the canonical sibling order. Rebuild the
             # row map after each move so pointer coordinates follow the same
             # stable ordering that the sidebar projection uses.
-            if delta_collapsed:
+            if collapsed_groups:
                 expanded = {("group", "root")}
                 expanded.update(("group", group_id)
                                 for group_id in current[0]
-                                if group_id != "group-d")
+                                if group_id not in collapsed_groups)
                 visual_rows = visible_rows_for_expansion(
-                    current[0], current[1], expanded)
+                    current[0], current[1], expanded, current[2])
             else:
                 visual_rows = visual_rows_for_session(current)
 
@@ -1019,7 +1057,41 @@ def run_drag_regression_case(binary, config_file, session_file, env, log_file):
 
         # Reorder two top-level groups through the sidebar's explicit reorder
         # handler, keeping both groups under root while exercising persisted
-        # sibling order.
+        # sibling order. Collapse unrelated subtrees first so both rows are
+        # visible in the small process-test window; this keeps the pointer
+        # geometry deterministic without changing the hierarchy under test.
+        current = read_session(session_file)
+        expanded = read_expanded_sidebar(session_file) or set()
+        rows = visible_rows_for_expansion(
+            current[0], current[1], expanded, current[2])
+        sidebar_toggle_group(
+            window, env, rows, rows.index(("group", "group-a")))
+        wait_for_session(
+            session_file,
+            lambda value: ("group", "group-a") not in
+            (read_expanded_sidebar(session_file) or set()),
+        )
+        current = read_session(session_file)
+        expanded = read_expanded_sidebar(session_file) or set()
+        rows = visible_rows_for_expansion(
+            current[0], current[1], expanded, current[2])
+        sidebar_toggle_group(
+            window, env, rows, rows.index(("group", "group-c")))
+        wait_for_session(
+            session_file,
+            lambda value: ("group", "group-c") not in
+            (read_expanded_sidebar(session_file) or set()),
+        )
+        current = read_session(session_file)
+        expanded = read_expanded_sidebar(session_file) or set()
+        visual_rows = visible_rows_for_expansion(
+            current[0], current[1], expanded, current[2])
+        # Terminal attach/resize callbacks may restore Sakura's compact
+        # geometry while the preceding moves settle. Reapply the test window
+        # size immediately before the group drag so the destination row is
+        # mapped when GTK receives the drop.
+        run(["xdotool", "windowsize", window, "1000", "800"], env)
+        time.sleep(0.3)
         source_row = ("group", visual_rows.index(("group", "group-c")))
         target_row = ("group", visual_rows.index(("group", "group-e")))
         initial_group_orders = read_group_orders(session_file)
