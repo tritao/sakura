@@ -1177,6 +1177,56 @@ test_agent_read_output_until(GInputStream *input, const gchar *terminal_id,
 
 
 static gboolean
+test_agent_read_output_end_until(GInputStream *input, const gchar *terminal_id,
+	                               const gchar *needle, guint64 *end_offset)
+{
+	GByteArray *collected = g_byte_array_new();
+	gboolean found = FALSE;
+
+	if (end_offset != NULL)
+		*end_offset = 0;
+	for (guint attempt = 0; attempt < 3000; attempt++) {
+		GByteArray *payload = NULL;
+		guint64 sequence = 0;
+		guint64 start_offset = 0;
+		guint64 event_end_offset = 0;
+		gchar *event_terminal_id = NULL;
+		guint8 *data = NULL;
+		gsize data_length = 0;
+		gboolean final_chunk = FALSE;
+		GError *error = NULL;
+
+		if (!sakura_control_frame_read(input, &payload, NULL, &error)) {
+			g_clear_error(&error);
+			break;
+		}
+		if (sakura_control_decode_terminal_output_event_with_offsets(
+				payload->data, payload->len, &sequence, &event_terminal_id,
+				&start_offset, &event_end_offset, &data, &data_length,
+				&final_chunk, &error)) {
+			if (g_strcmp0(event_terminal_id, terminal_id) == 0) {
+				g_byte_array_append(collected, data, data_length);
+				if (test_byte_array_contains_string(collected, needle)) {
+					if (end_offset != NULL)
+						*end_offset = event_end_offset;
+					found = TRUE;
+				}
+			}
+		} else {
+			g_clear_error(&error);
+		}
+		g_free(event_terminal_id);
+		g_free(data);
+		g_byte_array_unref(payload);
+		if (found)
+			break;
+	}
+	g_byte_array_unref(collected);
+	return found;
+}
+
+
+static gboolean
 test_agent_read_status_until(GInputStream *input, const gchar *terminal_id,
 	                           guint expected_status)
 {
@@ -1902,6 +1952,215 @@ test_agent_terminal_lifecycle(void)
 }
 
 
+static void
+test_agent_subscribe_connection(GSocketConnection *connection,
+	                              const gchar *request_id)
+{
+	GByteArray *request = g_byte_array_new();
+	GByteArray *response_payload = NULL;
+	SakuraControlResponse response = { 0 };
+	GError *error = NULL;
+
+	test_agent_set_event_timeout(connection);
+	test_agent_handshake_on_connection(connection);
+	g_assert_true(sakura_control_encode_subscribe_events_request(
+		request_id, 0, request));
+	g_assert_true(sakura_control_frame_write(
+		g_io_stream_get_output_stream(G_IO_STREAM(connection)), request->data,
+		request->len, NULL, &error));
+	g_assert_no_error(error);
+	g_assert_true(sakura_control_frame_read(
+		g_io_stream_get_input_stream(G_IO_STREAM(connection)),
+		&response_payload, NULL, &error));
+	g_assert_no_error(error);
+	g_assert_true(sakura_control_decode_response(
+		response_payload->data, response_payload->len, &response, &error));
+	g_assert_no_error(error);
+	g_assert_true(response.accepted);
+	g_assert_cmpstr(response.accepted_kind, ==, "workspace_events");
+	sakura_control_response_clear(&response);
+	g_byte_array_unref(response_payload);
+	g_byte_array_unref(request);
+}
+
+
+static void
+test_agent_terminal_event_resume(void)
+{
+	GSubprocess *process;
+	GSocketConnection *subscriber;
+	GByteArray *request = g_byte_array_new();
+	SakuraControlResponse response = { 0 };
+	GError *error = NULL;
+	gchar *directory;
+	gchar *socket_path;
+	gchar *session_path;
+	gchar *terminal_id = NULL;
+	guint64 checkpoint_offset = 0;
+	guint64 resume_end_offset = 0;
+
+	directory = g_dir_make_tmp("sakura-agent-event-resume-XXXXXX", &error);
+	g_assert_no_error(error);
+	socket_path = g_build_filename(directory, "agent.sock", NULL);
+	session_path = g_build_filename(directory, "workspace.session", NULL);
+	process = test_agent_start(socket_path, session_path);
+
+	subscriber = test_agent_connect_wait(socket_path);
+	test_agent_subscribe_connection(subscriber, "resume-subscribe-1");
+	g_assert_true(test_agent_read_workspace_until(
+		g_io_stream_get_input_stream(G_IO_STREAM(subscriber)), 0, NULL, 0, 0,
+		NULL));
+
+	g_assert_true(sakura_control_encode_create_terminal_request_with_page(
+		"resume-create", "terminal-event-resume", "page-event-resume", "root",
+		"root", "/tmp", 100, 40, request));
+	test_agent_call(socket_path, "resume-create", request, &response);
+	g_assert_true(response.accepted);
+	terminal_id = g_strdup(response.accepted_id);
+	sakura_control_response_clear(&response);
+	g_assert_true(test_agent_read_workspace_until(
+		g_io_stream_get_input_stream(G_IO_STREAM(subscriber)), 1, terminal_id,
+		100, 40, "page-event-resume"));
+
+	g_byte_array_set_size(request, 0);
+	{
+		const gchar input[] = "printf 'event-resume-before\n'\n";
+
+		g_assert_true(sakura_control_encode_terminal_input_request(
+			"resume-input-before", terminal_id, (const guint8 *)input,
+			sizeof(input) - 1, request));
+	}
+	test_agent_call(socket_path, "resume-input-before", request, &response);
+	g_assert_true(response.accepted);
+	sakura_control_response_clear(&response);
+	g_assert_true(test_agent_read_output_end_until(
+		g_io_stream_get_input_stream(G_IO_STREAM(subscriber)), terminal_id,
+		"event-resume-before", &checkpoint_offset));
+
+	/* The terminal process remains alive while only the event stream is
+	 * disconnected. Output generated during that interval must be recovered
+	 * by the next attach rather than lost with the socket. */
+	g_io_stream_close(G_IO_STREAM(subscriber), NULL, NULL);
+	g_object_unref(subscriber);
+	subscriber = NULL;
+	g_byte_array_set_size(request, 0);
+	{
+		const gchar input[] = "printf 'event-resume-during-gap\n'\n";
+
+		g_assert_true(sakura_control_encode_terminal_input_request(
+			"resume-input-gap", terminal_id, (const guint8 *)input,
+			sizeof(input) - 1, request));
+	}
+	test_agent_call(socket_path, "resume-input-gap", request, &response);
+	g_assert_true(response.accepted);
+	sakura_control_response_clear(&response);
+
+	subscriber = test_agent_connect_wait(socket_path);
+	test_agent_subscribe_connection(subscriber, "resume-subscribe-2");
+	g_assert_true(test_agent_read_workspace_until(
+		g_io_stream_get_input_stream(G_IO_STREAM(subscriber)), 1, terminal_id,
+		100, 40, "page-event-resume"));
+	g_byte_array_set_size(request, 0);
+	g_assert_true(sakura_control_encode_attach_terminal_request_after_offset(
+		"resume-attach", terminal_id, 100, 40, checkpoint_offset, request));
+	test_agent_call(socket_path, "resume-attach", request, &response);
+	g_assert_true(response.attached);
+	g_assert_cmpuint(response.attached_output_start_offset, ==,
+	                checkpoint_offset);
+	g_assert_nonnull(g_strstr_len(
+		(const gchar *)response.attached_output, response.attached_output_length,
+		"event-resume-during-gap"));
+	resume_end_offset = response.attached_output_end_offset;
+	sakura_control_response_clear(&response);
+
+	g_byte_array_set_size(request, 0);
+	{
+		const gchar input[] = "printf 'event-resume-live\n'\n";
+
+		g_assert_true(sakura_control_encode_terminal_input_request(
+			"resume-input-live", terminal_id, (const guint8 *)input,
+			sizeof(input) - 1, request));
+	}
+	test_agent_call(socket_path, "resume-input-live", request, &response);
+	g_assert_true(response.accepted);
+	sakura_control_response_clear(&response);
+	g_assert_true(test_agent_read_output_end_until(
+		g_io_stream_get_input_stream(G_IO_STREAM(subscriber)), terminal_id,
+		"event-resume-live", &resume_end_offset));
+	g_assert_cmpuint(resume_end_offset, >, checkpoint_offset);
+
+	/* Force the retained ring past the old cursor and verify that the typed
+	 * output-gap error is still the recovery signal for a reconnect. */
+	g_io_stream_close(G_IO_STREAM(subscriber), NULL, NULL);
+	g_object_unref(subscriber);
+	subscriber = NULL;
+	g_byte_array_set_size(request, 0);
+	{
+		const gchar input[] = "yes x | head -c 1100000\n";
+
+		g_assert_true(sakura_control_encode_terminal_input_request(
+			"resume-input-overflow", terminal_id, (const guint8 *)input,
+			sizeof(input) - 1, request));
+	}
+	test_agent_call(socket_path, "resume-input-overflow", request, &response);
+	g_assert_true(response.accepted);
+	sakura_control_response_clear(&response);
+
+	{
+		gboolean output_gap = FALSE;
+
+		for (guint attempt = 0; attempt < 300 && !output_gap; attempt++) {
+			GSocketConnection *connection;
+			GByteArray *response_payload = NULL;
+			gchar *request_id = g_strdup_printf("resume-gap-%u", attempt);
+
+			g_byte_array_set_size(request, 0);
+			g_assert_true(sakura_control_encode_attach_terminal_request_after_offset(
+				request_id, terminal_id, 100, 40, checkpoint_offset, request));
+			connection = test_agent_connect_wait(socket_path);
+			test_agent_handshake_on_connection(connection);
+			g_assert_true(sakura_control_frame_write(
+				g_io_stream_get_output_stream(G_IO_STREAM(connection)), request->data,
+				request->len, NULL, &error));
+			g_assert_no_error(error);
+			g_assert_true(sakura_control_frame_read(
+				g_io_stream_get_input_stream(G_IO_STREAM(connection)),
+				&response_payload, NULL, &error));
+			g_assert_no_error(error);
+			if (!sakura_control_decode_response(
+					response_payload->data, response_payload->len, &response,
+					&error)) {
+				if (error != NULL &&
+				    error->domain == SAKURA_CONTROL_ERROR_DOMAIN &&
+				    error->code == SAKURA_CONTROL_ERROR_CODE_OUTPUT_GAP)
+					output_gap = TRUE;
+				g_clear_error(&error);
+				sakura_control_response_clear(&response);
+			} else {
+				sakura_control_response_clear(&response);
+			}
+			g_byte_array_unref(response_payload);
+			g_io_stream_close(G_IO_STREAM(connection), NULL, NULL);
+			g_object_unref(connection);
+			g_free(request_id);
+			if (!output_gap)
+				g_usleep(10 * 1000);
+		}
+		g_assert_true(output_gap);
+	}
+
+	g_byte_array_unref(request);
+	g_free(terminal_id);
+	test_agent_stop(process);
+	g_remove(session_path);
+	g_remove(socket_path);
+	g_rmdir(directory);
+	g_free(session_path);
+	g_free(socket_path);
+	g_free(directory);
+}
+
+
 int
 main(int argc, char **argv)
 {
@@ -1935,6 +2194,8 @@ main(int argc, char **argv)
 	                test_agent_slow_subscriber_disconnects);
 	g_test_add_func("/control/agent-terminal-lifecycle",
 	                test_agent_terminal_lifecycle);
+	g_test_add_func("/control/agent-terminal-event-resume",
+	                test_agent_terminal_event_resume);
 	result = g_test_run();
 	g_clear_pointer(&test_agent_workspace_id, g_free);
 	return result;

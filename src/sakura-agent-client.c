@@ -615,6 +615,54 @@ sakura_agent_apply_terminal_event_cb(gpointer data)
 }
 
 
+static gboolean
+sakura_agent_event_is_stopping(SakuraApp *app)
+{
+	gboolean stopping;
+
+	if (app == NULL || !app->agent_event_mutex_initialized)
+		return TRUE;
+	g_mutex_lock(&app->agent_event_mutex);
+	stopping = app->agent_event_stopping;
+	g_mutex_unlock(&app->agent_event_mutex);
+	return stopping;
+}
+
+
+static gboolean
+sakura_agent_event_retry_wait(SakuraApp *app)
+{
+	for (guint attempt = 0; attempt < 10; attempt++) {
+		if (sakura_agent_event_is_stopping(app))
+			return FALSE;
+		g_usleep(25 * 1000);
+	}
+	return !sakura_agent_event_is_stopping(app);
+}
+
+
+static gboolean
+sakura_agent_resume_terminals_cb(gpointer data)
+{
+	SakuraApp *app = data;
+
+	if (app == NULL || app->session_shutting_down || app->workspace == NULL ||
+	    app->workspace->panes == NULL)
+		return G_SOURCE_REMOVE;
+	for (guint index = 0; index < app->workspace->panes->len; index++) {
+		SakuraTab *tab = g_ptr_array_index(app->workspace->panes, index);
+
+		if (tab == NULL || !tab->agent_backed || tab->agent_terminal_exited)
+			continue;
+		/* A dropped event stream does not invalidate the agent-owned PTY or
+		 * the local proxy. Reattach only the event-side cursor and replay the
+		 * bytes that arrived while the stream was unavailable. */
+		(void)sakura_tab_resume_agent_terminal(tab);
+	}
+	return G_SOURCE_REMOVE;
+}
+
+
 static gpointer
 sakura_agent_event_thread(gpointer data)
 {
@@ -622,80 +670,101 @@ sakura_agent_event_thread(gpointer data)
 	SakuraControlClientConnection *connection = NULL;
 	GByteArray *payload = NULL;
 	GError *error = NULL;
+	gboolean connected_before = FALSE;
+	gboolean resume_terminals = FALSE;
 
-	connection = sakura_agent_connect(
-		app->agent_socket_path, app->workspace_id, &error);
-	if (connection == NULL)
-		goto out;
-	g_mutex_lock(&app->agent_event_mutex);
-	if (app->agent_event_stopping) {
-		g_mutex_unlock(&app->agent_event_mutex);
-		goto out;
-	}
-	app->agent_event_connection = sakura_control_client_ref(connection);
-	g_mutex_unlock(&app->agent_event_mutex);
-	if (!sakura_control_client_subscribe_events(connection, 0, &error))
-		goto out;
-	g_clear_pointer(&payload, g_byte_array_unref);
-	while (sakura_control_client_read_frame(
-		connection, &payload, NULL, &error)) {
-		SakuraAgentEvent *event = g_new0(SakuraAgentEvent, 1);
-		SakuraAgentTerminalEvent *terminal_event;
-		guint64 terminal_sequence;
-		gboolean final_chunk;
+	while (!sakura_agent_event_is_stopping(app)) {
+		connection = sakura_agent_connect(
+			app->agent_socket_path, app->workspace_id, &error);
+		if (connection == NULL) {
+			if (error != NULL && !sakura_agent_event_is_stopping(app))
+				g_debug("Could not connect agent event stream: %s", error->message);
+			g_clear_error(&error);
+			if (!sakura_agent_event_retry_wait(app))
+				break;
+			continue;
+		}
 
-		if (!sakura_control_decode_workspace_changed_event(
-			payload->data, payload->len, &event->sequence, &event->snapshot,
-			&error)) {
-			g_free(event);
-			g_clear_error(&error);
-			terminal_event = g_new0(SakuraAgentTerminalEvent, 1);
-			terminal_event->app = app;
-			if (sakura_control_decode_terminal_output_event_with_offsets(
-				payload->data, payload->len, &terminal_sequence,
-				&terminal_event->terminal_id,
-				&terminal_event->start_offset, &terminal_event->end_offset,
-				&terminal_event->data, &terminal_event->data_length,
-				&final_chunk, &error)) {
-				terminal_event->output = TRUE;
-				(void)terminal_sequence;
-				(void)final_chunk;
-				g_main_context_invoke(NULL,
-				                     sakura_agent_apply_terminal_event_cb,
-				                     terminal_event);
-				g_clear_pointer(&payload, g_byte_array_unref);
-				continue;
-			}
-			g_clear_error(&error);
-			g_free(terminal_event);
-			terminal_event = g_new0(SakuraAgentTerminalEvent, 1);
-			terminal_event->app = app;
-			if (sakura_control_decode_terminal_status_event(
-				payload->data, payload->len, &terminal_sequence,
-				&terminal_event->terminal_id,
-				&terminal_event->status, &terminal_event->message, &error)) {
-				g_main_context_invoke(NULL,
-				                     sakura_agent_apply_terminal_event_cb,
-				                     terminal_event);
-				g_clear_pointer(&payload, g_byte_array_unref);
-				continue;
-			}
-			g_free(terminal_event->terminal_id);
-			g_free(terminal_event->message);
-			g_free(terminal_event);
-			g_clear_pointer(&payload, g_byte_array_unref);
+		g_mutex_lock(&app->agent_event_mutex);
+		if (app->agent_event_stopping) {
+			g_mutex_unlock(&app->agent_event_mutex);
+			sakura_control_client_close(connection);
+			sakura_control_client_unref(connection);
+			connection = NULL;
 			break;
 		}
-		event->app = app;
-		g_main_context_invoke(NULL, sakura_agent_apply_event_cb, event);
+		app->agent_event_connection = sakura_control_client_ref(connection);
+		g_mutex_unlock(&app->agent_event_mutex);
+
+		if (!sakura_control_client_subscribe_events(connection, 0, &error))
+			goto disconnect;
+		resume_terminals = connected_before;
+		connected_before = TRUE;
 		g_clear_pointer(&payload, g_byte_array_unref);
-	}
-out:
-	if (error != NULL && !app->agent_event_stopping)
-		g_debug("Agent event subscription stopped: %s", error->message);
-	g_clear_error(&error);
-	g_clear_pointer(&payload, g_byte_array_unref);
-	if (connection != NULL) {
+		while (sakura_control_client_read_frame(
+			connection, &payload, NULL, &error)) {
+			SakuraAgentEvent *event = g_new0(SakuraAgentEvent, 1);
+			SakuraAgentTerminalEvent *terminal_event;
+			guint64 terminal_sequence;
+			gboolean final_chunk;
+
+			if (!sakura_control_decode_workspace_changed_event(
+				payload->data, payload->len, &event->sequence, &event->snapshot,
+				&error)) {
+				g_free(event);
+				g_clear_error(&error);
+				terminal_event = g_new0(SakuraAgentTerminalEvent, 1);
+				terminal_event->app = app;
+				if (sakura_control_decode_terminal_output_event_with_offsets(
+					payload->data, payload->len, &terminal_sequence,
+					&terminal_event->terminal_id,
+					&terminal_event->start_offset, &terminal_event->end_offset,
+					&terminal_event->data, &terminal_event->data_length,
+					&final_chunk, &error)) {
+					terminal_event->output = TRUE;
+					(void)terminal_sequence;
+					(void)final_chunk;
+					g_main_context_invoke(NULL,
+					                     sakura_agent_apply_terminal_event_cb,
+					                     terminal_event);
+					g_clear_pointer(&payload, g_byte_array_unref);
+					continue;
+				}
+				g_clear_error(&error);
+				g_free(terminal_event);
+				terminal_event = g_new0(SakuraAgentTerminalEvent, 1);
+				terminal_event->app = app;
+				if (sakura_control_decode_terminal_status_event(
+					payload->data, payload->len, &terminal_sequence,
+					&terminal_event->terminal_id,
+					&terminal_event->status, &terminal_event->message, &error)) {
+					g_main_context_invoke(NULL,
+					                     sakura_agent_apply_terminal_event_cb,
+					                     terminal_event);
+					g_clear_pointer(&payload, g_byte_array_unref);
+					continue;
+				}
+				g_free(terminal_event->terminal_id);
+				g_free(terminal_event->message);
+				g_free(terminal_event);
+				g_clear_pointer(&payload, g_byte_array_unref);
+				break;
+			}
+			event->app = app;
+			g_main_context_invoke(NULL, sakura_agent_apply_event_cb, event);
+			if (resume_terminals) {
+				g_main_context_invoke(NULL,
+				                     sakura_agent_resume_terminals_cb, app);
+				resume_terminals = FALSE;
+			}
+			g_clear_pointer(&payload, g_byte_array_unref);
+		}
+
+disconnect:
+		if (error != NULL && !sakura_agent_event_is_stopping(app))
+			g_debug("Agent event subscription stopped: %s", error->message);
+		g_clear_error(&error);
+		g_clear_pointer(&payload, g_byte_array_unref);
 		g_mutex_lock(&app->agent_event_mutex);
 		if (app->agent_event_connection == connection) {
 			sakura_control_client_unref(app->agent_event_connection);
@@ -704,7 +773,12 @@ out:
 		g_mutex_unlock(&app->agent_event_mutex);
 		sakura_control_client_close(connection);
 		sakura_control_client_unref(connection);
+		connection = NULL;
+		if (!sakura_agent_event_retry_wait(app))
+			break;
 	}
+	g_clear_error(&error);
+	g_clear_pointer(&payload, g_byte_array_unref);
 	return NULL;
 }
 

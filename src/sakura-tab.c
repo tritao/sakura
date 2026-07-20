@@ -890,6 +890,68 @@ sakura_tab_start_agent_terminal(SakuraTab *tab, const gchar *cwd)
 
 
 gboolean
+sakura_tab_resume_agent_terminal(SakuraTab *tab)
+{
+	guint cols, rows;
+	guint8 *replay_data = NULL;
+	gsize replay_length = 0;
+	guint64 replay_start_offset = 0;
+	guint64 replay_end_offset = 0;
+	guint attached_cols = 0;
+	guint attached_rows = 0;
+	guint attached_status = 0;
+	gboolean attached;
+	GError *error = NULL;
+
+	if (tab == NULL || !tab->agent_backed || tab->agent_terminal_exited ||
+	    tab->terminal_id == NULL || tab->vte == NULL ||
+	    sakura.agent_socket_path == NULL)
+		return FALSE;
+	cols = vte_terminal_get_column_count(VTE_TERMINAL(tab->vte));
+	rows = vte_terminal_get_row_count(VTE_TERMINAL(tab->vte));
+	if (cols == 0)
+		cols = tab->agent_cols > 0 ? tab->agent_cols : 80;
+	if (rows == 0)
+		rows = tab->agent_rows > 0 ? tab->agent_rows : 24;
+
+	attached = sakura_agent_attach_terminal_after_offset(
+		&sakura, tab->terminal_id, cols, rows,
+		tab->agent_last_output_offset, &replay_data, &replay_length,
+		&replay_start_offset, &replay_end_offset, &attached_cols,
+		&attached_rows, &attached_status, &error);
+	if (!attached && error != NULL &&
+	    error->domain == SAKURA_CONTROL_ERROR_DOMAIN &&
+	    error->code == SAKURA_CONTROL_ERROR_CODE_OUTPUT_GAP) {
+		/* The event stream was disconnected long enough for the requested
+		 * bytes to leave the agent's bounded ring. Reset the local projection
+		 * before replaying the oldest retained output. */
+		g_clear_error(&error);
+		vte_terminal_reset(VTE_TERMINAL(tab->vte), TRUE, TRUE);
+		tab->agent_last_output_offset = 0;
+		attached = sakura_agent_attach_terminal_from_oldest(
+			&sakura, tab->terminal_id, cols, rows, &replay_data,
+			&replay_length, &replay_start_offset, &replay_end_offset,
+			&attached_cols, &attached_rows, &attached_status, &error);
+	}
+	if (!attached) {
+		g_clear_error(&error);
+		g_free(replay_data);
+		return FALSE;
+	}
+
+	tab->agent_cols = attached_cols != 0 ? attached_cols : cols;
+	tab->agent_rows = attached_rows != 0 ? attached_rows : rows;
+	tab->agent_last_output_offset = replay_end_offset;
+	sakura_tab_agent_feed_output(tab, replay_data, replay_length,
+	                              replay_start_offset, replay_end_offset);
+	if (attached_status != 0)
+		sakura_tab_agent_status(tab, attached_status, "terminal reattached");
+	g_free(replay_data);
+	return TRUE;
+}
+
+
+gboolean
 sakura_tab_start_deferred_runtime(SakuraTab *tab)
 {
 	gchar **env;

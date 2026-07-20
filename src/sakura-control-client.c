@@ -250,6 +250,15 @@ sakura_control_client_subscribe_events(
 		                    "agent did not accept event subscription");
 		goto out;
 	}
+	/* The connection is now a long-lived stream. The handshake/request
+	 * timeout inherited from the socket client must not turn an idle event
+	 * stream into a false disconnect every few seconds. */
+	if (connection->connection != NULL) {
+		GSocket *socket = g_socket_connection_get_socket(connection->connection);
+
+		if (socket != NULL)
+			g_socket_set_timeout(socket, 0);
+	}
 	success = TRUE;
 out:
 	g_clear_pointer(&response_payload, g_byte_array_unref);

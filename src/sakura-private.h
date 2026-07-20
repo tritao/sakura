@@ -610,6 +610,7 @@ gboolean sakura_tab_restart_agent_terminal(SakuraTab *tab);
 void sakura_tab_agent_feed_output(SakuraTab *tab, const guint8 *data,
                                   gsize data_length, guint64 start_offset,
                                   guint64 end_offset);
+gboolean sakura_tab_resume_agent_terminal(SakuraTab *tab);
 void sakura_tab_agent_status(SakuraTab *tab, guint status,
                              const gchar *message);
 void sakura_tab_sync_agent_size(SakuraTab *tab);
