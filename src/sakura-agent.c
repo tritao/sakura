@@ -74,7 +74,8 @@ typedef struct {
 	 SAKURA_CONTROL_CAPABILITY_GROUP_MOVE | \
 	 SAKURA_CONTROL_CAPABILITY_WORKSPACE_REVISIONS | \
 	 SAKURA_CONTROL_CAPABILITY_STRUCTURED_ERRORS | \
-	 SAKURA_CONTROL_CAPABILITY_TERMINAL_OUTPUT_OFFSETS)
+	 SAKURA_CONTROL_CAPABILITY_TERMINAL_OUTPUT_OFFSETS | \
+	 SAKURA_CONTROL_CAPABILITY_CODEX)
 
 struct _SakuraAgent {
 	GMainLoop *loop;
@@ -907,10 +908,11 @@ sakura_agent_terminal_create_clear(SakuraTerminalCreate *create)
 
 
 static gboolean
-sakura_agent_create_terminal(SakuraAgent *agent,
-	                           const SakuraControlRequest *request,
-	                           gchar **accepted_id,
-	                           GError **error)
+sakura_agent_create_terminal_with_kind(SakuraAgent *agent,
+	                                     const SakuraControlRequest *request,
+	                                     gboolean codex,
+	                                     gchar **accepted_id,
+	                                     GError **error)
 {
 	SakuraTerminalCreate create = {
 		.pty_fd = -1,
@@ -920,6 +922,10 @@ sakura_agent_create_terminal(SakuraAgent *agent,
 	struct winsize size = { 0 };
 	const gchar *cwd;
 	const gchar *shell;
+	const gchar *codex_binary;
+	const gchar *child_argv[12] = { NULL };
+	guint child_argc = 0;
+	gchar *reasoning_config = NULL;
 	gchar *owned_cwd = NULL;
 	gchar *id = NULL;
 	gchar *title = NULL;
@@ -952,9 +958,38 @@ sakura_agent_create_terminal(SakuraAgent *agent,
 	}
 	size.ws_col = request->cols != 0 ? request->cols : 80;
 	size.ws_row = request->rows != 0 ? request->rows : 24;
+	if (codex && request->reasoning_effort != NULL &&
+	    request->reasoning_effort[0] != '\0' &&
+	    g_strcmp0(request->reasoning_effort, "low") != 0 &&
+	    g_strcmp0(request->reasoning_effort, "medium") != 0 &&
+	    g_strcmp0(request->reasoning_effort, "high") != 0 &&
+	    g_strcmp0(request->reasoning_effort, "xhigh") != 0) {
+		g_free(owned_cwd);
+		return sakura_agent_error(error, "unsupported Codex reasoning effort");
+	}
 	shell = g_getenv("SHELL");
 	if (shell == NULL || shell[0] == '\0')
 		shell = "/bin/sh";
+	if (codex) {
+		codex_binary = g_getenv("SAKURA_CODEX_BINARY");
+		if (codex_binary == NULL || codex_binary[0] == '\0')
+			codex_binary = "codex";
+		child_argv[child_argc++] = codex_binary;
+		child_argv[child_argc++] = "--enable";
+		child_argv[child_argc++] = "hooks";
+		if (request->reasoning_effort != NULL &&
+		    request->reasoning_effort[0] != '\0') {
+			reasoning_config = g_strdup_printf("model_reasoning_effort=%s",
+			                                    request->reasoning_effort);
+			child_argv[child_argc++] = "--config";
+			child_argv[child_argc++] = reasoning_config;
+		}
+		if (request->resume_session_id != NULL &&
+		    request->resume_session_id[0] != '\0') {
+			child_argv[child_argc++] = "resume";
+			child_argv[child_argc++] = request->resume_session_id;
+		}
+	}
 	if (request->terminal_id != NULL && request->terminal_id[0] != '\0') {
 		if (!sakura_agent_terminal_id_is_valid(request->terminal_id)) {
 			sakura_agent_error(error, "terminal id is invalid");
@@ -979,10 +1014,13 @@ sakura_agent_create_terminal(SakuraAgent *agent,
 	if (create.child_pid == 0) {
 		if (chdir(cwd) != 0)
 			_exit(127);
-		execl(shell, shell, "-i", (gchar *)NULL);
+		if (codex)
+			execvp(child_argv[0], (gchar * const *)child_argv);
+		else
+			execl(shell, shell, "-i", (gchar *)NULL);
 		_exit(127);
 	}
-	title = g_path_get_basename(cwd);
+	title = codex ? g_strdup("Codex") : g_path_get_basename(cwd);
 	create.core = sakura_core_terminal_new(id, cwd, group, task,
 	                                      size.ws_col, size.ws_row);
 	create.core->title = title;
@@ -1024,6 +1062,7 @@ sakura_agent_create_terminal(SakuraAgent *agent,
 	g_free(id);
 	g_free(title);
 	g_free(owned_cwd);
+	g_free(reasoning_config);
 	sakura_agent_terminal_create_clear(&create);
 	return TRUE;
 
@@ -1033,8 +1072,31 @@ fail:
 	g_free(id);
 	g_free(title);
 	g_free(owned_cwd);
+	g_free(reasoning_config);
 	sakura_agent_terminal_create_clear(&create);
 	return FALSE;
+}
+
+
+static gboolean
+sakura_agent_create_terminal(SakuraAgent *agent,
+	                           const SakuraControlRequest *request,
+	                           gchar **accepted_id,
+	                           GError **error)
+{
+	return sakura_agent_create_terminal_with_kind(
+		agent, request, FALSE, accepted_id, error);
+}
+
+
+static gboolean
+sakura_agent_create_codex(SakuraAgent *agent,
+	                         const SakuraControlRequest *request,
+	                         gchar **accepted_id,
+	                         GError **error)
+{
+	return sakura_agent_create_terminal_with_kind(
+		agent, request, TRUE, accepted_id, error);
 }
 
 
@@ -1311,6 +1373,10 @@ sakura_agent_apply_request(SakuraAgent *agent,
 		changed = sakura_agent_create_terminal(agent, request, accepted_id,
 		                                       error);
 		break;
+	case SAKURA_CONTROL_REQUEST_CREATE_CODEX:
+		changed = sakura_agent_create_codex(agent, request, accepted_id,
+		                                   error);
+		break;
 	case SAKURA_CONTROL_REQUEST_RESTART_TERMINAL:
 		changed = sakura_agent_restart_terminal(agent, request, accepted_id,
 		                                        retired_terminal, error);
@@ -1378,6 +1444,7 @@ sakura_agent_request_changes_workspace(SakuraControlRequestKind kind)
 	case SAKURA_CONTROL_REQUEST_UPDATE_PAGE:
 	case SAKURA_CONTROL_REQUEST_DELETE_PAGE:
 	case SAKURA_CONTROL_REQUEST_CREATE_TERMINAL:
+	case SAKURA_CONTROL_REQUEST_CREATE_CODEX:
 	case SAKURA_CONTROL_REQUEST_CLOSE_TERMINAL:
 	case SAKURA_CONTROL_REQUEST_RESTART_TERMINAL:
 		return TRUE;
@@ -1507,9 +1574,12 @@ sakura_agent_connection_thread(gpointer data)
 			if (workspace_changed)
 				request->agent->sequence++;
 			if (decoded.kind == SAKURA_CONTROL_REQUEST_CREATE_TERMINAL ||
+			    decoded.kind == SAKURA_CONTROL_REQUEST_CREATE_CODEX ||
 			    decoded.kind == SAKURA_CONTROL_REQUEST_RESTART_TERMINAL)
 				sakura_control_encode_accepted_response_with_revision(
-					request_id, "terminal", accepted_id,
+					request_id,
+					decoded.kind == SAKURA_CONTROL_REQUEST_CREATE_CODEX
+					? "codex" : "terminal", accepted_id,
 					request->agent->workspace_revision, response);
 			else if (decoded.kind == SAKURA_CONTROL_REQUEST_TERMINAL_INPUT ||
 			         decoded.kind == SAKURA_CONTROL_REQUEST_TERMINAL_RESIZE)

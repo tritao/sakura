@@ -457,6 +457,25 @@ test_mutation_request_roundtrip(void)
 	sakura_control_request_clear(&request);
 	g_byte_array_set_size(encoded, 0);
 
+	g_assert_true(sakura_control_encode_create_codex_request(
+		"create-codex", "codex-1", "page-1", "group-1", "task-1",
+		"/tmp", 120, 50, "high", "resume-1", encoded));
+	g_assert_true(sakura_control_decode_request(encoded->data, encoded->len,
+	                                           &request, &error));
+	g_assert_no_error(error);
+	g_assert_cmpint(request.kind, ==, SAKURA_CONTROL_REQUEST_CREATE_CODEX);
+	g_assert_cmpstr(request.terminal_id, ==, "codex-1");
+	g_assert_cmpstr(request.page_id, ==, "page-1");
+	g_assert_cmpstr(request.group_id, ==, "group-1");
+	g_assert_cmpstr(request.task_id, ==, "task-1");
+	g_assert_cmpstr(request.cwd, ==, "/tmp");
+	g_assert_cmpstr(request.reasoning_effort, ==, "high");
+	g_assert_cmpstr(request.resume_session_id, ==, "resume-1");
+	g_assert_cmpuint(request.cols, ==, 120);
+	g_assert_cmpuint(request.rows, ==, 50);
+	sakura_control_request_clear(&request);
+	g_byte_array_set_size(encoded, 0);
+
 	g_assert_true(sakura_control_encode_restart_terminal_request_with_page(
 		"restart-terminal", "terminal-1", "page-1", "group-1", "task-1",
 		"/tmp", 120, 50, encoded));

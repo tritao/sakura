@@ -158,6 +158,18 @@ message CreateTerminalRequest {
   string page_id = 7;
 }
 
+message CreateCodexRequest {
+  string group_id = 1;
+  string task_id = 2;
+  string cwd = 3;
+  uint32 cols = 4;
+  uint32 rows = 5;
+  string terminal_id = 6;
+  string page_id = 7;
+  string reasoning_effort = 8;
+  string resume_session_id = 9;
+}
+
 message TerminalInput {
   string terminal_id = 1;
   bytes data = 2;
@@ -206,6 +218,7 @@ message Request {
     CreateGroupRequest create_group = 3;
     CreateTaskRequest create_task = 4;
     CreateTerminalRequest create_terminal = 5;
+    CreateCodexRequest create_codex = 25;
     TerminalInput terminal_input = 6;
     TerminalResize terminal_resize = 7;
     CloseSessionRequest close_session = 8;

@@ -78,6 +78,8 @@ sakura_control_request_clear(SakuraControlRequest *request)
 	g_clear_pointer(&request->page_id, g_free);
 	g_clear_pointer(&request->terminal_id, g_free);
 	g_clear_pointer(&request->cwd, g_free);
+	g_clear_pointer(&request->reasoning_effort, g_free);
+	g_clear_pointer(&request->resume_session_id, g_free);
 	g_clear_pointer(&request->provider, g_free);
 	g_clear_pointer(&request->external_id, g_free);
 	g_clear_pointer(&request->url, g_free);
@@ -607,6 +609,38 @@ sakura_control_encode_create_terminal_request(const gchar *request_id,
 
 
 gboolean
+sakura_control_encode_create_codex_request(
+	const gchar *request_id, const gchar *terminal_id, const gchar *page_id,
+	const gchar *group_id, const gchar *task_id, const gchar *cwd,
+	guint cols, guint rows, const gchar *reasoning_effort,
+	const gchar *resume_session_id, GByteArray *payload)
+{
+	Sakura__Control__V1__CreateCodexRequest create_codex =
+		SAKURA__CONTROL__V1__CREATE_CODEX_REQUEST__INIT;
+	Sakura__Control__V1__Request request =
+		SAKURA__CONTROL__V1__REQUEST__INIT;
+
+	if (payload == NULL || request_id == NULL || request_id[0] == '\0')
+		return FALSE;
+	create_codex.terminal_id = (gchar *)sakura_control_string(terminal_id);
+	create_codex.page_id = (gchar *)sakura_control_string(page_id);
+	create_codex.group_id = (gchar *)sakura_control_string(group_id);
+	create_codex.task_id = (gchar *)sakura_control_string(task_id);
+	create_codex.cwd = (gchar *)sakura_control_string(cwd);
+	create_codex.cols = cols;
+	create_codex.rows = rows;
+	create_codex.reasoning_effort =
+		(gchar *)sakura_control_string(reasoning_effort);
+	create_codex.resume_session_id =
+		(gchar *)sakura_control_string(resume_session_id);
+	request.request_id = (gchar *)request_id;
+	request.body_case = SAKURA__CONTROL__V1__REQUEST__BODY_CREATE_CODEX;
+	request.create_codex = &create_codex;
+	return sakura_control_pack_message(&request.base, payload);
+}
+
+
+gboolean
 sakura_control_encode_terminal_input_request(const gchar *request_id,
 	                                            const gchar *terminal_id,
 	                                            const guint8 *data,
@@ -955,6 +989,22 @@ sakura_control_decode_request(const guint8 *payload,
 			request->cwd = g_strdup(decoded->create_terminal->cwd);
 			request->cols = decoded->create_terminal->cols;
 			request->rows = decoded->create_terminal->rows;
+		}
+		break;
+	case SAKURA__CONTROL__V1__REQUEST__BODY_CREATE_CODEX:
+		if (decoded->create_codex != NULL) {
+			request->kind = SAKURA_CONTROL_REQUEST_CREATE_CODEX;
+			request->terminal_id = g_strdup(decoded->create_codex->terminal_id);
+			request->page_id = g_strdup(decoded->create_codex->page_id);
+			request->group_id = g_strdup(decoded->create_codex->group_id);
+			request->task_id = g_strdup(decoded->create_codex->task_id);
+			request->cwd = g_strdup(decoded->create_codex->cwd);
+			request->cols = decoded->create_codex->cols;
+			request->rows = decoded->create_codex->rows;
+			request->reasoning_effort = g_strdup(
+				decoded->create_codex->reasoning_effort);
+			request->resume_session_id = g_strdup(
+				decoded->create_codex->resume_session_id);
 		}
 		break;
 	case SAKURA__CONTROL__V1__REQUEST__BODY_TERMINAL_INPUT:

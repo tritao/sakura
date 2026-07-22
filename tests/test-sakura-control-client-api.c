@@ -18,6 +18,11 @@ main(void)
 	    error == NULL)
 		return 1;
 	g_clear_error(&error);
+	if (sakura_control_client_create_codex_terminal(
+		    NULL, NULL, NULL, NULL, NULL, NULL, 80, 24, NULL, NULL,
+		    &terminal_id, &error) || error == NULL)
+		return 1;
+	g_clear_error(&error);
 	if (sakura_control_client_terminal_input(
 		    NULL, "terminal", (const guint8 *)"x", 1, &error) ||
 	    error == NULL)

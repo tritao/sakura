@@ -17,6 +17,7 @@ typedef enum {
 	SAKURA_CONTROL_REQUEST_SET_TASK_ARCHIVED,
 	SAKURA_CONTROL_REQUEST_DELETE_TASK,
 	SAKURA_CONTROL_REQUEST_CREATE_TERMINAL,
+	SAKURA_CONTROL_REQUEST_CREATE_CODEX,
 	SAKURA_CONTROL_REQUEST_TERMINAL_INPUT,
 	SAKURA_CONTROL_REQUEST_TERMINAL_RESIZE,
 	SAKURA_CONTROL_REQUEST_CLOSE_TERMINAL,
@@ -42,6 +43,8 @@ typedef struct {
 	gchar *page_id;
 	gchar *terminal_id;
 	gchar *cwd;
+	gchar *reasoning_effort;
+	gchar *resume_session_id;
 	gchar *provider;
 	gchar *external_id;
 	gchar *url;
@@ -160,6 +163,11 @@ gboolean sakura_control_encode_create_terminal_request_with_page(
 	const gchar *request_id, const gchar *terminal_id, const gchar *page_id,
 	const gchar *group_id, const gchar *task_id, const gchar *cwd,
 	guint cols, guint rows, GByteArray *payload);
+gboolean sakura_control_encode_create_codex_request(
+	const gchar *request_id, const gchar *terminal_id, const gchar *page_id,
+	const gchar *group_id, const gchar *task_id, const gchar *cwd,
+	guint cols, guint rows, const gchar *reasoning_effort,
+	const gchar *resume_session_id, GByteArray *payload);
 gboolean sakura_control_encode_terminal_input_request(
 	const gchar *request_id, const gchar *terminal_id, const guint8 *data,
 	gsize data_length, GByteArray *payload);
