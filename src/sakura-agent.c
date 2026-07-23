@@ -1,7 +1,9 @@
 #include <errno.h>
+#include <fcntl.h>
 #include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <stdarg.h>
 #include <string.h>
 #include <pty.h>
 #include <sys/stat.h>
@@ -75,7 +77,8 @@ typedef struct {
 	 SAKURA_CONTROL_CAPABILITY_WORKSPACE_REVISIONS | \
 	 SAKURA_CONTROL_CAPABILITY_STRUCTURED_ERRORS | \
 	 SAKURA_CONTROL_CAPABILITY_TERMINAL_OUTPUT_OFFSETS | \
-	 SAKURA_CONTROL_CAPABILITY_CODEX)
+	 SAKURA_CONTROL_CAPABILITY_CODEX | \
+	 SAKURA_CONTROL_CAPABILITY_FILESYSTEM)
 
 struct _SakuraAgent {
 	GMainLoop *loop;
@@ -223,6 +226,8 @@ sakura_agent_error_code(const GError *error)
 	if (error == NULL)
 		return SAKURA_CONTROL_ERROR_INVALID_ARGUMENT;
 	if (g_str_has_prefix(error->message, "expected revision "))
+		return SAKURA_CONTROL_ERROR_REVISION_CONFLICT;
+	if (g_str_has_prefix(error->message, "file changed since it was read"))
 		return SAKURA_CONTROL_ERROR_REVISION_CONFLICT;
 	if (g_str_has_prefix(error->message, "terminal output gap:") ||
 	    g_str_has_prefix(error->message,
@@ -1327,6 +1332,462 @@ sakura_agent_restart_terminal(SakuraAgent *agent,
 
 
 static gboolean
+sakura_agent_filesystem_error(GError **error, GIOErrorEnum code,
+	                             const gchar *format, ...)
+{
+	va_list arguments;
+	gchar *message;
+
+	va_start(arguments, format);
+	message = g_strdup_vprintf(format, arguments);
+	va_end(arguments);
+	g_set_error_literal(error, G_IO_ERROR, code, message);
+	g_free(message);
+	return FALSE;
+}
+
+
+static gboolean
+sakura_agent_filesystem_path_is_safe(const gchar *path, GError **error)
+{
+	gchar **parts;
+
+	if (path == NULL || path[0] == '\0')
+		return TRUE;
+	if (g_path_is_absolute(path))
+		return sakura_agent_filesystem_error(
+			error, G_IO_ERROR_PERMISSION_DENIED,
+			"filesystem paths must be relative to a worktree");
+	parts = g_strsplit(path, G_DIR_SEPARATOR_S, -1);
+	for (gsize index = 0; parts[index] != NULL; index++) {
+		if (g_strcmp0(parts[index], "..") == 0 ||
+		    g_strcmp0(parts[index], ".") == 0) {
+			g_strfreev(parts);
+			return sakura_agent_filesystem_error(
+				error, G_IO_ERROR_PERMISSION_DENIED,
+				"filesystem paths may not contain dot components");
+		}
+	}
+	g_strfreev(parts);
+	return TRUE;
+}
+
+
+static gboolean
+sakura_agent_filesystem_path_within(const gchar *root, const gchar *path)
+{
+	gsize root_length;
+
+	if (root == NULL || path == NULL)
+		return FALSE;
+	root_length = strlen(root);
+	return g_strcmp0(root, path) == 0 ||
+	       (g_str_has_prefix(path, root) && path[root_length] == G_DIR_SEPARATOR);
+}
+
+
+static gchar *
+sakura_agent_filesystem_worktree_root(SakuraAgent *agent,
+	                                    const gchar *worktree_id,
+	                                    GError **error)
+{
+	SakuraCoreGroup *group = NULL;
+	SakuraCoreTask *task = NULL;
+	const gchar *directory;
+	gchar *root;
+
+	if (worktree_id == NULL || worktree_id[0] == '\0' ||
+	    g_strcmp0(worktree_id, "root") == 0) {
+		group = agent->workspace->root_group;
+	} else {
+		group = sakura_core_workspace_find_group(agent->workspace, worktree_id);
+		if (group == NULL)
+			task = sakura_core_workspace_find_task(agent->workspace, worktree_id);
+		if (group == NULL && task == NULL) {
+			sakura_agent_filesystem_error(
+				error, G_IO_ERROR_NOT_FOUND,
+				"worktree %s was not found", worktree_id);
+			return NULL;
+		}
+		if (task != NULL)
+			group = task->group;
+	}
+	directory = group != NULL ? group->directory : NULL;
+	if (directory == NULL || directory[0] == '\0') {
+		sakura_agent_filesystem_error(
+				error, G_IO_ERROR_NOT_FOUND,
+				"worktree %s has no directory",
+				worktree_id != NULL && worktree_id[0] != '\0'
+				? worktree_id : "root");
+		return NULL;
+	}
+	root = realpath(directory, NULL);
+	if (root == NULL || !g_file_test(root, G_FILE_TEST_IS_DIR)) {
+		g_free(root);
+		sakura_agent_filesystem_error(
+			error, G_IO_ERROR_NOT_FOUND,
+		"worktree directory is not available");
+		return NULL;
+	}
+	return root;
+}
+
+
+static gchar *
+sakura_agent_filesystem_resolve_path(SakuraAgent *agent,
+	                                   const SakuraControlRequest *request,
+	                                   gboolean allow_missing,
+	                                   GError **error)
+{
+	gchar *root;
+	gchar *candidate;
+	gchar *resolved = NULL;
+	gchar *parent = NULL;
+	gchar *resolved_parent = NULL;
+	gchar *basename = NULL;
+
+	if (!sakura_agent_filesystem_path_is_safe(request->path, error))
+		return NULL;
+	root = sakura_agent_filesystem_worktree_root(agent, request->worktree_id,
+	                                             error);
+	if (root == NULL)
+		return NULL;
+	candidate = request->path != NULL && request->path[0] != '\0'
+		? g_build_filename(root, request->path, NULL) : g_strdup(root);
+	if (!allow_missing || g_file_test(candidate, G_FILE_TEST_EXISTS))
+		resolved = realpath(candidate, NULL);
+	else {
+		parent = g_path_get_dirname(candidate);
+		resolved_parent = realpath(parent, NULL);
+		if (resolved_parent != NULL) {
+			basename = g_path_get_basename(candidate);
+			resolved = g_build_filename(resolved_parent, basename, NULL);
+		}
+	}
+	if (resolved == NULL || !sakura_agent_filesystem_path_within(root, resolved)) {
+		g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_PERMISSION_DENIED,
+		                    "filesystem path escapes its worktree");
+		g_free(root);
+		g_free(candidate);
+		g_free(parent);
+		g_free(resolved_parent);
+		g_free(basename);
+		g_free(resolved);
+		return NULL;
+	}
+	g_free(root);
+	g_free(candidate);
+	g_free(parent);
+	g_free(resolved_parent);
+	g_free(basename);
+	return resolved;
+}
+
+
+static gchar *
+sakura_agent_filesystem_version(const gchar *path, GStatBuf *stat_buf,
+	                               GError **error)
+{
+	GStatBuf local_stat;
+
+	if (stat_buf == NULL)
+		stat_buf = &local_stat;
+	if (g_stat(path, stat_buf) != 0) {
+		g_set_error(error, G_FILE_ERROR, g_file_error_from_errno(errno),
+		            "could not inspect %s: %s", path, g_strerror(errno));
+		return NULL;
+	}
+	return g_strdup_printf("%"G_GINT64_FORMAT":%"G_GINT64_FORMAT,
+	                       (gint64)stat_buf->st_mtime,
+	                       (gint64)stat_buf->st_size);
+}
+
+
+static gint
+sakura_agent_file_entry_compare(gconstpointer first, gconstpointer second)
+{
+	const SakuraControlFileEntry *a = *(SakuraControlFileEntry * const *)first;
+	const SakuraControlFileEntry *b = *(SakuraControlFileEntry * const *)second;
+
+	if (a->directory != b->directory)
+		return a->directory ? -1 : 1;
+	return g_ascii_strcasecmp(a->name, b->name);
+}
+
+
+static void
+sakura_agent_file_entry_free(gpointer data)
+{
+	SakuraControlFileEntry *entry = data;
+
+	if (entry == NULL)
+		return;
+	g_free(entry->path);
+	g_free(entry->name);
+	g_free(entry->version);
+	g_free(entry);
+}
+
+
+static gboolean
+sakura_agent_file_list(SakuraAgent *agent, const SakuraControlRequest *request,
+	                      const gchar *request_id, GByteArray *response,
+	                      GError **error)
+{
+	gchar *directory = sakura_agent_filesystem_resolve_path(
+		agent, request, FALSE, error);
+	GDir *dir = NULL;
+	GPtrArray *entries = NULL;
+	gchar *root_uri = NULL;
+	gchar *version = NULL;
+	gboolean success = FALSE;
+
+	if (directory == NULL)
+		return FALSE;
+	if (!g_file_test(directory, G_FILE_TEST_IS_DIR)) {
+		g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_NOT_FOUND,
+		                    "filesystem directory was not found");
+		goto out;
+	}
+	dir = g_dir_open(directory, 0, error);
+	if (dir == NULL)
+		goto out;
+	entries = g_ptr_array_new_with_free_func(sakura_agent_file_entry_free);
+	for (const gchar *name = g_dir_read_name(dir); name != NULL;
+	     name = g_dir_read_name(dir)) {
+		gchar *child = g_build_filename(directory, name, NULL);
+		GStatBuf stat_buf;
+		SakuraControlFileEntry *entry;
+
+		if (g_stat(child, &stat_buf) != 0 ||
+		    (!S_ISDIR(stat_buf.st_mode) && !S_ISREG(stat_buf.st_mode))) {
+			g_free(child);
+			continue;
+		}
+		entry = g_new0(SakuraControlFileEntry, 1);
+		entry->name = g_strdup(name);
+		entry->path = request->path != NULL && request->path[0] != '\0'
+			? g_build_filename(request->path, name, NULL) : g_strdup(name);
+		entry->directory = S_ISDIR(stat_buf.st_mode);
+		entry->size = (guint64)stat_buf.st_size;
+		entry->modified_unix = (gint64)stat_buf.st_mtime;
+		entry->readonly = (stat_buf.st_mode & S_IWUSR) == 0;
+		entry->version = sakura_agent_filesystem_version(child, NULL, NULL);
+		g_ptr_array_add(entries, entry);
+		g_free(child);
+	}
+	g_ptr_array_sort(entries, sakura_agent_file_entry_compare);
+	version = sakura_agent_filesystem_version(directory, NULL, NULL);
+	root_uri = g_strdup_printf("sakura://workspace/%s/%s",
+	                           agent->workspace_id,
+	                           request->worktree_id != NULL &&
+	                           request->worktree_id[0] != '\0'
+	                           ? request->worktree_id : "root");
+	success = sakura_control_encode_file_list_response(
+		request_id, root_uri, version, entries, response);
+out:
+	if (dir != NULL)
+		g_dir_close(dir);
+	if (entries != NULL)
+		g_ptr_array_free(entries, TRUE);
+	g_free(root_uri);
+	g_free(version);
+	g_free(directory);
+	return success;
+}
+
+
+static gboolean
+sakura_agent_file_read(SakuraAgent *agent, const SakuraControlRequest *request,
+	                      const gchar *request_id, GByteArray *response,
+	                      GError **error)
+{
+	gchar *path = sakura_agent_filesystem_resolve_path(agent, request, FALSE,
+	                                                   error);
+	GStatBuf stat_buf;
+	gchar *version = NULL;
+	gchar *data = NULL;
+	gsize length;
+	gsize count = 0;
+	gint fd = -1;
+	gboolean read_error = FALSE;
+	gboolean success = FALSE;
+
+	if (path == NULL)
+		return FALSE;
+	if (g_stat(path, &stat_buf) != 0 || !S_ISREG(stat_buf.st_mode)) {
+		g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_NOT_FOUND,
+		                    "filesystem file was not found");
+		goto out;
+	}
+	version = sakura_agent_filesystem_version(path, &stat_buf, error);
+	if (version == NULL)
+		goto out;
+	if (request->expected_file_version != NULL &&
+	    request->expected_file_version[0] != '\0' &&
+	    g_strcmp0(request->expected_file_version, version) != 0) {
+		g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_FAILED,
+		                    "file changed since it was read");
+		goto out;
+	}
+	if (request->file_offset > (guint64)stat_buf.st_size) {
+		g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT,
+		                    "file read offset is past end of file");
+		goto out;
+	}
+	length = (gsize)((guint64)stat_buf.st_size - request->file_offset);
+	if (!request->has_file_length || length > request->file_length)
+		length = request->has_file_length ? request->file_length
+		                                 : 256 * 1024;
+	if (length > 256 * 1024)
+		length = 256 * 1024;
+	if (length != 0)
+		data = g_malloc(length);
+	fd = g_open(path, O_RDONLY | O_CLOEXEC | O_NOFOLLOW, 0);
+	if (fd < 0) {
+		g_set_error(error, G_FILE_ERROR, g_file_error_from_errno(errno),
+		            "could not open %s: %s", path, g_strerror(errno));
+		goto out;
+	}
+	while (count < length) {
+		ssize_t read_count = pread(fd, data + count, length - count,
+		                           (off_t)(request->file_offset + count));
+
+		if (read_count < 0 && errno == EINTR)
+			continue;
+		if (read_count < 0) {
+			read_error = TRUE;
+			break;
+		}
+		if (read_count == 0)
+			break;
+		count += (gsize)read_count;
+	}
+	if (read_error) {
+		g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_FAILED,
+		                    "could not read filesystem file");
+		goto out;
+	}
+	success = sakura_control_encode_file_read_response(
+		request_id, data, count, version,
+		request->file_offset + count >= (guint64)stat_buf.st_size, response);
+out:
+	if (fd >= 0)
+		close(fd);
+	g_free(path);
+	g_free(version);
+	g_free(data);
+	return success;
+}
+
+
+static gboolean
+sakura_agent_file_write(SakuraAgent *agent, const SakuraControlRequest *request,
+	                       const gchar *request_id, GByteArray *response,
+	                       GError **error)
+{
+	gchar *path = sakura_agent_filesystem_resolve_path(agent, request, TRUE,
+	                                                   error);
+	GStatBuf stat_buf;
+	gchar *version = NULL;
+	gchar *new_version = NULL;
+	gint fd = -1;
+	gsize written = 0;
+	gboolean exists;
+	gboolean success = FALSE;
+
+	if (path == NULL)
+		return FALSE;
+	if (request->file_data_length > 256 * 1024) {
+		sakura_agent_filesystem_error(
+			error, G_IO_ERROR_INVALID_ARGUMENT,
+			"filesystem writes are limited to 256 KiB per request");
+		goto out;
+	}
+	exists = g_stat(path, &stat_buf) == 0;
+	if (exists && S_ISDIR(stat_buf.st_mode)) {
+		sakura_agent_filesystem_error(
+			error, G_IO_ERROR_INVALID_ARGUMENT,
+			"cannot write a filesystem directory");
+		goto out;
+	}
+	if (exists)
+		version = sakura_agent_filesystem_version(path, &stat_buf, error);
+	if (exists && version == NULL)
+		goto out;
+	if (request->expected_file_version != NULL &&
+	    request->expected_file_version[0] != '\0' &&
+	    g_strcmp0(request->expected_file_version, version) != 0) {
+		g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_FAILED,
+		                    "file changed since it was read");
+		goto out;
+	}
+	fd = g_open(path, O_WRONLY | O_CREAT | O_CLOEXEC | O_NOFOLLOW,
+	            0666);
+	if (fd < 0) {
+		g_set_error(error, G_FILE_ERROR, g_file_error_from_errno(errno),
+		            "could not open %s for writing: %s", path,
+		            g_strerror(errno));
+		goto out;
+	}
+	if (request->truncate_file && ftruncate(fd, 0) != 0) {
+		g_set_error(error, G_FILE_ERROR, g_file_error_from_errno(errno),
+		            "could not truncate %s: %s", path, g_strerror(errno));
+		goto out;
+	}
+	while (written < request->file_data_length) {
+		ssize_t write_count = write(fd, request->file_data + written,
+		                            request->file_data_length - written);
+
+		if (write_count < 0 && errno == EINTR)
+			continue;
+		if (write_count <= 0) {
+			g_set_error(error, G_FILE_ERROR,
+			            g_file_error_from_errno(errno),
+			            "could not write %s: %s", path, g_strerror(errno));
+			goto out;
+		}
+		written += (gsize)write_count;
+	}
+	if (fsync(fd) != 0) {
+		g_set_error(error, G_FILE_ERROR, g_file_error_from_errno(errno),
+		            "could not flush %s: %s", path, g_strerror(errno));
+		goto out;
+	}
+	new_version = sakura_agent_filesystem_version(path, NULL, error);
+	if (new_version == NULL)
+		goto out;
+	success = sakura_control_encode_file_write_response(request_id,
+	                                                    new_version, response);
+out:
+	if (fd >= 0)
+		close(fd);
+	g_free(path);
+	g_free(version);
+	g_free(new_version);
+	return success;
+}
+
+
+static gboolean
+sakura_agent_handle_filesystem_request(
+	SakuraAgent *agent, const SakuraControlRequest *request,
+	const gchar *request_id, GByteArray *response, GError **error)
+{
+	switch (request->kind) {
+	case SAKURA_CONTROL_REQUEST_LIST_FILES:
+		return sakura_agent_file_list(agent, request, request_id, response, error);
+	case SAKURA_CONTROL_REQUEST_READ_FILE:
+		return sakura_agent_file_read(agent, request, request_id, response, error);
+	case SAKURA_CONTROL_REQUEST_WRITE_FILE:
+		return sakura_agent_file_write(agent, request, request_id, response, error);
+	default:
+		return sakura_agent_error(error, "unsupported filesystem request");
+	}
+}
+
+
+static gboolean
 sakura_agent_apply_request(SakuraAgent *agent,
 	                         const SakuraControlRequest *request,
 	                         gchar **accepted_id,
@@ -1548,6 +2009,11 @@ sakura_agent_connection_thread(gpointer data)
 		                                       request->agent->workspace_revision,
 		                                       request->agent->workspace,
 		                                       response);
+		} else if (decoded.kind == SAKURA_CONTROL_REQUEST_LIST_FILES ||
+		           decoded.kind == SAKURA_CONTROL_REQUEST_READ_FILE ||
+		           decoded.kind == SAKURA_CONTROL_REQUEST_WRITE_FILE) {
+			sakura_agent_handle_filesystem_request(
+				request->agent, &decoded, request_id, response, &error);
 		} else if (decoded.kind == SAKURA_CONTROL_REQUEST_ATTACH_TERMINAL) {
 			gboolean workspace_changed = FALSE;
 

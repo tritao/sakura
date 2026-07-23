@@ -103,6 +103,99 @@ test_snapshot_response_roundtrip(void)
 
 
 static void
+test_filesystem_protocol_roundtrip(void)
+{
+	GByteArray *encoded = g_byte_array_new();
+	SakuraControlRequest request = { 0 };
+	SakuraControlResponse response = { 0 };
+	SakuraControlFileEntry *entry = g_new0(SakuraControlFileEntry, 1);
+	GPtrArray *entries = g_ptr_array_new();
+	GError *error = NULL;
+	const guint8 data[] = { 'o', 'k' };
+
+	g_assert_true(sakura_control_encode_list_files_request(
+		"list-files", "task-1", "src", encoded));
+	g_assert_true(sakura_control_decode_request(encoded->data, encoded->len,
+	                                           &request, &error));
+	g_assert_no_error(error);
+	g_assert_cmpint(request.kind, ==, SAKURA_CONTROL_REQUEST_LIST_FILES);
+	g_assert_cmpstr(request.worktree_id, ==, "task-1");
+	g_assert_cmpstr(request.path, ==, "src");
+	sakura_control_request_clear(&request);
+	g_byte_array_set_size(encoded, 0);
+
+	g_assert_true(sakura_control_encode_read_file_request(
+		"read-file", "task-1", "src/main.c", 4, 128, TRUE, "v1",
+		encoded));
+	g_assert_true(sakura_control_decode_request(encoded->data, encoded->len,
+	                                           &request, &error));
+	g_assert_no_error(error);
+	g_assert_cmpint(request.kind, ==, SAKURA_CONTROL_REQUEST_READ_FILE);
+	g_assert_cmpuint(request.file_offset, ==, 4);
+	g_assert_cmpuint(request.file_length, ==, 128);
+	g_assert_true(request.has_file_length);
+	g_assert_cmpstr(request.expected_file_version, ==, "v1");
+	sakura_control_request_clear(&request);
+	g_byte_array_set_size(encoded, 0);
+
+	g_assert_true(sakura_control_encode_write_file_request(
+		"write-file", "task-1", "src/main.c", data, sizeof(data), "v1",
+		TRUE, encoded));
+	g_assert_true(sakura_control_decode_request(encoded->data, encoded->len,
+	                                           &request, &error));
+	g_assert_no_error(error);
+	g_assert_cmpint(request.kind, ==, SAKURA_CONTROL_REQUEST_WRITE_FILE);
+	g_assert_cmpuint(request.file_data_length, ==, sizeof(data));
+	g_assert_cmpmem(request.file_data, request.file_data_length,
+	                data, sizeof(data));
+	g_assert_true(request.truncate_file);
+	sakura_control_request_clear(&request);
+	g_byte_array_set_size(encoded, 0);
+
+	entry->path = g_strdup("src/main.c");
+	entry->name = g_strdup("main.c");
+	entry->directory = FALSE;
+	entry->size = sizeof(data);
+	entry->modified_unix = 42;
+	entry->readonly = FALSE;
+	entry->version = g_strdup("v2");
+	g_ptr_array_add(entries, entry);
+	g_assert_true(sakura_control_encode_file_list_response(
+		"list-response", "sakura://workspace/ws/task-1", "dir-v1",
+		entries, encoded));
+	g_ptr_array_free(entries, TRUE);
+	g_free(entry->path);
+	g_free(entry->name);
+	g_free(entry->version);
+	g_free(entry);
+	entries = NULL;
+	g_assert_true(sakura_control_decode_response(encoded->data, encoded->len,
+	                                            &response, &error));
+	g_assert_no_error(error);
+	g_assert_true(response.has_file_list);
+	g_assert_cmpuint(response.file_entries->len, ==, 1);
+	entry = g_ptr_array_index(response.file_entries, 0);
+	g_assert_cmpstr(entry->path, ==, "src/main.c");
+	g_assert_cmpstr(response.file_version, ==, "dir-v1");
+	sakura_control_response_clear(&response);
+	g_byte_array_set_size(encoded, 0);
+
+	g_assert_true(sakura_control_encode_file_read_response(
+		"read-response", (const gchar *)data, sizeof(data), "v2", TRUE,
+		encoded));
+	g_assert_true(sakura_control_decode_response(encoded->data, encoded->len,
+	                                            &response, &error));
+	g_assert_no_error(error);
+	g_assert_true(response.has_file_read);
+	g_assert_cmpmem(response.file_data, response.file_data_length,
+	                data, sizeof(data));
+	g_assert_true(response.file_eof);
+	sakura_control_response_clear(&response);
+	g_byte_array_unref(encoded);
+}
+
+
+static void
 test_terminal_output_offsets_roundtrip(void)
 {
 	const guint8 data[] = { 'a', 'b', 'c' };
@@ -740,7 +833,8 @@ test_agent_call_on_connection(GSocketConnection *connection,
 	g_assert_no_error(error);
 	g_assert_cmpstr(response->request_id, ==, request_id);
 	g_assert_true(response->has_snapshot || response->accepted ||
-	              response->attached);
+	              response->attached || response->has_file_list ||
+	              response->has_file_read || response->has_file_write);
 	g_clear_pointer(&response_payload, g_byte_array_unref);
 }
 
@@ -818,6 +912,137 @@ test_agent_rejects_stale_revision(void)
 	g_remove(session_path);
 	g_remove(socket_path);
 	g_rmdir(directory);
+	g_free(session_path);
+	g_free(socket_path);
+	g_free(directory);
+}
+
+
+static void
+test_agent_filesystem_roundtrip(void)
+{
+	GSubprocess *process;
+	GSocketConnection *connection;
+	GByteArray *request = g_byte_array_new();
+	GByteArray *response_payload = NULL;
+	SakuraControlResponse response = { 0 };
+	SakuraSessionSnapshot *snapshot;
+	SakuraControlFileEntry *entry;
+	GError *error = NULL;
+	gchar *directory;
+	gchar *socket_path;
+	gchar *session_path;
+	gchar *file_path;
+	gchar *version = NULL;
+
+	directory = g_dir_make_tmp("sakura-agent-files-XXXXXX", &error);
+	g_assert_no_error(error);
+	socket_path = g_build_filename(directory, "agent.sock", NULL);
+	session_path = g_build_filename(directory, "workspace.session", NULL);
+	file_path = g_build_filename(directory, "remote.txt", NULL);
+	snapshot = sakura_session_snapshot_new();
+	g_free(snapshot->root_directory);
+	snapshot->root_directory = g_strdup(directory);
+	test_save_agent_session(session_path, snapshot);
+	sakura_session_snapshot_free(snapshot);
+	g_assert_true(g_file_set_contents(file_path, "hello", -1, &error));
+	g_assert_no_error(error);
+	process = test_agent_start(socket_path, session_path);
+
+	g_assert_true(sakura_control_encode_list_files_request(
+		"files-list", "root", "", request));
+	test_agent_call(socket_path, "files-list", request, &response);
+	g_assert_true(response.has_file_list);
+	g_assert_nonnull(response.file_entries);
+	g_assert_cmpuint(response.file_entries->len, >=, 1);
+	entry = NULL;
+	for (guint index = 0; index < response.file_entries->len; index++) {
+		SakuraControlFileEntry *candidate = g_ptr_array_index(
+			response.file_entries, index);
+		if (g_strcmp0(candidate->name, "remote.txt") == 0) {
+			entry = candidate;
+			break;
+		}
+	}
+	g_assert_nonnull(entry);
+	g_assert_cmpstr(entry->name, ==, "remote.txt");
+	sakura_control_response_clear(&response);
+	g_byte_array_set_size(request, 0);
+
+	g_assert_true(sakura_control_encode_read_file_request(
+		"files-read", "root", "remote.txt", 0, 256, TRUE, NULL, request));
+	test_agent_call(socket_path, "files-read", request, &response);
+	g_assert_true(response.has_file_read);
+	g_assert_cmpmem(response.file_data, response.file_data_length,
+	                "hello", 5);
+	g_assert_true(response.file_eof);
+	version = g_strdup(response.file_version);
+	sakura_control_response_clear(&response);
+	g_byte_array_set_size(request, 0);
+
+	g_assert_true(sakura_control_encode_write_file_request(
+		"files-write", "root", "remote.txt", (const guint8 *)"hello world",
+		11, version, TRUE, request));
+	test_agent_call(socket_path, "files-write", request, &response);
+	g_assert_true(response.has_file_write);
+	g_assert_cmpstr(response.file_version, !=, version);
+	sakura_control_response_clear(&response);
+	g_byte_array_set_size(request, 0);
+
+	g_assert_true(sakura_control_encode_read_file_request(
+		"files-stale-read", "root", "remote.txt", 0, 256, TRUE, version,
+		request));
+	connection = test_agent_connect_wait(socket_path);
+	test_agent_handshake_on_connection(connection);
+	g_assert_true(sakura_control_frame_write(
+		g_io_stream_get_output_stream(G_IO_STREAM(connection)), request->data,
+		request->len, NULL, &error));
+	g_assert_no_error(error);
+	g_assert_true(sakura_control_frame_read(
+		g_io_stream_get_input_stream(G_IO_STREAM(connection)), &response_payload,
+		NULL, &error));
+	g_assert_no_error(error);
+	g_assert_false(sakura_control_decode_response(
+		response_payload->data, response_payload->len, &response, &error));
+	g_assert_error(error, SAKURA_CONTROL_ERROR_DOMAIN,
+	               SAKURA_CONTROL_ERROR_CODE_REVISION_CONFLICT);
+	g_clear_error(&error);
+	sakura_control_response_clear(&response);
+	g_clear_pointer(&response_payload, g_byte_array_unref);
+	g_io_stream_close(G_IO_STREAM(connection), NULL, NULL);
+	g_object_unref(connection);
+	g_byte_array_set_size(request, 0);
+
+	g_assert_true(sakura_control_encode_list_files_request(
+		"files-escape", "root", "../", request));
+	connection = test_agent_connect_wait(socket_path);
+	test_agent_handshake_on_connection(connection);
+	g_assert_true(sakura_control_frame_write(
+		g_io_stream_get_output_stream(G_IO_STREAM(connection)), request->data,
+		request->len, NULL, &error));
+	g_assert_no_error(error);
+	g_assert_true(sakura_control_frame_read(
+		g_io_stream_get_input_stream(G_IO_STREAM(connection)), &response_payload,
+		NULL, &error));
+	g_assert_no_error(error);
+	g_assert_false(sakura_control_decode_response(
+		response_payload->data, response_payload->len, &response, &error));
+	g_assert_error(error, SAKURA_CONTROL_ERROR_DOMAIN,
+	               SAKURA_CONTROL_ERROR_CODE_UNAUTHORIZED);
+	g_clear_error(&error);
+	sakura_control_response_clear(&response);
+	g_clear_pointer(&response_payload, g_byte_array_unref);
+	g_io_stream_close(G_IO_STREAM(connection), NULL, NULL);
+	g_object_unref(connection);
+
+	g_byte_array_unref(request);
+	g_free(version);
+	test_agent_stop(process);
+	g_remove(file_path);
+	g_remove(session_path);
+	g_remove(socket_path);
+	g_rmdir(directory);
+	g_free(file_path);
 	g_free(session_path);
 	g_free(socket_path);
 	g_free(directory);
@@ -2189,6 +2414,8 @@ main(int argc, char **argv)
 	                test_request_frame_roundtrip);
 	g_test_add_func("/control/snapshot-response-roundtrip",
 	                test_snapshot_response_roundtrip);
+	g_test_add_func("/control/filesystem-protocol-roundtrip",
+	                test_filesystem_protocol_roundtrip);
 	g_test_add_func("/control/hello-roundtrip",
 	                test_hello_roundtrip);
 	g_test_add_func("/control/terminal-output-offsets-roundtrip",
@@ -2207,6 +2434,8 @@ main(int argc, char **argv)
 	                test_agent_rejects_wrong_workspace);
 	g_test_add_func("/control/agent-rejects-stale-revision",
 	                test_agent_rejects_stale_revision);
+	g_test_add_func("/control/agent-filesystem-roundtrip",
+	                test_agent_filesystem_roundtrip);
 	g_test_add_func("/control/agent-terminal-create-rollback",
 	                test_agent_terminal_create_rollback);
 	g_test_add_func("/control/agent-slow-subscriber-disconnects",

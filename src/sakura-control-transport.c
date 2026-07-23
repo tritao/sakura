@@ -46,6 +46,20 @@ sakura_control_string(const gchar *value)
 }
 
 
+static void
+sakura_control_file_entry_free(gpointer data)
+{
+	SakuraControlFileEntry *entry = data;
+
+	if (entry == NULL)
+		return;
+	g_free(entry->path);
+	g_free(entry->name);
+	g_free(entry->version);
+	g_free(entry);
+}
+
+
 static gboolean
 sakura_control_pack_message(const ProtobufCMessage *message, GByteArray *payload)
 {
@@ -85,6 +99,9 @@ sakura_control_request_clear(SakuraControlRequest *request)
 	g_clear_pointer(&request->url, g_free);
 	g_clear_pointer(&request->client_name, g_free);
 	g_clear_pointer(&request->workspace_id, g_free);
+	g_clear_pointer(&request->worktree_id, g_free);
+	g_clear_pointer(&request->path, g_free);
+	g_clear_pointer(&request->expected_file_version, g_free);
 	request->kind = SAKURA_CONTROL_REQUEST_NONE;
 	request->archived = FALSE;
 	request->after = FALSE;
@@ -99,6 +116,12 @@ sakura_control_request_clear(SakuraControlRequest *request)
 	request->after_output_offset = 0;
 	request->has_expected_revision = FALSE;
 	request->expected_revision = 0;
+	request->file_offset = 0;
+	request->file_length = 0;
+	request->has_file_length = FALSE;
+	g_clear_pointer(&request->file_data, g_free);
+	request->file_data_length = 0;
+	request->truncate_file = FALSE;
 }
 
 
@@ -116,6 +139,11 @@ sakura_control_response_clear(SakuraControlResponse *response)
 	g_clear_pointer(&response->workspace_id, g_free);
 	g_clear_pointer(&response->attached_terminal_id, g_free);
 	g_clear_pointer(&response->attached_output, g_free);
+	g_clear_pointer(&response->file_root_uri, g_free);
+	g_clear_pointer(&response->file_version, g_free);
+	g_clear_pointer(&response->file_data, g_free);
+	if (response->file_entries != NULL)
+		g_ptr_array_free(response->file_entries, TRUE);
 	response->has_snapshot = FALSE;
 	response->has_error = FALSE;
 	response->error_retryable = FALSE;
@@ -131,6 +159,12 @@ sakura_control_response_clear(SakuraControlResponse *response)
 	response->attached_output_length = 0;
 	response->attached_output_start_offset = 0;
 	response->attached_output_end_offset = 0;
+	response->has_file_list = FALSE;
+	response->file_entries = NULL;
+	response->has_file_read = FALSE;
+	response->file_data_length = 0;
+	response->file_eof = FALSE;
+	response->has_file_write = FALSE;
 	response->workspace_revision = 0;
 }
 
@@ -234,6 +268,89 @@ sakura_control_encode_get_snapshot_request(const gchar *request_id,
 	request.request_id = (gchar *)request_id;
 	request.body_case = SAKURA__CONTROL__V1__REQUEST__BODY_GET_SNAPSHOT;
 	request.get_snapshot = &get_snapshot;
+	return sakura_control_pack_message(&request.base, payload);
+}
+
+
+gboolean
+sakura_control_encode_list_files_request(const gchar *request_id,
+	                                         const gchar *worktree_id,
+	                                         const gchar *path,
+	                                         GByteArray *payload)
+{
+	Sakura__Control__V1__ListFilesRequest list_files =
+		SAKURA__CONTROL__V1__LIST_FILES_REQUEST__INIT;
+	Sakura__Control__V1__Request request =
+		SAKURA__CONTROL__V1__REQUEST__INIT;
+
+	if (payload == NULL || request_id == NULL || request_id[0] == '\0')
+		return FALSE;
+	list_files.worktree_id = (gchar *)sakura_control_string(worktree_id);
+	list_files.path = (gchar *)sakura_control_string(path);
+	request.request_id = (gchar *)request_id;
+	request.body_case = SAKURA__CONTROL__V1__REQUEST__BODY_LIST_FILES;
+	request.list_files = &list_files;
+	return sakura_control_pack_message(&request.base, payload);
+}
+
+
+gboolean
+sakura_control_encode_read_file_request(const gchar *request_id,
+	                                        const gchar *worktree_id,
+	                                        const gchar *path, guint64 offset,
+	                                        guint64 length, gboolean has_length,
+	                                        const gchar *expected_version,
+	                                        GByteArray *payload)
+{
+	Sakura__Control__V1__ReadFileRequest read_file =
+		SAKURA__CONTROL__V1__READ_FILE_REQUEST__INIT;
+	Sakura__Control__V1__Request request =
+		SAKURA__CONTROL__V1__REQUEST__INIT;
+
+	if (payload == NULL || request_id == NULL || request_id[0] == '\0')
+		return FALSE;
+	read_file.worktree_id = (gchar *)sakura_control_string(worktree_id);
+	read_file.path = (gchar *)sakura_control_string(path);
+	read_file.offset = offset;
+	read_file.length = length;
+	read_file.has_length = has_length;
+	read_file.expected_version =
+		(gchar *)sakura_control_string(expected_version);
+	request.request_id = (gchar *)request_id;
+	request.body_case = SAKURA__CONTROL__V1__REQUEST__BODY_READ_FILE;
+	request.read_file = &read_file;
+	return sakura_control_pack_message(&request.base, payload);
+}
+
+
+gboolean
+sakura_control_encode_write_file_request(const gchar *request_id,
+	                                         const gchar *worktree_id,
+	                                         const gchar *path,
+	                                         const guint8 *data,
+	                                         gsize data_length,
+	                                         const gchar *expected_version,
+	                                         gboolean truncate,
+	                                         GByteArray *payload)
+{
+	Sakura__Control__V1__WriteFileRequest write_file =
+		SAKURA__CONTROL__V1__WRITE_FILE_REQUEST__INIT;
+	Sakura__Control__V1__Request request =
+		SAKURA__CONTROL__V1__REQUEST__INIT;
+
+	if (payload == NULL || request_id == NULL || request_id[0] == '\0' ||
+	    (data == NULL && data_length != 0))
+		return FALSE;
+	write_file.worktree_id = (gchar *)sakura_control_string(worktree_id);
+	write_file.path = (gchar *)sakura_control_string(path);
+	write_file.data.data = (guint8 *)data;
+	write_file.data.len = data_length;
+	write_file.expected_version =
+		(gchar *)sakura_control_string(expected_version);
+	write_file.truncate = truncate;
+	request.request_id = (gchar *)request_id;
+	request.body_case = SAKURA__CONTROL__V1__REQUEST__BODY_WRITE_FILE;
+	request.write_file = &write_file;
 	return sakura_control_pack_message(&request.base, payload);
 }
 
@@ -928,6 +1045,41 @@ sakura_control_decode_request(const guint8 *payload,
 			request->after = decoded->move_group->after;
 		}
 		break;
+	case SAKURA__CONTROL__V1__REQUEST__BODY_LIST_FILES:
+		if (decoded->list_files != NULL) {
+			request->kind = SAKURA_CONTROL_REQUEST_LIST_FILES;
+			request->worktree_id = g_strdup(decoded->list_files->worktree_id);
+			request->path = g_strdup(decoded->list_files->path);
+		}
+		break;
+	case SAKURA__CONTROL__V1__REQUEST__BODY_READ_FILE:
+		if (decoded->read_file != NULL) {
+			request->kind = SAKURA_CONTROL_REQUEST_READ_FILE;
+			request->worktree_id = g_strdup(decoded->read_file->worktree_id);
+			request->path = g_strdup(decoded->read_file->path);
+			request->file_offset = decoded->read_file->offset;
+			request->file_length = decoded->read_file->length;
+			request->has_file_length = decoded->read_file->has_length;
+			request->expected_file_version =
+				g_strdup(decoded->read_file->expected_version);
+		}
+		break;
+	case SAKURA__CONTROL__V1__REQUEST__BODY_WRITE_FILE:
+		if (decoded->write_file != NULL) {
+			request->kind = SAKURA_CONTROL_REQUEST_WRITE_FILE;
+			request->worktree_id = g_strdup(decoded->write_file->worktree_id);
+			request->path = g_strdup(decoded->write_file->path);
+			request->expected_file_version =
+				g_strdup(decoded->write_file->expected_version);
+			request->truncate_file = decoded->write_file->truncate;
+			request->file_data_length = decoded->write_file->data.len;
+			if (request->file_data_length != 0) {
+				request->file_data = g_malloc(request->file_data_length);
+				memcpy(request->file_data, decoded->write_file->data.data,
+				       request->file_data_length);
+			}
+		}
+		break;
 	case SAKURA__CONTROL__V1__REQUEST__BODY_SET_GROUP_ARCHIVED:
 		if (decoded->set_group_archived != NULL) {
 			request->kind = SAKURA_CONTROL_REQUEST_SET_GROUP_ARCHIVED;
@@ -1396,6 +1548,104 @@ sakura_control_encode_hello_response(const gchar *request_id,
 
 
 gboolean
+sakura_control_encode_file_list_response(const gchar *request_id,
+	                                         const gchar *root_uri,
+	                                         const gchar *version,
+	                                         const GPtrArray *entries,
+	                                         GByteArray *payload)
+{
+	Sakura__Control__V1__FileListResponse file_list =
+		SAKURA__CONTROL__V1__FILE_LIST_RESPONSE__INIT;
+	Sakura__Control__V1__Response response =
+		SAKURA__CONTROL__V1__RESPONSE__INIT;
+	Sakura__Control__V1__FileEntry **wire_entries = NULL;
+	gsize count = entries != NULL ? entries->len : 0;
+	gboolean success;
+
+	if (request_id == NULL || request_id[0] == '\0' || payload == NULL)
+		return FALSE;
+	if (count != 0) {
+		wire_entries = g_new0(Sakura__Control__V1__FileEntry *, count);
+		for (gsize index = 0; index < count; index++) {
+			const SakuraControlFileEntry *entry = g_ptr_array_index(
+				entries, index);
+			Sakura__Control__V1__FileEntry *wire = g_new0(
+				Sakura__Control__V1__FileEntry, 1);
+
+			sakura__control__v1__file_entry__init(wire);
+			wire->path = (gchar *)sakura_control_string(entry->path);
+			wire->name = (gchar *)sakura_control_string(entry->name);
+			wire->directory = entry->directory;
+			wire->size = entry->size;
+			wire->modified_unix = entry->modified_unix;
+			wire->readonly = entry->readonly;
+			wire->version = (gchar *)sakura_control_string(entry->version);
+			wire_entries[index] = wire;
+		}
+	}
+	file_list.n_entries = count;
+	file_list.entries = wire_entries;
+	file_list.root_uri = (gchar *)sakura_control_string(root_uri);
+	file_list.version = (gchar *)sakura_control_string(version);
+	response.request_id = (gchar *)request_id;
+	response.body_case = SAKURA__CONTROL__V1__RESPONSE__BODY_FILE_LIST;
+	response.file_list = &file_list;
+	success = sakura_control_pack_message(&response.base, payload);
+	for (gsize index = 0; index < count; index++)
+		g_free(wire_entries[index]);
+	g_free(wire_entries);
+	return success;
+}
+
+
+gboolean
+sakura_control_encode_file_read_response(const gchar *request_id,
+	                                         const gchar *data,
+	                                         gsize data_length,
+	                                         const gchar *version,
+	                                         gboolean eof,
+	                                         GByteArray *payload)
+{
+	Sakura__Control__V1__FileReadResponse file_read =
+		SAKURA__CONTROL__V1__FILE_READ_RESPONSE__INIT;
+	Sakura__Control__V1__Response response =
+		SAKURA__CONTROL__V1__RESPONSE__INIT;
+
+	if (request_id == NULL || request_id[0] == '\0' || payload == NULL ||
+	    (data == NULL && data_length != 0))
+		return FALSE;
+	file_read.data.data = (guint8 *)data;
+	file_read.data.len = data_length;
+	file_read.version = (gchar *)sakura_control_string(version);
+	file_read.eof = eof;
+	response.request_id = (gchar *)request_id;
+	response.body_case = SAKURA__CONTROL__V1__RESPONSE__BODY_FILE_READ;
+	response.file_read = &file_read;
+	return sakura_control_pack_message(&response.base, payload);
+}
+
+
+gboolean
+sakura_control_encode_file_write_response(const gchar *request_id,
+	                                          const gchar *version,
+	                                          GByteArray *payload)
+{
+	Sakura__Control__V1__FileWriteResponse file_write =
+		SAKURA__CONTROL__V1__FILE_WRITE_RESPONSE__INIT;
+	Sakura__Control__V1__Response response =
+		SAKURA__CONTROL__V1__RESPONSE__INIT;
+
+	if (request_id == NULL || request_id[0] == '\0' || payload == NULL)
+		return FALSE;
+	file_write.version = (gchar *)sakura_control_string(version);
+	response.request_id = (gchar *)request_id;
+	response.body_case = SAKURA__CONTROL__V1__RESPONSE__BODY_FILE_WRITE;
+	response.file_write = &file_write;
+	return sakura_control_pack_message(&response.base, payload);
+}
+
+
+gboolean
 sakura_control_encode_terminal_attachment_response(
 	const gchar *request_id, const SakuraCoreTerminal *terminal,
 	const guint8 *replay_data, gsize replay_data_length, GByteArray *payload)
@@ -1546,6 +1796,9 @@ sakura_control_decode_response(const guint8 *payload,
 	gboolean accepted;
 	gboolean hello;
 	gboolean attached;
+	gboolean has_file_list;
+	gboolean has_file_read;
+	gboolean has_file_write;
 
 	if (payload == NULL || response == NULL)
 		return sakura_control_error(error, "invalid control response");
@@ -1584,6 +1837,15 @@ sakura_control_decode_response(const guint8 *payload,
 		decoded->body_case ==
 			SAKURA__CONTROL__V1__RESPONSE__BODY_TERMINAL_ATTACHMENT &&
 		decoded->terminal_attachment != NULL;
+	has_file_list =
+		decoded->body_case == SAKURA__CONTROL__V1__RESPONSE__BODY_FILE_LIST &&
+		decoded->file_list != NULL;
+	has_file_read =
+		decoded->body_case == SAKURA__CONTROL__V1__RESPONSE__BODY_FILE_READ &&
+		decoded->file_read != NULL;
+	has_file_write =
+		decoded->body_case == SAKURA__CONTROL__V1__RESPONSE__BODY_FILE_WRITE &&
+		decoded->file_write != NULL;
 	if (accepted) {
 		response->accepted_kind = g_strdup(decoded->accepted->kind);
 		response->accepted_id = g_strdup(decoded->accepted->id);
@@ -1614,14 +1876,56 @@ sakura_control_decode_response(const guint8 *payload,
 			       response->attached_output_length);
 		}
 	}
+	if (has_file_list) {
+		Sakura__Control__V1__FileListResponse *file_list =
+			decoded->file_list;
+
+		response->has_file_list = TRUE;
+		response->file_root_uri = g_strdup(file_list->root_uri);
+		response->file_version = g_strdup(file_list->version);
+		response->file_entries = g_ptr_array_new_with_free_func(
+			sakura_control_file_entry_free);
+		for (gsize index = 0; index < file_list->n_entries; index++) {
+			Sakura__Control__V1__FileEntry *wire = file_list->entries[index];
+			SakuraControlFileEntry *entry = g_new0(SakuraControlFileEntry, 1);
+
+			entry->path = g_strdup(wire->path);
+			entry->name = g_strdup(wire->name);
+			entry->directory = wire->directory;
+			entry->size = wire->size;
+			entry->modified_unix = wire->modified_unix;
+			entry->readonly = wire->readonly;
+			entry->version = g_strdup(wire->version);
+			g_ptr_array_add(response->file_entries, entry);
+		}
+	}
+	if (has_file_read) {
+		response->has_file_read = TRUE;
+		response->file_version = g_strdup(decoded->file_read->version);
+		response->file_eof = decoded->file_read->eof;
+		response->file_data_length = decoded->file_read->data.len;
+		if (response->file_data_length != 0) {
+			response->file_data = g_malloc(response->file_data_length);
+			memcpy(response->file_data, decoded->file_read->data.data,
+			       response->file_data_length);
+		}
+	}
+	if (has_file_write) {
+		response->has_file_write = TRUE;
+		response->file_version = g_strdup(decoded->file_write->version);
+	}
 	sakura__control__v1__response__free_unpacked(decoded, NULL);
 	response->has_snapshot = has_snapshot;
 	response->accepted = accepted;
 	response->hello = hello;
 	response->attached = attached;
+	response->has_file_list = has_file_list;
+	response->has_file_read = has_file_read;
+	response->has_file_write = has_file_write;
 	if (response->request_id == NULL ||
 	    (!response->has_snapshot && !response->accepted && !response->hello &&
-	     !response->attached))
+	     !response->attached && !has_file_list && !has_file_read &&
+	     !has_file_write))
 		return sakura_control_error(error, "unsupported control response");
 	return TRUE;
 }

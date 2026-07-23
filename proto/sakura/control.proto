@@ -103,6 +103,40 @@ message MoveGroupRequest {
   bool after = 4;
 }
 
+// File paths are always relative to the selected worktree. The agent owns
+// the worktree-to-directory mapping and must reject paths that escape it.
+message FileEntry {
+  string path = 1;
+  string name = 2;
+  bool directory = 3;
+  uint64 size = 4;
+  int64 modified_unix = 5;
+  bool readonly = 6;
+  string version = 7;
+}
+
+message ListFilesRequest {
+  string worktree_id = 1;
+  string path = 2;
+}
+
+message ReadFileRequest {
+  string worktree_id = 1;
+  string path = 2;
+  uint64 offset = 3;
+  uint64 length = 4;
+  bool has_length = 5;
+  string expected_version = 6;
+}
+
+message WriteFileRequest {
+  string worktree_id = 1;
+  string path = 2;
+  bytes data = 3;
+  string expected_version = 4;
+  bool truncate = 5;
+}
+
 message SetGroupArchivedRequest {
   string group_id = 1;
   bool archived = 2;
@@ -236,6 +270,9 @@ message Request {
     UpdatePageRequest update_page = 20;
     DeletePageRequest delete_page = 21;
     MoveGroupRequest move_group = 22;
+    ListFilesRequest list_files = 26;
+    ReadFileRequest read_file = 27;
+    WriteFileRequest write_file = 28;
   }
   uint64 expected_revision = 23;
   bool has_expected_revision = 24;
@@ -249,6 +286,9 @@ message Response {
     Error error = 4;
     TerminalAttachment terminal_attachment = 5;
     HelloResponse hello = 6;
+    FileListResponse file_list = 8;
+    FileReadResponse file_read = 9;
+    FileWriteResponse file_write = 10;
   }
   uint64 workspace_revision = 7;
 }
@@ -268,6 +308,22 @@ message TerminalAttachment {
   bytes replay_data = 5;
   uint64 replay_start_offset = 6;
   uint64 replay_end_offset = 7;
+}
+
+message FileListResponse {
+  repeated FileEntry entries = 1;
+  string root_uri = 2;
+  string version = 3;
+}
+
+message FileReadResponse {
+  bytes data = 1;
+  string version = 2;
+  bool eof = 3;
+}
+
+message FileWriteResponse {
+  string version = 1;
 }
 
 message WorkspaceChanged {

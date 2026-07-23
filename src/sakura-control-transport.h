@@ -28,8 +28,21 @@ typedef enum {
 	SAKURA_CONTROL_REQUEST_RESTART_TERMINAL,
 	SAKURA_CONTROL_REQUEST_UPDATE_PAGE,
 	SAKURA_CONTROL_REQUEST_DELETE_PAGE,
-	SAKURA_CONTROL_REQUEST_MOVE_GROUP
+	SAKURA_CONTROL_REQUEST_MOVE_GROUP,
+	SAKURA_CONTROL_REQUEST_LIST_FILES,
+	SAKURA_CONTROL_REQUEST_READ_FILE,
+	SAKURA_CONTROL_REQUEST_WRITE_FILE
 } SakuraControlRequestKind;
+
+typedef struct {
+	gchar *path;
+	gchar *name;
+	gboolean directory;
+	guint64 size;
+	gint64 modified_unix;
+	gboolean readonly;
+	gchar *version;
+} SakuraControlFileEntry;
 
 typedef struct {
 	gchar *request_id;
@@ -50,6 +63,9 @@ typedef struct {
 	gchar *url;
 	gchar *client_name;
 	gchar *workspace_id;
+	gchar *worktree_id;
+	gchar *path;
+	gchar *expected_file_version;
 	gboolean archived;
 	gboolean after;
 	gboolean title_set_by_user;
@@ -63,6 +79,12 @@ typedef struct {
 	guint64 after_output_offset;
 	gboolean has_expected_revision;
 	guint64 expected_revision;
+	guint64 file_offset;
+	guint64 file_length;
+	gboolean has_file_length;
+	guint8 *file_data;
+	gsize file_data_length;
+	gboolean truncate_file;
 } SakuraControlRequest;
 
 typedef struct {
@@ -90,6 +112,15 @@ typedef struct {
 	gsize attached_output_length;
 	guint64 attached_output_start_offset;
 	guint64 attached_output_end_offset;
+	gboolean has_file_list;
+	gchar *file_root_uri;
+	gchar *file_version;
+	GPtrArray *file_entries; /* SakuraControlFileEntry *, owned. */
+	gboolean has_file_read;
+	guint8 *file_data;
+	gsize file_data_length;
+	gboolean file_eof;
+	gboolean has_file_write;
 	guint64 workspace_revision;
 } SakuraControlResponse;
 
@@ -116,6 +147,17 @@ gboolean sakura_control_frame_write(GOutputStream *output,
 
 gboolean sakura_control_encode_get_snapshot_request(const gchar *request_id,
 	                                                  GByteArray *payload);
+gboolean sakura_control_encode_list_files_request(
+	const gchar *request_id, const gchar *worktree_id, const gchar *path,
+	GByteArray *payload);
+gboolean sakura_control_encode_read_file_request(
+	const gchar *request_id, const gchar *worktree_id, const gchar *path,
+	guint64 offset, guint64 length, gboolean has_length,
+	const gchar *expected_version, GByteArray *payload);
+gboolean sakura_control_encode_write_file_request(
+	const gchar *request_id, const gchar *worktree_id, const gchar *path,
+	const guint8 *data, gsize data_length, const gchar *expected_version,
+	gboolean truncate, GByteArray *payload);
 gboolean sakura_control_request_set_expected_revision(GByteArray *payload,
 	                                                   guint64 revision);
 gboolean sakura_control_encode_hello_request(const gchar *request_id,
@@ -225,6 +267,14 @@ gboolean sakura_control_encode_hello_response(const gchar *request_id,
 	                                    guint64 capabilities,
 	                                    const gchar *workspace_id,
 	                                    GByteArray *payload);
+gboolean sakura_control_encode_file_list_response(
+	const gchar *request_id, const gchar *root_uri, const gchar *version,
+	const GPtrArray *entries, GByteArray *payload);
+gboolean sakura_control_encode_file_read_response(
+	const gchar *request_id, const gchar *data, gsize data_length,
+	const gchar *version, gboolean eof, GByteArray *payload);
+gboolean sakura_control_encode_file_write_response(
+	const gchar *request_id, const gchar *version, GByteArray *payload);
 gboolean sakura_control_encode_terminal_attachment_response(
 	const gchar *request_id, const SakuraCoreTerminal *terminal,
 	const guint8 *replay_data, gsize replay_data_length, GByteArray *payload);
