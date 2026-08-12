@@ -765,7 +765,58 @@ test_agent_stop(GSubprocess *process)
 	g_subprocess_send_signal(process, SIGTERM);
 	g_assert_true(g_subprocess_wait(process, NULL, &error));
 	g_assert_no_error(error);
+	g_assert_true(g_subprocess_get_successful(process));
 	g_object_unref(process);
+}
+
+
+static void test_agent_handshake_on_connection(GSocketConnection *connection);
+
+
+static void
+test_agent_shutdown_with_active_subscriber(void)
+{
+	g_autofree gchar *directory = NULL;
+	g_autofree gchar *socket_path = NULL;
+	g_autofree gchar *session_path = NULL;
+	GSubprocess *process;
+	GSocketConnection *subscriber;
+	GByteArray *request = g_byte_array_new();
+	GByteArray *response = NULL;
+	GError *error = NULL;
+
+	directory = g_dir_make_tmp("sakura-agent-shutdown-XXXXXX", &error);
+	g_assert_no_error(error);
+	g_assert_nonnull(directory);
+	socket_path = g_build_filename(directory, "agent.sock", NULL);
+	session_path = g_build_filename(directory, "session", NULL);
+	process = test_agent_start(socket_path, session_path);
+	subscriber = test_agent_connect_wait(socket_path);
+	test_agent_handshake_on_connection(subscriber);
+	g_assert_true(sakura_control_encode_subscribe_events_request(
+		"shutdown-subscribe", 0, request));
+	g_assert_true(sakura_control_frame_write(
+		g_io_stream_get_output_stream(G_IO_STREAM(subscriber)), request->data,
+		request->len, NULL, &error));
+	g_assert_no_error(error);
+	g_assert_true(sakura_control_frame_read(
+		g_io_stream_get_input_stream(G_IO_STREAM(subscriber)), &response, NULL,
+		&error));
+	g_assert_no_error(error);
+	g_clear_pointer(&response, g_byte_array_unref);
+	g_assert_true(sakura_control_frame_read(
+		g_io_stream_get_input_stream(G_IO_STREAM(subscriber)), &response, NULL,
+		&error));
+	g_assert_no_error(error);
+	g_clear_pointer(&response, g_byte_array_unref);
+
+	test_agent_stop(process);
+	g_io_stream_close(G_IO_STREAM(subscriber), NULL, NULL);
+	g_object_unref(subscriber);
+	g_byte_array_unref(request);
+	g_remove(session_path);
+	g_remove(socket_path);
+	g_rmdir(directory);
 }
 
 
@@ -2509,6 +2560,8 @@ main(int argc, char **argv)
 	                test_agent_terminal_create_rollback);
 	g_test_add_func("/control/agent-slow-subscriber-disconnects",
 	                test_agent_slow_subscriber_disconnects);
+	g_test_add_func("/control/agent-shutdown-with-active-subscriber",
+	                test_agent_shutdown_with_active_subscriber);
 	g_test_add_func("/control/agent-terminal-lifecycle",
 	                test_agent_terminal_lifecycle);
 	g_test_add_func("/control/agent-terminal-event-resume",

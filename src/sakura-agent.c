@@ -86,8 +86,11 @@ struct _SakuraAgent {
 	SakuraSessionSnapshot *session_snapshot;
 	gchar *workspace_id;
 	GMutex state_mutex;
+	GCond connections_drained;
 	GPtrArray *subscribers; /* SakuraAgentConnection *, state_mutex protected. */
+	GPtrArray *connections; /* SakuraAgentConnection *, state_mutex protected. */
 	GPtrArray *terminals; /* SakuraAgentTerminal *, owned. */
+	gboolean stopping;
 	guint64 sequence;
 	guint64 workspace_revision;
 	gchar *socket_path;
@@ -2107,6 +2110,20 @@ sakura_agent_remove_subscriber(SakuraAgent *agent,
 }
 
 
+static void
+sakura_agent_remove_connection(SakuraAgent *agent,
+	                            SakuraAgentConnection *connection)
+{
+	for (guint index = 0; index < agent->connections->len; index++) {
+		if (g_ptr_array_index(agent->connections, index) == connection) {
+			g_ptr_array_remove_index(agent->connections, index);
+			g_cond_broadcast(&agent->connections_drained);
+			break;
+		}
+	}
+}
+
+
 static gpointer
 sakura_agent_connection_thread(gpointer data)
 {
@@ -2306,6 +2323,9 @@ sakura_agent_connection_thread(gpointer data)
 	g_queue_free(request->outbound);
 	g_mutex_clear(&request->outbound_mutex);
 	g_cond_clear(&request->outbound_cond);
+	g_mutex_lock(&request->agent->state_mutex);
+	sakura_agent_remove_connection(request->agent, request);
+	g_mutex_unlock(&request->agent->state_mutex);
 	g_free(request);
 	return NULL;
 }
@@ -2322,12 +2342,19 @@ sakura_agent_incoming_cb(GSocketService *service,
 
 	(void)service;
 	(void)source_object;
+	g_mutex_lock(&agent->state_mutex);
+	if (agent->stopping) {
+		g_mutex_unlock(&agent->state_mutex);
+		return FALSE;
+	}
 	request = g_new0(SakuraAgentConnection, 1);
 	request->connection = g_object_ref(connection);
 	request->agent = agent;
 	request->outbound = g_queue_new();
 	g_mutex_init(&request->outbound_mutex);
 	g_cond_init(&request->outbound_cond);
+	g_ptr_array_add(agent->connections, request);
+	g_mutex_unlock(&agent->state_mutex);
 	request->writer_thread = g_thread_new("sakura-agent-writer",
 	                                      sakura_agent_connection_writer,
 	                                      request);
@@ -2545,10 +2572,12 @@ main(int argc, char **argv)
 	agent.session_snapshot = session_snapshot;
 	agent.workspace_id = g_strdup(session_snapshot->workspace_id);
 	agent.subscribers = g_ptr_array_new();
+	agent.connections = g_ptr_array_new();
 	agent.terminals = g_ptr_array_new_with_free_func(
 		(GDestroyNotify)sakura_agent_terminal_free);
 	agent.socket_path = socket_path;
 	g_mutex_init(&agent.state_mutex);
+	g_cond_init(&agent.connections_drained);
 	g_signal_connect(service, "incoming", G_CALLBACK(sakura_agent_incoming_cb),
 	                 &agent);
 	g_unix_signal_add(SIGINT, sakura_agent_quit_cb, loop);
@@ -2558,9 +2587,26 @@ main(int argc, char **argv)
 	g_socket_service_stop(service);
 	g_main_loop_unref(loop);
 	g_object_unref(service);
-	g_mutex_clear(&agent.state_mutex);
+	g_mutex_lock(&agent.state_mutex);
+	agent.stopping = TRUE;
+	for (guint index = 0; index < agent.connections->len; index++) {
+		SakuraAgentConnection *connection =
+			g_ptr_array_index(agent.connections, index);
+		GSocket *socket = g_socket_connection_get_socket(connection->connection);
+
+		if (socket != NULL)
+			g_socket_shutdown(socket, TRUE, TRUE, NULL);
+		else
+			g_io_stream_close(G_IO_STREAM(connection->connection), NULL, NULL);
+	}
+	while (agent.connections->len != 0)
+		g_cond_wait(&agent.connections_drained, &agent.state_mutex);
+	g_mutex_unlock(&agent.state_mutex);
 	g_clear_pointer(&agent.subscribers, g_ptr_array_unref);
+	g_clear_pointer(&agent.connections, g_ptr_array_unref);
 	g_clear_pointer(&agent.terminals, g_ptr_array_unref);
+	g_cond_clear(&agent.connections_drained);
+	g_mutex_clear(&agent.state_mutex);
 	sakura_core_workspace_free(workspace);
 	sakura_session_snapshot_free(session_snapshot);
 	g_free(agent.workspace_id);
