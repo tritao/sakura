@@ -3400,7 +3400,8 @@ sakura_sidebar_agent_archive_node(SakuraSidebarNode *node)
 {
 	GError *error = NULL;
 	gboolean archived;
-	gboolean result;
+	gboolean result = FALSE;
+	SakuraPage *page = NULL;
 
 	if (node == NULL || sakura.agent_socket_path == NULL)
 		return FALSE;
@@ -3413,7 +3414,11 @@ sakura_sidebar_agent_archive_node(SakuraSidebarNode *node)
 		result = sakura_agent_set_group_archived(&sakura, node->group->id,
 	                                        archived, &error);
 	} else if (node->type == SAKURA_SIDEBAR_PAGE && node->page != NULL) {
-		SakuraPage *page = node->page;
+		page = node->page;
+	} else if (node->type == SAKURA_SIDEBAR_TERMINAL && node->tab != NULL) {
+		page = node->tab->page;
+	}
+	if (page != NULL) {
 		SakuraGroup *group = page->task != NULL ? page->task->group : page->group;
 		SakuraTask *task = page->task;
 
@@ -3422,7 +3427,8 @@ sakura_sidebar_agent_archive_node(SakuraSidebarNode *node)
 			&sakura, page->id, group != NULL ? group->id : NULL,
 			task != NULL ? task->id : NULL, page->title,
 			page->title_set_by_user, archived, &error);
-	} else {
+	} else if (node->type != SAKURA_SIDEBAR_TASK &&
+	           node->type != SAKURA_SIDEBAR_GROUP) {
 		return FALSE;
 	}
 	if (result)

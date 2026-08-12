@@ -529,6 +529,12 @@ sakura_agent_apply_workspace_snapshot(SakuraApp *app,
 			sakura_sidebar_set_scope(app->sidebar_root);
 		scope_needs_default = TRUE;
 	}
+	if (app->workspace->active_page != NULL &&
+	    app->workspace->active_page->archived) {
+		app->workspace->active_page = NULL;
+		app->workspace->active_tab = NULL;
+		scope_needs_default = TRUE;
+	}
 	sakura_sidebar_rebuild_projection();
 	sakura_workspace_mark_changed(SAKURA_WORKSPACE_CHANGE_STRUCTURE |
 	                              SAKURA_WORKSPACE_CHANGE_METADATA);
