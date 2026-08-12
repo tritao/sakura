@@ -1929,6 +1929,7 @@ sakura_set_tab_label_text(const gchar *title, gint page)
 {
 	SakuraTab *tab;
 	gchar *label_text;
+	gboolean page_changed = FALSE;
 
 	tab = sakura_tab_at_page(page);
 	if (tab == NULL || tab->label == NULL)
@@ -1949,10 +1950,13 @@ sakura_set_tab_label_text(const gchar *title, gint page)
 	g_free(tab->user_title);
 	tab->user_title = tab->label_set_byuser ? g_strdup(label_text) : NULL;
 	if (tab->page != NULL && tab->page->tab_bar_tab == tab) {
+		page_changed = g_strcmp0(tab->page->title, label_text) != 0 ||
+		               tab->page->title_set_by_user != tab->label_set_byuser;
 		g_free(tab->page->title);
 		tab->page->title = g_strdup(label_text);
 		tab->page->title_set_by_user = tab->label_set_byuser;
-		if (sakura.agent_socket_path != NULL && tab->page->id != NULL) {
+		if (page_changed && sakura.agent_socket_path != NULL &&
+		    tab->page->id != NULL) {
 			SakuraGroup *group = tab->page->task != NULL
 			                   ? tab->page->task->group : tab->page->group;
 			GError *error = NULL;

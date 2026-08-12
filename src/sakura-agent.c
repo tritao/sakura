@@ -1955,6 +1955,37 @@ sakura_agent_request_changes_workspace(SakuraControlRequestKind kind)
 }
 
 
+static gboolean
+sakura_agent_request_will_change_workspace(
+	SakuraAgent *agent, const SakuraControlRequest *request)
+{
+	SakuraCorePage *page;
+	SakuraCoreGroup *group;
+	SakuraCoreTask *task = NULL;
+
+	if (agent == NULL || request == NULL ||
+	    !sakura_agent_request_changes_workspace(request->kind))
+		return FALSE;
+	if (request->kind != SAKURA_CONTROL_REQUEST_UPDATE_PAGE)
+		return TRUE;
+	page = sakura_core_workspace_find_page(agent->workspace, request->page_id);
+	if (page == NULL)
+		return TRUE;
+	group = sakura_core_workspace_find_group(agent->workspace,
+	                                        request->group_id);
+	if (request->task_id != NULL && request->task_id[0] != '\0' &&
+	    g_strcmp0(request->task_id, "root") != 0)
+		task = sakura_core_workspace_find_task(agent->workspace,
+		                                      request->task_id);
+	if (task != NULL)
+		group = task->group;
+	return page->group != group || page->task != task ||
+	       g_strcmp0(page->title, request->title != NULL ? request->title : "") != 0 ||
+	       page->title_set_by_user != request->title_set_by_user ||
+	       page->archived != request->archived;
+}
+
+
 static void
 sakura_agent_remove_subscriber(SakuraAgent *agent,
 	                             SakuraAgentConnection *connection)
@@ -1983,6 +2014,7 @@ sakura_agent_connection_thread(gpointer data)
 	SakuraAgentTerminal *retired_terminal = NULL;
 	gboolean subscribed = FALSE;
 	gboolean handshaken = FALSE;
+	gboolean workspace_will_change = FALSE;
 	const gchar *error_code = "invalid_request";
 
 	input = g_io_stream_get_input_stream(G_IO_STREAM(request->connection));
@@ -1997,12 +2029,16 @@ sakura_agent_connection_thread(gpointer data)
 		accepted_id = NULL;
 		retired_terminal = NULL;
 		subscribed = FALSE;
+		workspace_will_change = FALSE;
 		if (!sakura_control_frame_read(input, &payload, NULL, &error))
 			break;
 		g_mutex_lock(&request->agent->state_mutex);
 		if (sakura_control_decode_request(payload->data, payload->len, &decoded,
-	                                   &error)) {
-		request_id = decoded.request_id != NULL ? decoded.request_id : "unknown";
+		                                   &error)) {
+			request_id = decoded.request_id != NULL
+			           ? decoded.request_id : "unknown";
+			workspace_will_change = sakura_agent_request_will_change_workspace(
+				request->agent, &decoded);
 		if (decoded.kind == SAKURA_CONTROL_REQUEST_HELLO) {
 			if (decoded.protocol_version != SAKURA_CONTROL_PROTOCOL_VERSION) {
 				g_set_error(&error, G_IO_ERROR, G_IO_ERROR_NOT_SUPPORTED,
@@ -2072,8 +2108,7 @@ sakura_agent_connection_thread(gpointer data)
 		} else if (sakura_agent_apply_request(request->agent, &decoded,
 		                                      &accepted_id, &retired_terminal,
 		                                      &error)) {
-			gboolean workspace_changed =
-				sakura_agent_request_changes_workspace(decoded.kind);
+			gboolean workspace_changed = workspace_will_change;
 
 			if (workspace_changed)
 				request->agent->workspace_revision++;

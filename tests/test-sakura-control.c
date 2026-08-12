@@ -1700,6 +1700,16 @@ test_agent_create_and_reload(void)
 	g_assert_cmpstr(page_record->title, ==, "Restored page");
 	test_save_agent_session(session_path, event_snapshot);
 
+	/* Re-sending identical page metadata must not advance the workspace or
+	 * enqueue another full snapshot for subscribers. */
+	g_byte_array_set_size(request, 0);
+	g_assert_true(sakura_control_encode_update_page_request(
+		"unchanged-page", "page-restart", group_id, task_id, "Restored page",
+		TRUE, FALSE, request));
+	test_agent_call(socket_path, "unchanged-page", request, &response);
+	g_assert_cmpuint(response.workspace_revision, ==, 3);
+	sakura_control_response_clear(&response);
+
 	g_byte_array_set_size(request, 0);
 	g_assert_true(sakura_control_encode_set_group_archived_request(
 		"archive-projects", group_id, TRUE, request));
