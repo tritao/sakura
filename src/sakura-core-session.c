@@ -81,6 +81,7 @@ sakura_session_group_ids_valid(const SakuraSessionSnapshot *snapshot,
 
 static gboolean
 sakura_session_terminal_ids_valid(const SakuraSessionSnapshot *snapshot,
+	                              gboolean allow_external_parents,
                                   GError **error)
 {
 	GHashTable *ids = g_hash_table_new(g_str_hash, g_str_equal);
@@ -102,7 +103,8 @@ sakura_session_terminal_ids_valid(const SakuraSessionSnapshot *snapshot,
 		if (tab->parent_id != NULL && tab->parent_id[0] != '\0' &&
 		    g_strcmp0(tab->parent_id, "root") != 0 &&
 		    !g_hash_table_contains(groups, tab->parent_id) &&
-		    !g_hash_table_contains(tasks, tab->parent_id)) {
+		    !g_hash_table_contains(tasks, tab->parent_id) &&
+		    !allow_external_parents) {
 			g_hash_table_destroy(ids);
 			g_hash_table_destroy(groups);
 			g_hash_table_destroy(tasks);
@@ -806,7 +808,10 @@ sakura_session_snapshot_load_into(GKeyFile *key_file,
 
 	return sakura_session_group_ids_valid(snapshot, error) &&
 	       sakura_session_task_ids_valid(snapshot, error) &&
-	       sakura_session_terminal_ids_valid(snapshot, error) &&
+	       sakura_session_terminal_ids_valid(
+		       snapshot,
+		       g_key_file_get_boolean(key_file, "Session",
+		                              "external_workspace", NULL), error) &&
 	       (version < 4 || sakura_session_layout_valid(snapshot, error));
 }
 

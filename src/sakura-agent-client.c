@@ -2106,6 +2106,7 @@ sakura_agent_spawn_process(SakuraApp *app, const gchar *socket_path,
 {
 	GSubprocess *process;
 	gchar *binary;
+	gchar *workspace_path = NULL;
 
 	binary = sakura_agent_binary_path();
 	if (binary == NULL) {
@@ -2113,19 +2114,22 @@ sakura_agent_spawn_process(SakuraApp *app, const gchar *socket_path,
 		                    "sakura-agent was not found");
 		return NULL;
 	}
-	if (app->sessionfile != NULL && app->sessionfile[0] != '\0')
+	if (app->sessionfile != NULL && app->sessionfile[0] != '\0') {
+		workspace_path = g_strdup_printf("%s.workspace", app->sessionfile);
 		process = g_subprocess_new(
 			G_SUBPROCESS_FLAGS_STDOUT_SILENCE |
 			G_SUBPROCESS_FLAGS_STDERR_SILENCE,
 			error, binary, "--socket", socket_path, "--workspace-id",
-			app->workspace_id, "--session", app->sessionfile, NULL);
-	else
+			app->workspace_id, "--session", app->sessionfile,
+			"--workspace-file", workspace_path, NULL);
+	} else
 		process = g_subprocess_new(
 			G_SUBPROCESS_FLAGS_STDOUT_SILENCE |
 			G_SUBPROCESS_FLAGS_STDERR_SILENCE,
 			error, binary, "--socket", socket_path, "--workspace-id",
 			app->workspace_id, NULL);
 	g_free(binary);
+	g_free(workspace_path);
 	return process;
 }
 

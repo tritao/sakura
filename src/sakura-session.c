@@ -250,6 +250,37 @@ sakura_session_write_snapshot(SakuraApp *app,
 
 	key_file = g_key_file_new();
 	sakura_session_snapshot_save(snapshot, key_file);
+	g_key_file_set_string(key_file, "Desktop", "active_group_id",
+	                      snapshot->active_group_id != NULL
+	                      ? snapshot->active_group_id : "root");
+	if (snapshot->selected_task_id != NULL)
+		g_key_file_set_string(key_file, "Desktop", "selected_task_id",
+		                      snapshot->selected_task_id);
+	/* Workspace hierarchy and page ownership are persisted by sakura-agent.
+	 * This file is the desktop's presentation state and retains page IDs only
+	 * so its pane trees and terminals can be joined with the agent snapshot. */
+	{
+		gsize section_count = 0;
+		gchar **sections = g_key_file_get_groups(key_file, &section_count);
+
+		for (gsize index = 0; index < section_count; index++) {
+			if (g_str_has_prefix(sections[index], "Group") ||
+			    g_str_has_prefix(sections[index], "Task"))
+				g_key_file_remove_group(key_file, sections[index], NULL);
+			else if (g_str_has_prefix(sections[index], "Page")) {
+				g_key_file_set_string(key_file, sections[index], "parent", "root");
+				g_key_file_set_string(key_file, sections[index], "group", "root");
+				g_key_file_remove_key(key_file, sections[index], "task_id", NULL);
+				g_key_file_set_boolean(key_file, sections[index], "archived", FALSE);
+			}
+		}
+		g_strfreev(sections);
+		g_key_file_set_integer(key_file, "Session", "group_count", 0);
+		g_key_file_set_integer(key_file, "Session", "task_count", 0);
+		g_key_file_set_boolean(key_file, "Session", "external_workspace", TRUE);
+		g_key_file_set_string(key_file, "Session", "active_group_id", "root");
+		g_key_file_remove_key(key_file, "Session", "selected_task_id", NULL);
+	}
 	data = g_key_file_to_data(key_file, &data_length, &error);
 	if (data == NULL) {
 		g_warning("Could not serialize session: %s",
@@ -305,6 +336,21 @@ sakura_session_load_file(SakuraApp *app, gboolean restore_session)
 		g_clear_error(&error);
 		sakura_session_snapshot_free(snapshot);
 		return FALSE;
+	}
+	if (g_key_file_has_group(app->session_cfg, "Desktop")) {
+		gchar *active_group_id = g_key_file_get_string(
+			app->session_cfg, "Desktop", "active_group_id", NULL);
+		gchar *selected_task_id = g_key_file_get_string(
+			app->session_cfg, "Desktop", "selected_task_id", NULL);
+
+		if (active_group_id != NULL) {
+			g_free(snapshot->active_group_id);
+			snapshot->active_group_id = active_group_id;
+		}
+		if (selected_task_id != NULL) {
+			g_free(snapshot->selected_task_id);
+			snapshot->selected_task_id = selected_task_id;
+		}
 	}
 
 	app->sidebar_visible = snapshot->sidebar_visible;

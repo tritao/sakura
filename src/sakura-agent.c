@@ -94,6 +94,7 @@ struct _SakuraAgent {
 	guint64 sequence;
 	guint64 workspace_revision;
 	gchar *socket_path;
+	gchar *workspace_path;
 };
 
 
@@ -256,26 +257,93 @@ sakura_agent_error_code(const GError *error)
 
 
 static SakuraSessionSnapshot *
-sakura_agent_load_session(const gchar *session_path, GError **error)
+sakura_agent_load_session(const gchar *workspace_path,
+	                       const gchar *session_path,
+	                       guint64 *workspace_revision,
+	                       GError **error)
 {
 	SakuraSessionSnapshot *snapshot;
 	GKeyFile *key_file;
+	const gchar *load_path = workspace_path != NULL &&
+	                         g_file_test(workspace_path, G_FILE_TEST_IS_REGULAR)
+	                       ? workspace_path : session_path;
 
-	/* The desktop coordinator is the sole session writer. The agent only
-	 * reads this snapshot to bootstrap its runtime projection. */
 	snapshot = sakura_session_snapshot_new();
-	if (session_path == NULL ||
-	    !g_file_test(session_path, G_FILE_TEST_IS_REGULAR))
+	if (load_path == NULL || !g_file_test(load_path, G_FILE_TEST_IS_REGULAR))
 		return snapshot;
 	key_file = g_key_file_new();
-	if (!g_key_file_load_from_file(key_file, session_path, 0, error) ||
+	if (!g_key_file_load_from_file(key_file, load_path, 0, error) ||
 	    !sakura_session_snapshot_load(key_file, snapshot, error)) {
 		g_key_file_free(key_file);
 		sakura_session_snapshot_free(snapshot);
 		return NULL;
 	}
+	if (workspace_revision != NULL && load_path == workspace_path) {
+		GError *revision_error = NULL;
+		guint64 revision = g_key_file_get_uint64(
+			key_file, "Workspace", "revision", &revision_error);
+
+		if (revision_error == NULL)
+			*workspace_revision = revision;
+		g_clear_error(&revision_error);
+	}
 	g_key_file_free(key_file);
 	return snapshot;
+}
+
+
+static gboolean
+sakura_agent_persist_workspace(SakuraAgent *agent, GError **error)
+{
+	SakuraSessionSnapshot *snapshot;
+	GKeyFile *key_file;
+	gchar *data = NULL;
+	gchar *temporary_path = NULL;
+	gsize data_length = 0;
+	gboolean saved = FALSE;
+
+	if (agent == NULL || agent->workspace_path == NULL)
+		return TRUE;
+	snapshot = sakura_session_snapshot_new();
+	g_free(snapshot->workspace_id);
+	snapshot->workspace_id = g_strdup(agent->workspace_id);
+	if (!sakura_core_workspace_sync_snapshot(agent->workspace, snapshot)) {
+		sakura_session_snapshot_free(snapshot);
+		return sakura_agent_error(error, "could not create workspace snapshot");
+	}
+	/* Pane trees and active terminals are desktop presentation state. Keep the
+	 * agent file limited to authoritative workspace ownership and metadata. */
+	for (guint index = 0; index < snapshot->pages->len; index++) {
+		SakuraSessionPageRecord *page = g_ptr_array_index(snapshot->pages, index);
+
+		g_clear_pointer(&page->root_layout_id, g_free);
+		g_clear_pointer(&page->active_terminal_id, g_free);
+	}
+	g_free(snapshot->active_group_id);
+	snapshot->active_group_id = g_strdup("root");
+	g_clear_pointer(&snapshot->selected_task_id, g_free);
+	key_file = g_key_file_new();
+	sakura_session_snapshot_save(snapshot, key_file);
+	g_key_file_set_uint64(key_file, "Workspace", "revision",
+	                     agent->workspace_revision);
+	data = g_key_file_to_data(key_file, &data_length, error);
+	temporary_path = g_strdup_printf("%s.tmp.%d", agent->workspace_path,
+	                                (int)getpid());
+	if (data != NULL &&
+	    g_file_set_contents(temporary_path, data, data_length, error) &&
+	    chmod(temporary_path, 0600) == 0 &&
+	    g_rename(temporary_path, agent->workspace_path) == 0)
+		saved = TRUE;
+	else if (error != NULL && *error == NULL)
+		g_set_error(error, G_IO_ERROR, g_io_error_from_errno(errno), "%s",
+		            g_strerror(errno));
+	if (!saved)
+		g_remove(temporary_path);
+	g_free(temporary_path);
+	g_free(data);
+	g_key_file_free(key_file);
+	sakura_session_snapshot_free(snapshot);
+	return saved;
 }
 
 
@@ -2234,28 +2302,34 @@ sakura_agent_connection_thread(gpointer data)
 		                                      &accepted_id, &retired_terminal,
 		                                      &error)) {
 			gboolean workspace_changed = workspace_will_change;
+			gboolean workspace_persisted = TRUE;
 
 			if (workspace_changed)
 				request->agent->workspace_revision++;
 			if (workspace_changed)
 				request->agent->sequence++;
-			if (decoded.kind == SAKURA_CONTROL_REQUEST_CREATE_TERMINAL ||
+			if (workspace_changed)
+				workspace_persisted = sakura_agent_persist_workspace(
+					request->agent, &error);
+			if (workspace_persisted &&
+			    (decoded.kind == SAKURA_CONTROL_REQUEST_CREATE_TERMINAL ||
 			    decoded.kind == SAKURA_CONTROL_REQUEST_CREATE_CODEX ||
-			    decoded.kind == SAKURA_CONTROL_REQUEST_RESTART_TERMINAL)
+			    decoded.kind == SAKURA_CONTROL_REQUEST_RESTART_TERMINAL))
 				sakura_control_encode_accepted_response_with_revision(
 					request_id,
 					decoded.kind == SAKURA_CONTROL_REQUEST_CREATE_CODEX
 					? "codex" : "terminal", accepted_id,
 					request->agent->workspace_revision, response);
-			else if (decoded.kind == SAKURA_CONTROL_REQUEST_TERMINAL_INPUT ||
-			         decoded.kind == SAKURA_CONTROL_REQUEST_TERMINAL_RESIZE)
+			else if (workspace_persisted &&
+			         (decoded.kind == SAKURA_CONTROL_REQUEST_TERMINAL_INPUT ||
+			          decoded.kind == SAKURA_CONTROL_REQUEST_TERMINAL_RESIZE))
 				sakura_control_encode_accepted_response_with_revision(
 					request_id,
 					decoded.kind == SAKURA_CONTROL_REQUEST_TERMINAL_INPUT
 					? "terminal_input" : "terminal_resize",
 					decoded.terminal_id,
 					request->agent->workspace_revision, response);
-			else
+			else if (workspace_persisted)
 				sakura_control_encode_snapshot_response_with_revision(
 					request_id, request->agent->sequence,
 					request->agent->workspace_revision,
@@ -2462,13 +2536,16 @@ main(int argc, char **argv)
 	GError *error = NULL;
 	gchar *socket_path = NULL;
 	gchar *session_path = NULL;
+	gchar *workspace_path = NULL;
 	gchar *workspace_id = NULL;
 	GOptionContext *context;
 	GOptionEntry entries[] = {
 		{ "socket", 's', 0, G_OPTION_ARG_STRING, &socket_path,
 		  "Unix socket path", "PATH" },
 		{ "session", 'f', 0, G_OPTION_ARG_STRING, &session_path,
-		  "Session file path", "PATH" },
+		  "Legacy desktop session file used for migration", "PATH" },
+		{ "workspace-file", 0, 0, G_OPTION_ARG_STRING, &workspace_path,
+		  "Authoritative workspace file path", "PATH" },
 		{ "workspace-id", 0, 0, G_OPTION_ARG_STRING, &workspace_id,
 		  "Workspace identity", "ID" },
 		{ NULL }
@@ -2489,18 +2566,22 @@ main(int argc, char **argv)
 		g_printerr("%s\n", error->message);
 		g_clear_error(&error);
 		g_free(socket_path);
+		g_free(session_path);
+		g_free(workspace_path);
 		g_free(workspace_id);
 		return EXIT_FAILURE;
 	}
 
 	signal(SIGPIPE, SIG_IGN);
-	session_snapshot = sakura_agent_load_session(session_path, &error);
+	session_snapshot = sakura_agent_load_session(
+		workspace_path, session_path, &agent.workspace_revision, &error);
 	if (session_snapshot == NULL) {
 		g_printerr("Could not load agent session: %s\n",
 		           error != NULL ? error->message : "unknown error");
 		g_clear_error(&error);
 		g_free(socket_path);
 		g_free(session_path);
+		g_free(workspace_path);
 		g_free(workspace_id);
 		return EXIT_FAILURE;
 	}
@@ -2516,6 +2597,7 @@ main(int argc, char **argv)
 		sakura_session_snapshot_free(session_snapshot);
 		g_free(socket_path);
 		g_free(session_path);
+		g_free(workspace_path);
 		g_free(workspace_id);
 		return EXIT_FAILURE;
 	}
@@ -2536,6 +2618,7 @@ main(int argc, char **argv)
 		g_remove(socket_path);
 		g_free(socket_path);
 		g_free(session_path);
+		g_free(workspace_path);
 		g_free(workspace_id);
 		return EXIT_FAILURE;
 	}
@@ -2561,6 +2644,7 @@ main(int argc, char **argv)
 			g_remove(socket_path);
 			g_free(socket_path);
 			g_free(session_path);
+			g_free(workspace_path);
 			g_free(workspace_id);
 			return EXIT_FAILURE;
 		}
@@ -2576,8 +2660,28 @@ main(int argc, char **argv)
 	agent.terminals = g_ptr_array_new_with_free_func(
 		(GDestroyNotify)sakura_agent_terminal_free);
 	agent.socket_path = socket_path;
+	agent.workspace_path = workspace_path;
 	g_mutex_init(&agent.state_mutex);
 	g_cond_init(&agent.connections_drained);
+	if (!sakura_agent_persist_workspace(&agent, &error)) {
+		g_printerr("Could not persist agent workspace: %s\n",
+		           error != NULL ? error->message : "unknown error");
+		g_clear_error(&error);
+		g_clear_pointer(&agent.subscribers, g_ptr_array_unref);
+		g_clear_pointer(&agent.connections, g_ptr_array_unref);
+		g_clear_pointer(&agent.terminals, g_ptr_array_unref);
+		g_cond_clear(&agent.connections_drained);
+		g_mutex_clear(&agent.state_mutex);
+		g_object_unref(service);
+		sakura_core_workspace_free(workspace);
+		sakura_session_snapshot_free(session_snapshot);
+		g_remove(socket_path);
+		g_free(socket_path);
+		g_free(session_path);
+		g_free(workspace_path);
+		g_free(workspace_id);
+		return EXIT_FAILURE;
+	}
 	g_signal_connect(service, "incoming", G_CALLBACK(sakura_agent_incoming_cb),
 	                 &agent);
 	g_unix_signal_add(SIGINT, sakura_agent_quit_cb, loop);
@@ -2613,6 +2717,7 @@ main(int argc, char **argv)
 	g_remove(socket_path);
 	g_free(socket_path);
 	g_free(session_path);
+	g_free(workspace_path);
 	g_free(workspace_id);
 	return EXIT_SUCCESS;
 }

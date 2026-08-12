@@ -719,7 +719,9 @@ test_agent_connect_wait(const gchar *socket_path)
 
 
 static GSubprocess *
-test_agent_start(const gchar *socket_path, const gchar *session_path)
+test_agent_start_with_workspace(const gchar *socket_path,
+	                            const gchar *session_path,
+	                            const gchar *workspace_path)
 {
 	GSubprocess *process;
 	GError *error = NULL;
@@ -737,16 +739,30 @@ test_agent_start(const gchar *socket_path, const gchar *session_path)
 	sakura_session_snapshot_free(snapshot);
 
 #ifdef SAKURA_AGENT_BUILD_PATH
-	process = g_subprocess_new(
-		G_SUBPROCESS_FLAGS_STDOUT_SILENCE | G_SUBPROCESS_FLAGS_STDERR_SILENCE,
-		&error, SAKURA_AGENT_BUILD_PATH, "--socket", socket_path,
-		"--workspace-id", test_agent_workspace_id, "--session", session_path, NULL);
+	if (workspace_path != NULL)
+		process = g_subprocess_new(
+			G_SUBPROCESS_FLAGS_STDOUT_SILENCE | G_SUBPROCESS_FLAGS_STDERR_SILENCE,
+			&error, SAKURA_AGENT_BUILD_PATH, "--socket", socket_path,
+			"--workspace-id", test_agent_workspace_id, "--session", session_path,
+			"--workspace-file", workspace_path, NULL);
+	else
+		process = g_subprocess_new(
+			G_SUBPROCESS_FLAGS_STDOUT_SILENCE | G_SUBPROCESS_FLAGS_STDERR_SILENCE,
+			&error, SAKURA_AGENT_BUILD_PATH, "--socket", socket_path,
+			"--workspace-id", test_agent_workspace_id, "--session", session_path, NULL);
 #else
-	process = g_subprocess_new(
-		G_SUBPROCESS_FLAGS_STDOUT_SILENCE | G_SUBPROCESS_FLAGS_STDERR_SILENCE,
-		&error, "sakura-agent", "--socket", socket_path,
-		"--workspace-id", test_agent_workspace_id, "--session", session_path,
-		NULL);
+	if (workspace_path != NULL)
+		process = g_subprocess_new(
+			G_SUBPROCESS_FLAGS_STDOUT_SILENCE | G_SUBPROCESS_FLAGS_STDERR_SILENCE,
+			&error, "sakura-agent", "--socket", socket_path,
+			"--workspace-id", test_agent_workspace_id, "--session", session_path,
+			"--workspace-file", workspace_path, NULL);
+	else
+		process = g_subprocess_new(
+			G_SUBPROCESS_FLAGS_STDOUT_SILENCE | G_SUBPROCESS_FLAGS_STDERR_SILENCE,
+			&error, "sakura-agent", "--socket", socket_path,
+			"--workspace-id", test_agent_workspace_id, "--session", session_path,
+			NULL);
 #endif
 	g_assert_no_error(error);
 	g_assert_nonnull(process);
@@ -754,6 +770,13 @@ test_agent_start(const gchar *socket_path, const gchar *session_path)
 	g_io_stream_close(G_IO_STREAM(connection), NULL, NULL);
 	g_object_unref(connection);
 	return process;
+}
+
+
+static GSubprocess *
+test_agent_start(const gchar *socket_path, const gchar *session_path)
+{
+	return test_agent_start_with_workspace(socket_path, session_path, NULL);
 }
 
 
@@ -1667,6 +1690,7 @@ test_agent_create_and_reload(void)
 	gchar *directory;
 	gchar *socket_path;
 	gchar *session_path;
+	gchar *workspace_path;
 	gchar *group_id;
 	gchar *second_group_id = NULL;
 	gchar *task_id = NULL;
@@ -1676,7 +1700,9 @@ test_agent_create_and_reload(void)
 	g_assert_nonnull(directory);
 	socket_path = g_build_filename(directory, "agent.sock", NULL);
 	session_path = g_build_filename(directory, "workspace.session", NULL);
-	process = test_agent_start(socket_path, session_path);
+	workspace_path = g_build_filename(directory, "workspace.state", NULL);
+	process = test_agent_start_with_workspace(socket_path, session_path,
+	                                          workspace_path);
 	subscriber = test_agent_connect_wait(socket_path);
 	subscriber_input = g_io_stream_get_input_stream(G_IO_STREAM(subscriber));
 	subscriber_output = g_io_stream_get_output_stream(G_IO_STREAM(subscriber));
@@ -1724,10 +1750,7 @@ test_agent_create_and_reload(void)
 	g_assert_no_error(error);
 	g_assert_cmpuint(event_sequence, ==, 1);
 	g_assert_cmpuint(event_snapshot->groups->len, ==, 1);
-	test_save_agent_session(session_path, event_snapshot);
-
-
-	snapshot = test_load_agent_session(session_path);
+	snapshot = test_load_agent_session(workspace_path);
 	g_assert_cmpuint(snapshot->groups->len, ==, 1);
 	group = g_ptr_array_index(snapshot->groups, 0);
 	g_assert_cmpstr(group->title, ==, "Projects");
@@ -1751,9 +1774,7 @@ test_agent_create_and_reload(void)
 	g_assert_no_error(error);
 	g_assert_cmpuint(event_sequence, ==, 2);
 	g_assert_cmpuint(event_snapshot->tasks->len, ==, 1);
-	test_save_agent_session(session_path, event_snapshot);
-
-	snapshot = test_load_agent_session(session_path);
+	snapshot = test_load_agent_session(workspace_path);
 	g_assert_cmpuint(snapshot->groups->len, ==, 1);
 	g_assert_cmpuint(snapshot->tasks->len, ==, 1);
 	task = g_ptr_array_index(snapshot->tasks, 0);
@@ -1784,7 +1805,6 @@ test_agent_create_and_reload(void)
 	g_assert_cmpstr(page_record->group_id, ==, group_id);
 	g_assert_cmpstr(page_record->task_id, ==, task_id);
 	g_assert_cmpstr(page_record->title, ==, "Restored page");
-	test_save_agent_session(session_path, event_snapshot);
 
 	/* Re-sending identical page metadata must not advance the workspace or
 	 * enqueue another full snapshot for subscribers. */
@@ -1817,7 +1837,6 @@ test_agent_create_and_reload(void)
 	page_record = g_ptr_array_index(event_snapshot->pages, 0);
 	g_assert_cmpstr(page_record->group_id, ==, group_id);
 	g_assert_cmpstr(page_record->task_id, ==, task_id);
-	test_save_agent_session(session_path, event_snapshot);
 	g_clear_pointer(&event_payload, g_byte_array_unref);
 	sakura_session_snapshot_free(event_snapshot);
 	event_snapshot = NULL;
@@ -1825,7 +1844,8 @@ test_agent_create_and_reload(void)
 	g_object_unref(subscriber);
 	test_agent_stop(process);
 
-	process = test_agent_start(socket_path, session_path);
+	process = test_agent_start_with_workspace(socket_path, session_path,
+	                                          workspace_path);
 	g_byte_array_set_size(request, 0);
 	g_assert_true(sakura_control_encode_get_snapshot_request("reload", request));
 	test_agent_call(socket_path, "reload", request, &response);
@@ -1887,12 +1907,11 @@ test_agent_create_and_reload(void)
 	g_assert_no_error(error);
 	g_assert_cmpuint(event_sequence, ==, 1);
 	g_assert_cmpuint(event_snapshot->groups->len, ==, 2);
-	test_save_agent_session(session_path, event_snapshot);
 	sakura_session_snapshot_free(event_snapshot);
 	event_snapshot = NULL;
 	g_clear_pointer(&event_payload, g_byte_array_unref);
 
-	snapshot = test_load_agent_session(session_path);
+	snapshot = test_load_agent_session(workspace_path);
 	for (guint index = 0; index < snapshot->groups->len; index++) {
 		group = g_ptr_array_index(snapshot->groups, index);
 		if (g_strcmp0(group->title, "Archive") == 0)
@@ -2049,10 +2068,12 @@ test_agent_create_and_reload(void)
 	g_free(group_id);
 	g_free(second_group_id);
 	g_free(task_id);
+	g_remove(workspace_path);
 	g_remove(session_path);
 	g_remove(socket_path);
 	g_rmdir(directory);
 	g_free(session_path);
+	g_free(workspace_path);
 	g_free(socket_path);
 	g_free(directory);
 }

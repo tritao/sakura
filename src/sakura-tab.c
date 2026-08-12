@@ -1962,6 +1962,19 @@ sakura_set_tab_label_text(const gchar *title, gint page)
 			if (!sakura_agent_rename_page(
 					&sakura, tab->page->id, tab->page->title,
 					tab->page->title_set_by_user, &error)) {
+				if (g_error_matches(error, G_IO_ERROR, G_IO_ERROR_NOT_FOUND) ||
+				    g_error_matches(error, SAKURA_CONTROL_ERROR_DOMAIN,
+				                    SAKURA_CONTROL_ERROR_CODE_NOT_FOUND)) {
+					g_clear_error(&error);
+					if (sakura_sidebar_sync_page_to_agent(
+							tab->page,
+							tab->page->task != NULL
+							? tab->page->task->group : tab->page->group,
+							tab->page->task))
+						(void)sakura_agent_rename_page(
+							&sakura, tab->page->id, tab->page->title,
+							tab->page->title_set_by_user, &error);
+				}
 				if (error != NULL)
 					g_warning("Could not update page title through sakura-agent: %s",
 					          error->message);

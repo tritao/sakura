@@ -52,12 +52,29 @@ SELECTED_TERMINAL_INDEX = 3
 CURRENT_SESSION_VERSION = 10
 
 
+def workspace_state_file(session_file):
+    return Path(f"{session_file}.workspace")
+
+
+def reset_workspace_state(session_file):
+    workspace_state_file(session_file).unlink(missing_ok=True)
+
+
+def read_authority(session_file):
+    parser = configparser.ConfigParser(interpolation=None)
+    workspace_file = workspace_state_file(session_file)
+    parser.read(workspace_file if workspace_file.is_file() else session_file,
+                encoding="utf-8")
+    return parser
+
+
 def run(command, env, timeout=5, check=True):
     return subprocess.run(command, env=env, text=True, capture_output=True,
                           timeout=timeout, check=check)
 
 
 def write_fixture(config_file, session_file, active_group_id=None):
+    reset_workspace_state(session_file)
     config_file.write_text(
         "[sakura]\n"
         "less_questions=true\n"
@@ -106,6 +123,7 @@ def write_fixture(config_file, session_file, active_group_id=None):
 
 
 def write_pane_switch_fixture(config_file, session_file):
+    reset_workspace_state(session_file)
     config_file.write_text(
         "[sakura]\nless_questions=true\ndont_save=false\nsidebar_visible=true\n",
         encoding="utf-8",
@@ -194,6 +212,7 @@ title=Page C
 
 
 def write_group_close_fixture(config_file, session_file):
+    reset_workspace_state(session_file)
     config_file.write_text(
         "[sakura]\nless_questions=true\ndont_save=false\n"
         "sidebar_visible=true\nsidebar_width=300\n",
@@ -242,6 +261,7 @@ def write_group_close_fixture(config_file, session_file):
 
 
 def write_task_fixture(config_file, session_file):
+    reset_workspace_state(session_file)
     config_file.write_text(
         "[sakura]\nless_questions=true\ndont_save=false\n"
         "sidebar_visible=true\nsidebar_width=300\n",
@@ -344,28 +364,43 @@ def read_session(session_file):
                                                        CURRENT_SESSION_VERSION):
         raise AssertionError("unexpected session version")
 
-    group_count = parser.getint("Session", "group_count")
-    task_count = parser.getint("Session", "task_count", fallback=0)
+    authority = parser
+    workspace_file = Path(f"{session_file}.workspace")
+    if workspace_file.is_file():
+        authority = configparser.ConfigParser(interpolation=None)
+        authority.read(workspace_file, encoding="utf-8")
+        if not authority.has_section("Workspace"):
+            raise AssertionError("agent snapshot has no [Workspace] revision")
+
+    group_count = authority.getint("Session", "group_count")
+    task_count = authority.getint("Session", "task_count", fallback=0)
     terminal_count = parser.getint("Session", "terminal_count")
     groups = {}
     for index in range(group_count):
         section = f"Group{index}"
-        if not parser.has_section(section):
+        if not authority.has_section(section):
             raise AssertionError(f"missing {section}")
-        group_id = parser.get(section, "id")
+        group_id = authority.get(section, "id")
         if group_id in groups:
             raise AssertionError(f"duplicate group id {group_id}")
-        groups[group_id] = parser.get(section, "parent")
+        groups[group_id] = authority.get(section, "parent")
 
     tasks = {}
     for index in range(task_count):
         section = f"Task{index}"
-        if not parser.has_section(section):
+        if not authority.has_section(section):
             raise AssertionError(f"missing {section}")
-        task_id = parser.get(section, "id")
+        task_id = authority.get(section, "id")
         if task_id in groups or task_id in tasks:
             raise AssertionError(f"duplicate task id {task_id}")
-        tasks[task_id] = parser.get(section, "parent")
+        tasks[task_id] = authority.get(section, "parent")
+
+    pages = {}
+    page_count = authority.getint("Session", "page_count", fallback=0)
+    for index in range(page_count):
+        section = f"Page{index}"
+        page_id = authority.get(section, "id")
+        pages[page_id] = authority.get(section, "parent", fallback="root")
 
     terminals = []
     terminal_id_list = []
@@ -375,6 +410,7 @@ def read_session(session_file):
         if not parser.has_section(section):
             raise AssertionError(f"missing {section}")
         parent = parser.get(section, "parent")
+        parent = pages.get(parent, parent)
         terminals.append(parent)
         if parser.has_option(section, "terminal_id"):
             terminal_id = parser.get(section, "terminal_id")
@@ -440,7 +476,13 @@ def sidebar_expansion_is(session_file, expected):
 
 def read_task_state(session_file):
     parser = configparser.ConfigParser(interpolation=None)
-    parser.read(session_file, encoding="utf-8")
+    workspace_file = Path(f"{session_file}.workspace")
+    parser.read(workspace_file if workspace_file.is_file() else session_file,
+                encoding="utf-8")
+    # Selection remains desktop presentation state even when task records come
+    # from the agent snapshot.
+    desktop = configparser.ConfigParser(interpolation=None)
+    desktop.read(session_file, encoding="utf-8")
     task_count = parser.getint("Session", "task_count", fallback=0)
     tasks = {}
     for index in range(task_count):
@@ -455,8 +497,10 @@ def read_task_state(session_file):
         }
     return (
         tasks,
-        parser.get("Session", "selected_task_id", fallback=""),
-        parser.get("Session", "active_group_id", fallback="root"),
+        desktop.get("Desktop", "selected_task_id", fallback=
+                    parser.get("Session", "selected_task_id", fallback="")),
+        desktop.get("Desktop", "active_group_id", fallback=
+                    parser.get("Session", "active_group_id", fallback="root")),
     )
 
 
@@ -487,12 +531,13 @@ def read_metadata(session_file):
 def read_active_group_id(session_file):
     parser = configparser.ConfigParser(interpolation=None)
     parser.read(session_file, encoding="utf-8")
+    if parser.has_option("Desktop", "active_group_id"):
+        return parser.get("Desktop", "active_group_id")
     return parser.get("Session", "active_group_id", fallback="root")
 
 
 def read_group_orders(session_file):
-    parser = configparser.ConfigParser(interpolation=None)
-    parser.read(session_file, encoding="utf-8")
+    parser = read_authority(session_file)
     count = parser.getint("Session", "group_count", fallback=0)
     orders = {}
     for index in range(count):
@@ -503,8 +548,7 @@ def read_group_orders(session_file):
 
 
 def read_task_orders(session_file):
-    parser = configparser.ConfigParser(interpolation=None)
-    parser.read(session_file, encoding="utf-8")
+    parser = read_authority(session_file)
     count = parser.getint("Session", "task_count", fallback=0)
     orders = {}
     for index in range(count):
@@ -1768,7 +1812,7 @@ def main():
                 backup_file = Path(f"{session_file}.bak")
                 if not backup_file.is_file():
                     raise AssertionError("session backup was not created")
-                read_session(backup_file)
+                read_metadata(backup_file)
                 print(f"iteration {iteration + 1}/{args.iterations}: "
                       f"{len(restored[0])} groups, {len(restored[1])} terminals")
 
