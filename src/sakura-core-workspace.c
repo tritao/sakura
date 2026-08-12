@@ -2,6 +2,8 @@
 
 static gint sakura_core_group_order_compare(gconstpointer first,
 	                                         gconstpointer second);
+static gint sakura_core_task_order_compare(gconstpointer first,
+	                                        gconstpointer second);
 
 static GQuark
 sakura_core_workspace_error_quark(void)
@@ -447,6 +449,87 @@ sakura_core_workspace_remove_task(SakuraCoreWorkspace *workspace,
 		return FALSE;
 	if (workspace->active_task == task)
 		workspace->active_task = NULL;
+	return TRUE;
+}
+
+
+static GList *
+sakura_core_workspace_ordered_task_children(
+	const SakuraCoreWorkspace *workspace, SakuraCoreGroup *group,
+	SakuraCoreTask *parent, SakuraCoreTask *exclude)
+{
+	GList *ordered = NULL;
+
+	for (guint index = 0; workspace != NULL && workspace->tasks != NULL &&
+	                       index < workspace->tasks->len; index++) {
+		SakuraCoreTask *task = g_ptr_array_index(workspace->tasks, index);
+
+		if (task != NULL && task != exclude && task->group == group &&
+		    task->parent == parent)
+			ordered = g_list_prepend(ordered, task);
+	}
+	return g_list_sort(ordered, sakura_core_task_order_compare);
+}
+
+
+gboolean
+sakura_core_workspace_move_task(SakuraCoreWorkspace *workspace,
+	                              SakuraCoreTask *source,
+	                              SakuraCoreGroup *group,
+	                              SakuraCoreTask *parent,
+	                              SakuraCoreTask *target,
+	                              gboolean after)
+{
+	GList *old_ordered, *new_ordered, *target_link;
+	SakuraCoreTask *candidate;
+	SakuraCoreGroup *old_group;
+	SakuraCoreTask *old_parent;
+
+	if (workspace == NULL || source == NULL || group == NULL ||
+	    !sakura_core_workspace_contains_task(workspace, source) ||
+	    !sakura_core_workspace_contains_group(workspace, group) ||
+	    source->group != group ||
+	    (parent != NULL && (!sakura_core_workspace_contains_task(workspace, parent) ||
+	                        parent->group != group)) ||
+	    (target != NULL && (!sakura_core_workspace_contains_task(workspace, target) ||
+	                        target == source || target->group != group ||
+	                        target->parent != parent)))
+		return FALSE;
+	for (candidate = parent; candidate != NULL; candidate = candidate->parent) {
+		if (candidate == source)
+			return FALSE;
+	}
+	old_group = source->group;
+	old_parent = source->parent;
+	old_ordered = sakura_core_workspace_ordered_task_children(
+		workspace, old_group, old_parent, source);
+	new_ordered = sakura_core_workspace_ordered_task_children(
+		workspace, group, parent, source);
+	if (target == NULL)
+		new_ordered = g_list_append(new_ordered, source);
+	else {
+		target_link = g_list_find(new_ordered, target);
+		if (target_link == NULL) {
+			g_list_free(old_ordered);
+			g_list_free(new_ordered);
+			return FALSE;
+		}
+		if (after && target_link->next != NULL)
+			new_ordered = g_list_insert_before(new_ordered, target_link->next, source);
+		else if (after)
+			new_ordered = g_list_append(new_ordered, source);
+		else
+			new_ordered = g_list_insert_before(new_ordered, target_link, source);
+	}
+	source->group = group;
+	source->parent = parent;
+	if (old_group != group || old_parent != parent)
+		for (GList *link = old_ordered; link != NULL; link = link->next)
+			((SakuraCoreTask *)link->data)->order = g_list_position(old_ordered, link);
+	for (GList *link = new_ordered; link != NULL; link = link->next)
+		((SakuraCoreTask *)link->data)->order = g_list_position(new_ordered, link);
+	g_list_free(old_ordered);
+	g_list_free(new_ordered);
 	return TRUE;
 }
 

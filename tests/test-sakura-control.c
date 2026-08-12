@@ -435,6 +435,21 @@ test_mutation_request_roundtrip(void)
 	sakura_control_request_clear(&request);
 	g_byte_array_set_size(encoded, 0);
 
+	g_assert_true(sakura_control_encode_move_task_request(
+		"move-task", "task-1", "group-2", "task-parent", "task-2",
+		TRUE, encoded));
+	g_assert_true(sakura_control_decode_request(encoded->data, encoded->len,
+	                                           &request, &error));
+	g_assert_no_error(error);
+	g_assert_cmpint(request.kind, ==, SAKURA_CONTROL_REQUEST_MOVE_TASK);
+	g_assert_cmpstr(request.task_id, ==, "task-1");
+	g_assert_cmpstr(request.group_id, ==, "group-2");
+	g_assert_cmpstr(request.parent_id, ==, "task-parent");
+	g_assert_cmpstr(request.target_id, ==, "task-2");
+	g_assert_true(request.after);
+	sakura_control_request_clear(&request);
+	g_byte_array_set_size(encoded, 0);
+
 	g_assert_true(sakura_control_encode_set_group_archived_request(
 		"archive-group", "group-1", TRUE, encoded));
 	g_assert_true(sakura_control_decode_request(encoded->data, encoded->len,

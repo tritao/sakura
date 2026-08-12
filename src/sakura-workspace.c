@@ -6029,6 +6029,38 @@ sakura_sidebar_reorder_node_to_group(SakuraSidebarNode *source,
 		return FALSE;
 	}
 	if (source->type == SAKURA_SIDEBAR_TASK) {
+		if (sakura.agent_socket_path != NULL) {
+			GError *error = NULL;
+			gchar *task_id = g_strdup(source->task->id);
+			gchar *group_id = g_strdup(parent->group->id);
+
+			if (!sakura_agent_move_task(&sakura, task_id, group_id, NULL, NULL,
+			                            FALSE, &error)) {
+				if (error != NULL)
+					g_warning("Could not reorder task through sakura-agent: %s",
+					          error->message);
+				g_clear_error(&error);
+				g_free(task_id);
+				g_free(group_id);
+				sakura_workspace_end_mutation();
+				return FALSE;
+			}
+			{
+				SakuraTask *resolved_task = sakura_workspace_model_find_task(
+					sakura.workspace, task_id);
+				SakuraGroup *resolved_group = sakura_workspace_group_by_id(group_id);
+
+				source = resolved_task != NULL ? resolved_task->sidebar_node : NULL;
+				parent = resolved_group != NULL ? resolved_group->sidebar_node : NULL;
+			}
+			g_free(task_id);
+			g_free(group_id);
+			if (source == NULL || parent == NULL ||
+			    !sakura_sidebar_get_iter(source, &source_iter)) {
+				sakura_workspace_end_mutation();
+				return FALSE;
+			}
+		}
 		if (!sakura_workspace_model_append_task(sakura.workspace, source->task, parent->group)) {
 			sakura_workspace_end_mutation();
 			return FALSE;

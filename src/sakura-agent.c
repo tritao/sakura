@@ -542,6 +542,42 @@ sakura_agent_move_group(SakuraAgent *agent,
 
 
 static gboolean
+sakura_agent_move_task(SakuraAgent *agent,
+	                    const SakuraControlRequest *request,
+	                    GError **error)
+{
+	SakuraCoreTask *task, *parent = NULL, *target = NULL;
+	SakuraCoreGroup *group;
+
+	if (request->task_id == NULL || request->task_id[0] == '\0')
+		return sakura_agent_error(error, "task id is required");
+	task = sakura_core_workspace_find_task(agent->workspace, request->task_id);
+	if (task == NULL)
+		return sakura_agent_error(error, "task was not found");
+	group = sakura_agent_request_group(agent, request->group_id, error);
+	if (group == NULL)
+		return FALSE;
+	if (request->parent_id != NULL && request->parent_id[0] != '\0' &&
+	    g_strcmp0(request->parent_id, "root") != 0) {
+		parent = sakura_core_workspace_find_task(agent->workspace,
+		                                         request->parent_id);
+		if (parent == NULL)
+			return sakura_agent_error(error, "task parent was not found");
+	}
+	if (request->target_id != NULL && request->target_id[0] != '\0') {
+		target = sakura_core_workspace_find_task(agent->workspace,
+		                                         request->target_id);
+		if (target == NULL)
+			return sakura_agent_error(error, "task target was not found");
+	}
+	if (!sakura_core_workspace_move_task(agent->workspace, task, group, parent,
+	                                    target, request->after))
+		return sakura_agent_error(error, "could not move task");
+	return TRUE;
+}
+
+
+static gboolean
 sakura_agent_set_group_archived(SakuraAgent *agent,
 	                              const SakuraControlRequest *request,
 	                              GError **error)
@@ -1818,6 +1854,9 @@ sakura_agent_apply_request(SakuraAgent *agent,
 	case SAKURA_CONTROL_REQUEST_UPDATE_TASK:
 		changed = sakura_agent_update_task(agent, request, error);
 		break;
+	case SAKURA_CONTROL_REQUEST_MOVE_TASK:
+		changed = sakura_agent_move_task(agent, request, error);
+		break;
 	case SAKURA_CONTROL_REQUEST_UPDATE_PAGE:
 		changed = sakura_agent_update_page(agent, request, error);
 		break;
@@ -1900,6 +1939,7 @@ sakura_agent_request_changes_workspace(SakuraControlRequestKind kind)
 	case SAKURA_CONTROL_REQUEST_DELETE_GROUP:
 	case SAKURA_CONTROL_REQUEST_CREATE_TASK:
 	case SAKURA_CONTROL_REQUEST_UPDATE_TASK:
+	case SAKURA_CONTROL_REQUEST_MOVE_TASK:
 	case SAKURA_CONTROL_REQUEST_SET_TASK_ARCHIVED:
 	case SAKURA_CONTROL_REQUEST_DELETE_TASK:
 	case SAKURA_CONTROL_REQUEST_UPDATE_PAGE:

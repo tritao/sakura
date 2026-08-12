@@ -639,6 +639,32 @@ test_core_moves_group_subtrees(void)
 }
 
 
+static void
+test_core_moves_task_subtrees(void)
+{
+	SakuraCoreWorkspace *workspace = sakura_core_workspace_new();
+	SakuraCoreGroup *root = sakura_core_group_new("root", "Root", NULL);
+	SakuraCoreTask *first = sakura_core_task_new("first", "First", root, NULL);
+	SakuraCoreTask *second = sakura_core_task_new("second", "Second", root, NULL);
+	SakuraCoreTask *child = sakura_core_task_new("child", "Child", root, first);
+
+	first->order = 0;
+	second->order = 1;
+	g_assert_true(sakura_core_workspace_set_root(workspace, root));
+	g_assert_true(sakura_core_workspace_add_task(workspace, first));
+	g_assert_true(sakura_core_workspace_add_task(workspace, second));
+	g_assert_true(sakura_core_workspace_add_task(workspace, child));
+	g_assert_true(sakura_core_workspace_move_task(
+		workspace, first, root, NULL, NULL, FALSE));
+	g_assert_cmpuint(second->order, ==, 0);
+	g_assert_cmpuint(first->order, ==, 1);
+	g_assert_true(child->parent == first);
+	g_assert_false(sakura_core_workspace_move_task(
+		workspace, first, root, child, NULL, FALSE));
+	sakura_core_workspace_free(workspace);
+}
+
+
 int
 main(int argc, char **argv)
 {
@@ -662,5 +688,6 @@ main(int argc, char **argv)
 	g_test_add_func("/layout/split-and-collapse", test_layout_split_and_collapse);
 	g_test_add_func("/layout/reject-invalid-tree", test_layout_rejects_invalid_tree);
 	g_test_add_func("/workspace/move-group-subtree", test_core_moves_group_subtrees);
+	g_test_add_func("/workspace/move-task-subtree", test_core_moves_task_subtrees);
 	return g_test_run();
 }

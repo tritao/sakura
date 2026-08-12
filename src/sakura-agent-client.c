@@ -370,16 +370,9 @@ sakura_agent_command_thread(gpointer data)
 				app->agent_socket_path, app->workspace_id, &error);
 			if (connection != NULL) {
 				g_mutex_lock(&app->agent_command_mutex);
-				if (app->agent_command_stopping) {
-					g_mutex_unlock(&app->agent_command_mutex);
-					sakura_control_client_close(connection);
-					sakura_control_client_unref(connection);
-					connection = NULL;
-				} else {
-					app->agent_command_connection =
-						sakura_control_client_ref(connection);
-					g_mutex_unlock(&app->agent_command_mutex);
-				}
+				app->agent_command_connection =
+					sakura_control_client_ref(connection);
+				g_mutex_unlock(&app->agent_command_mutex);
 			}
 		}
 		if (connection == NULL) {
@@ -802,20 +795,13 @@ sakura_agent_command_stop(SakuraApp *app)
 {
 	if (app == NULL || !app->agent_command_mutex_initialized)
 		return;
-	SakuraControlClientConnection *connection = NULL;
-
 	g_mutex_lock(&app->agent_command_mutex);
 	app->agent_command_stopping = TRUE;
-	if (app->agent_command_cancellable != NULL)
-		g_cancellable_cancel(app->agent_command_cancellable);
-	if (app->agent_command_connection != NULL)
-		connection = sakura_control_client_ref(app->agent_command_connection);
 	g_cond_broadcast(&app->agent_command_cond);
 	g_mutex_unlock(&app->agent_command_mutex);
-	if (connection != NULL) {
-		sakura_control_client_close(connection);
-		sakura_control_client_unref(connection);
-	}
+	/* Structural ownership changes are queued to keep drag/drop responsive.
+	 * Drain accepted commands before teardown. Each request has a deadline, so
+	 * an unavailable agent cannot hold shutdown indefinitely. */
 	if (app->agent_command_thread != NULL) {
 		g_thread_join(app->agent_command_thread);
 		app->agent_command_thread = NULL;
@@ -1358,6 +1344,31 @@ sakura_agent_update_task(SakuraApp *app, const gchar *task_id,
 		sakura_control_encode_update_task_request(request_id, task_id, title,
 		                                         request),
 		"update task", error);
+	g_byte_array_unref(request);
+	g_free(request_id);
+	return result;
+}
+
+
+gboolean
+sakura_agent_move_task(SakuraApp *app, const gchar *task_id,
+	                    const gchar *group_id, const gchar *parent_id,
+	                    const gchar *target_id, gboolean after,
+	                    GError **error)
+{
+	GByteArray *request;
+	gchar *request_id;
+	gboolean result;
+
+	if (app == NULL || app->agent_socket_path == NULL)
+		return FALSE;
+	request_id = g_uuid_string_random();
+	request = g_byte_array_new();
+	result = sakura_agent_request_encoded_mutation(
+		app, request_id, request,
+		sakura_control_encode_move_task_request(
+			request_id, task_id, group_id, parent_id, target_id, after, request),
+		"move task", error);
 	g_byte_array_unref(request);
 	g_free(request_id);
 	return result;

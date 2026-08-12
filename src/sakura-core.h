@@ -268,6 +268,10 @@ gboolean sakura_core_workspace_remove_group(SakuraCoreWorkspace *workspace,
                                             SakuraCoreGroup *group);
 gboolean sakura_core_workspace_add_task(SakuraCoreWorkspace *workspace,
                                         SakuraCoreTask *task);
+gboolean sakura_core_workspace_move_task(
+	SakuraCoreWorkspace *workspace, SakuraCoreTask *source,
+	SakuraCoreGroup *group, SakuraCoreTask *parent,
+	SakuraCoreTask *target, gboolean after);
 gboolean sakura_core_workspace_can_remove_task(
 	SakuraCoreWorkspace *workspace, SakuraCoreTask *task);
 gboolean sakura_core_workspace_remove_task(SakuraCoreWorkspace *workspace,

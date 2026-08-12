@@ -514,6 +514,35 @@ sakura_control_encode_move_group_request(const gchar *request_id,
 
 
 gboolean
+sakura_control_encode_move_task_request(const gchar *request_id,
+	                                      const gchar *task_id,
+	                                      const gchar *group_id,
+	                                      const gchar *parent_id,
+	                                      const gchar *target_id,
+	                                      gboolean after,
+	                                      GByteArray *payload)
+{
+	Sakura__Control__V1__MoveTaskRequest move_task =
+		SAKURA__CONTROL__V1__MOVE_TASK_REQUEST__INIT;
+	Sakura__Control__V1__Request request =
+		SAKURA__CONTROL__V1__REQUEST__INIT;
+
+	if (payload == NULL || request_id == NULL || request_id[0] == '\0' ||
+	    task_id == NULL || task_id[0] == '\0')
+		return FALSE;
+	move_task.task_id = (gchar *)task_id;
+	move_task.group_id = (gchar *)sakura_control_string(group_id);
+	move_task.parent_id = (gchar *)sakura_control_string(parent_id);
+	move_task.target_id = (gchar *)sakura_control_string(target_id);
+	move_task.after = after;
+	request.request_id = (gchar *)request_id;
+	request.body_case = SAKURA__CONTROL__V1__REQUEST__BODY_MOVE_TASK;
+	request.move_task = &move_task;
+	return sakura_control_pack_message(&request.base, payload);
+}
+
+
+gboolean
 sakura_control_encode_set_group_archived_request(const gchar *request_id,
 	                                                const gchar *group_id,
 	                                                gboolean archived,
@@ -1043,6 +1072,16 @@ sakura_control_decode_request(const guint8 *payload,
 			request->parent_id = g_strdup(decoded->move_group->parent_id);
 			request->target_id = g_strdup(decoded->move_group->target_id);
 			request->after = decoded->move_group->after;
+		}
+		break;
+	case SAKURA__CONTROL__V1__REQUEST__BODY_MOVE_TASK:
+		if (decoded->move_task != NULL) {
+			request->kind = SAKURA_CONTROL_REQUEST_MOVE_TASK;
+			request->task_id = g_strdup(decoded->move_task->task_id);
+			request->group_id = g_strdup(decoded->move_task->group_id);
+			request->parent_id = g_strdup(decoded->move_task->parent_id);
+			request->target_id = g_strdup(decoded->move_task->target_id);
+			request->after = decoded->move_task->after;
 		}
 		break;
 	case SAKURA__CONTROL__V1__REQUEST__BODY_LIST_FILES:

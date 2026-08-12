@@ -29,6 +29,7 @@ typedef enum {
 	SAKURA_CONTROL_REQUEST_UPDATE_PAGE,
 	SAKURA_CONTROL_REQUEST_DELETE_PAGE,
 	SAKURA_CONTROL_REQUEST_MOVE_GROUP,
+	SAKURA_CONTROL_REQUEST_MOVE_TASK,
 	SAKURA_CONTROL_REQUEST_LIST_FILES,
 	SAKURA_CONTROL_REQUEST_READ_FILE,
 	SAKURA_CONTROL_REQUEST_WRITE_FILE
@@ -185,6 +186,10 @@ gboolean sakura_control_encode_delete_group_request(
 	const gchar *request_id, const gchar *group_id, GByteArray *payload);
 gboolean sakura_control_encode_update_task_request(
 	const gchar *request_id, const gchar *task_id, const gchar *title,
+	GByteArray *payload);
+gboolean sakura_control_encode_move_task_request(
+	const gchar *request_id, const gchar *task_id, const gchar *group_id,
+	const gchar *parent_id, const gchar *target_id, gboolean after,
 	GByteArray *payload);
 gboolean sakura_control_encode_update_page_request(
 	const gchar *request_id, const gchar *page_id, const gchar *group_id,

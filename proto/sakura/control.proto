@@ -160,6 +160,14 @@ message UpdateTaskRequest {
   string title = 2;
 }
 
+message MoveTaskRequest {
+  string task_id = 1;
+  string group_id = 2;
+  string parent_id = 3;
+  string target_id = 4;
+  bool after = 5;
+}
+
 message UpdatePageRequest {
   string page_id = 1;
   string group_id = 2;
@@ -270,6 +278,7 @@ message Request {
     UpdatePageRequest update_page = 20;
     DeletePageRequest delete_page = 21;
     MoveGroupRequest move_group = 22;
+    MoveTaskRequest move_task = 29;
     ListFilesRequest list_files = 26;
     ReadFileRequest read_file = 27;
     WriteFileRequest write_file = 28;
