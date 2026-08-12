@@ -83,7 +83,6 @@ typedef struct {
 struct _SakuraAgent {
 	GMainLoop *loop;
 	SakuraCoreWorkspace *workspace;
-	SakuraSessionSnapshot *session_snapshot;
 	gchar *workspace_id;
 	GMutex state_mutex;
 	GCond connections_drained;
@@ -264,21 +263,40 @@ sakura_agent_load_session(const gchar *workspace_path,
 {
 	SakuraSessionSnapshot *snapshot;
 	GKeyFile *key_file;
-	const gchar *load_path = workspace_path != NULL &&
-	                         g_file_test(workspace_path, G_FILE_TEST_IS_REGULAR)
-	                       ? workspace_path : session_path;
+	g_autofree gchar *backup_path = workspace_path != NULL
+	                              ? g_strdup_printf("%s.bak", workspace_path)
+	                              : NULL;
+	const gchar *load_path = NULL;
+	const gchar *candidates[3] = { workspace_path, backup_path, session_path };
 
+	for (guint index = 0; index < G_N_ELEMENTS(candidates); index++) {
+		if (candidates[index] != NULL &&
+		    g_file_test(candidates[index], G_FILE_TEST_IS_REGULAR)) {
+			load_path = candidates[index];
+			break;
+		}
+	}
 	snapshot = sakura_session_snapshot_new();
-	if (load_path == NULL || !g_file_test(load_path, G_FILE_TEST_IS_REGULAR))
+	if (load_path == NULL)
 		return snapshot;
 	key_file = g_key_file_new();
 	if (!g_key_file_load_from_file(key_file, load_path, 0, error) ||
 	    !sakura_session_snapshot_load(key_file, snapshot, error)) {
+		if (load_path == workspace_path && backup_path != NULL &&
+		    g_file_test(backup_path, G_FILE_TEST_IS_REGULAR)) {
+			if (error != NULL)
+				g_clear_error(error);
+			g_key_file_free(key_file);
+			sakura_session_snapshot_free(snapshot);
+			return sakura_agent_load_session(
+				backup_path, NULL, workspace_revision, error);
+		}
 		g_key_file_free(key_file);
 		sakura_session_snapshot_free(snapshot);
 		return NULL;
 	}
-	if (workspace_revision != NULL && load_path == workspace_path) {
+	if (workspace_revision != NULL &&
+	    (load_path == workspace_path || load_path == backup_path)) {
 		GError *revision_error = NULL;
 		guint64 revision = g_key_file_get_uint64(
 			key_file, "Workspace", "revision", &revision_error);
@@ -301,6 +319,8 @@ sakura_agent_persist_workspace(SakuraAgent *agent, GError **error)
 	gchar *temporary_path = NULL;
 	gsize data_length = 0;
 	gboolean saved = FALSE;
+	gchar *backup_path = NULL;
+	int sync_fd = -1;
 
 	if (agent == NULL || agent->workspace_path == NULL)
 		return TRUE;
@@ -329,17 +349,55 @@ sakura_agent_persist_workspace(SakuraAgent *agent, GError **error)
 	data = g_key_file_to_data(key_file, &data_length, error);
 	temporary_path = g_strdup_printf("%s.tmp.%d", agent->workspace_path,
 	                                (int)getpid());
+	backup_path = g_strdup_printf("%s.bak", agent->workspace_path);
 	if (data != NULL &&
 	    g_file_set_contents(temporary_path, data, data_length, error) &&
-	    chmod(temporary_path, 0600) == 0 &&
-	    g_rename(temporary_path, agent->workspace_path) == 0)
-		saved = TRUE;
-	else if (error != NULL && *error == NULL)
+	    chmod(temporary_path, 0600) == 0) {
+		sync_fd = g_open(temporary_path, O_RDONLY, 0);
+		if (sync_fd >= 0 && fsync(sync_fd) == 0) {
+			close(sync_fd);
+			sync_fd = -1;
+			if (g_file_test(agent->workspace_path, G_FILE_TEST_IS_REGULAR)) {
+				GKeyFile *existing_key_file = g_key_file_new();
+				SakuraSessionSnapshot *existing_snapshot =
+					sakura_session_snapshot_new();
+				gboolean existing_valid = g_key_file_load_from_file(
+					existing_key_file, agent->workspace_path, 0, NULL) &&
+					sakura_session_snapshot_load(
+						existing_key_file, existing_snapshot, NULL);
+
+				g_key_file_free(existing_key_file);
+				sakura_session_snapshot_free(existing_snapshot);
+				if (existing_valid) {
+					g_remove(backup_path);
+					if (g_rename(agent->workspace_path, backup_path) != 0)
+						goto persist_error;
+				} else if (g_remove(agent->workspace_path) != 0) {
+					goto persist_error;
+				}
+			}
+			if (g_rename(temporary_path, agent->workspace_path) == 0) {
+				g_autofree gchar *directory = g_path_get_dirname(
+					agent->workspace_path);
+				int directory_fd = g_open(directory, O_RDONLY | O_DIRECTORY, 0);
+
+				if (directory_fd >= 0 && fsync(directory_fd) == 0)
+					saved = TRUE;
+				if (directory_fd >= 0)
+					close(directory_fd);
+			}
+		}
+	}
+persist_error:
+	if (sync_fd >= 0)
+		close(sync_fd);
+	if (!saved && error != NULL && *error == NULL)
 		g_set_error(error, G_IO_ERROR, g_io_error_from_errno(errno), "%s",
 		            g_strerror(errno));
 	if (!saved)
 		g_remove(temporary_path);
 	g_free(temporary_path);
+	g_free(backup_path);
 	g_free(data);
 	g_key_file_free(key_file);
 	sakura_session_snapshot_free(snapshot);
@@ -2090,9 +2148,6 @@ sakura_agent_apply_request(SakuraAgent *agent,
 	}
 	if (!changed)
 		return FALSE;
-	if (!sakura_core_workspace_sync_snapshot(agent->workspace,
-	                                         agent->session_snapshot))
-		return sakura_agent_error(error, "could not update session snapshot");
 	return TRUE;
 }
 
@@ -2683,8 +2738,9 @@ main(int argc, char **argv)
 	loop = g_main_loop_new(NULL, FALSE);
 	agent.loop = loop;
 	agent.workspace = workspace;
-	agent.session_snapshot = session_snapshot;
 	agent.workspace_id = g_strdup(session_snapshot->workspace_id);
+	sakura_session_snapshot_free(session_snapshot);
+	session_snapshot = NULL;
 	agent.subscribers = g_ptr_array_new();
 	agent.connections = g_ptr_array_new();
 	agent.terminals = g_ptr_array_new_with_free_func(

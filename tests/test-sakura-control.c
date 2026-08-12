@@ -844,6 +844,85 @@ test_agent_shutdown_with_active_subscriber(void)
 
 
 static void
+test_agent_workspace_migration_and_recovery(void)
+{
+	g_autofree gchar *directory = NULL;
+	g_autofree gchar *socket_path = NULL;
+	g_autofree gchar *session_path = NULL;
+	g_autofree gchar *workspace_path = NULL;
+	g_autofree gchar *backup_path = NULL;
+	SakuraSessionSnapshot *legacy;
+	SakuraSessionSnapshot *loaded;
+	SakuraSessionGroupRecord *group;
+	GSubprocess *process;
+	GError *error = NULL;
+
+	directory = g_dir_make_tmp("sakura-agent-recovery-XXXXXX", &error);
+	g_assert_no_error(error);
+	socket_path = g_build_filename(directory, "agent.sock", NULL);
+	session_path = g_build_filename(directory, "desktop.session", NULL);
+	workspace_path = g_build_filename(directory, "agent.workspace", NULL);
+	backup_path = g_strdup_printf("%s.bak", workspace_path);
+	legacy = sakura_session_snapshot_new();
+	group = g_new0(SakuraSessionGroupRecord, 1);
+	group->id = g_strdup("group-migrated");
+	group->parent_id = g_strdup("root");
+	group->title = g_strdup("Migrated workspace");
+	g_ptr_array_add(legacy->groups, group);
+	test_save_agent_session(session_path, legacy);
+	sakura_session_snapshot_free(legacy);
+
+	/* Missing agent state migrates once from the legacy desktop snapshot. */
+	process = test_agent_start_with_workspace(
+		socket_path, session_path, workspace_path);
+	test_agent_stop(process);
+	g_assert_true(g_file_test(workspace_path, G_FILE_TEST_IS_REGULAR));
+	loaded = test_load_agent_session(workspace_path);
+	g_assert_cmpuint(loaded->groups->len, ==, 1);
+	group = g_ptr_array_index(loaded->groups, 0);
+	g_assert_cmpstr(group->id, ==, "group-migrated");
+	sakura_session_snapshot_free(loaded);
+
+	/* A second atomic write retains a known-good recovery snapshot. */
+	process = test_agent_start_with_workspace(
+		socket_path, session_path, workspace_path);
+	test_agent_stop(process);
+	g_assert_true(g_file_test(backup_path, G_FILE_TEST_IS_REGULAR));
+
+	/* A truncated primary recovers from the agent backup, not desktop state. */
+	g_assert_true(g_file_set_contents(workspace_path, "[broken", -1, &error));
+	g_assert_no_error(error);
+	process = test_agent_start_with_workspace(
+		socket_path, session_path, workspace_path);
+	test_agent_stop(process);
+	loaded = test_load_agent_session(workspace_path);
+	g_assert_cmpuint(loaded->groups->len, ==, 1);
+	group = g_ptr_array_index(loaded->groups, 0);
+	g_assert_cmpstr(group->id, ==, "group-migrated");
+	sakura_session_snapshot_free(loaded);
+	loaded = test_load_agent_session(backup_path);
+	g_assert_cmpuint(loaded->groups->len, ==, 1);
+	sakura_session_snapshot_free(loaded);
+
+	/* With no agent state at all, the legacy migration remains available. */
+	g_remove(workspace_path);
+	g_remove(backup_path);
+	process = test_agent_start_with_workspace(
+		socket_path, session_path, workspace_path);
+	test_agent_stop(process);
+	loaded = test_load_agent_session(workspace_path);
+	g_assert_cmpuint(loaded->groups->len, ==, 1);
+	sakura_session_snapshot_free(loaded);
+
+	g_remove(backup_path);
+	g_remove(workspace_path);
+	g_remove(session_path);
+	g_remove(socket_path);
+	g_rmdir(directory);
+}
+
+
+static void
 test_agent_handshake_on_connection(GSocketConnection *connection)
 {
 	GInputStream *input;
@@ -2583,6 +2662,8 @@ main(int argc, char **argv)
 	                test_agent_slow_subscriber_disconnects);
 	g_test_add_func("/control/agent-shutdown-with-active-subscriber",
 	                test_agent_shutdown_with_active_subscriber);
+	g_test_add_func("/control/agent-workspace-migration-and-recovery",
+	                test_agent_workspace_migration_and_recovery);
 	g_test_add_func("/control/agent-terminal-lifecycle",
 	                test_agent_terminal_lifecycle);
 	g_test_add_func("/control/agent-terminal-event-resume",
