@@ -3474,14 +3474,9 @@ sakura_sidebar_agent_archive_node(SakuraSidebarNode *node)
 		page = node->tab->page;
 	}
 	if (page != NULL) {
-		SakuraGroup *group = page->task != NULL ? page->task->group : page->group;
-		SakuraTask *task = page->task;
-
 		archived = !page->archived;
-		result = sakura_agent_update_page(
-			&sakura, page->id, group != NULL ? group->id : NULL,
-			task != NULL ? task->id : NULL, page->title,
-			page->title_set_by_user, archived, &error);
+		result = sakura_agent_set_page_archived(
+			&sakura, page->id, archived, &error);
 	} else if (node->type != SAKURA_SIDEBAR_TASK &&
 	           node->type != SAKURA_SIDEBAR_GROUP) {
 		return FALSE;
@@ -6587,7 +6582,11 @@ sakura_sidebar_project_tab_node(SakuraTab *tab, SakuraSidebarNode *parent)
 	node->parent = parent;
 	node->tab = tab;
 	tab->sidebar_node = node;
-	sakura_sidebar_insert_node(node);
+	/* Keep a terminal projection for metadata and tab-bar state, but expose it
+	 * in the tree only when the page has multiple panes. */
+	if (tab->page != NULL && tab->page->panes != NULL &&
+	    tab->page->panes->len > 1)
+		sakura_sidebar_insert_node(node);
 	sakura_sidebar_update_tab(tab);
 	return node;
 }
@@ -6635,6 +6634,19 @@ sakura_sidebar_rebuild_projection(void)
 	               : sakura_sidebar_selected_node();
 	if (selected_node != NULL)
 		sakura_sidebar_remember_selection(selected_node);
+	/* A one-pane session is represented by its page row only. Older live
+	 * projections may still have its terminal row selected when rebuilding;
+	 * preserve that selection by promoting it to the owning page. */
+	if (sakura.sidebar_selection_valid &&
+	    sakura.sidebar_selection_type == SAKURA_SIDEBAR_TERMINAL &&
+	    selected_node != NULL && selected_node->tab != NULL &&
+	    selected_node->tab->page != NULL &&
+	    selected_node->tab->page->panes != NULL &&
+	    selected_node->tab->page->panes->len <= 1) {
+		g_free(sakura.sidebar_selection_id);
+		sakura.sidebar_selection_id = g_strdup(selected_node->tab->page->id);
+		sakura.sidebar_selection_type = SAKURA_SIDEBAR_PAGE;
+	}
 	if (sakura.sidebar_selection_valid) {
 		selected_type = sakura.sidebar_selection_type;
 		selected_id = g_strdup(sakura.sidebar_selection_id);

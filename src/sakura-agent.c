@@ -766,10 +766,12 @@ sakura_agent_update_page(SakuraAgent *agent,
 		page->group = task != NULL ? task->group : group;
 		page->task = task;
 	}
-	g_free(page->title);
-	page->title = g_strdup(request->title != NULL ? request->title : "");
-	page->title_set_by_user = request->title_set_by_user;
-	page->archived = request->archived;
+	if (page_created) {
+		g_free(page->title);
+		page->title = g_strdup(request->title != NULL ? request->title : "");
+		page->title_set_by_user = request->title_set_by_user;
+		page->archived = request->archived;
+	}
 	return TRUE;
 }
 
@@ -809,6 +811,44 @@ sakura_agent_move_page(SakuraAgent *agent,
 	}
 	page->group = task != NULL ? task->group : group;
 	page->task = task;
+	return TRUE;
+}
+
+
+static gboolean
+sakura_agent_rename_page(SakuraAgent *agent,
+                         const SakuraControlRequest *request,
+                         GError **error)
+{
+	SakuraCorePage *page = sakura_core_workspace_find_page(
+		agent->workspace, request->page_id);
+
+	if (page == NULL) {
+		g_set_error(error, G_IO_ERROR, G_IO_ERROR_NOT_FOUND,
+		            "page %s was not found", request->page_id);
+		return FALSE;
+	}
+	g_free(page->title);
+	page->title = g_strdup(request->title != NULL ? request->title : "");
+	page->title_set_by_user = request->title_set_by_user;
+	return TRUE;
+}
+
+
+static gboolean
+sakura_agent_set_page_archived(SakuraAgent *agent,
+                               const SakuraControlRequest *request,
+                               GError **error)
+{
+	SakuraCorePage *page = sakura_core_workspace_find_page(
+		agent->workspace, request->page_id);
+
+	if (page == NULL) {
+		g_set_error(error, G_IO_ERROR, G_IO_ERROR_NOT_FOUND,
+		            "page %s was not found", request->page_id);
+		return FALSE;
+	}
+	page->archived = request->archived;
 	return TRUE;
 }
 
@@ -1915,6 +1955,12 @@ sakura_agent_apply_request(SakuraAgent *agent,
 	case SAKURA_CONTROL_REQUEST_MOVE_PAGE:
 		changed = sakura_agent_move_page(agent, request, error);
 		break;
+	case SAKURA_CONTROL_REQUEST_RENAME_PAGE:
+		changed = sakura_agent_rename_page(agent, request, error);
+		break;
+	case SAKURA_CONTROL_REQUEST_SET_PAGE_ARCHIVED:
+		changed = sakura_agent_set_page_archived(agent, request, error);
+		break;
 	case SAKURA_CONTROL_REQUEST_DELETE_PAGE:
 		changed = sakura_agent_delete_page(agent, request, error);
 		break;
@@ -1998,6 +2044,9 @@ sakura_agent_request_changes_workspace(SakuraControlRequestKind kind)
 	case SAKURA_CONTROL_REQUEST_SET_TASK_ARCHIVED:
 	case SAKURA_CONTROL_REQUEST_DELETE_TASK:
 	case SAKURA_CONTROL_REQUEST_UPDATE_PAGE:
+	case SAKURA_CONTROL_REQUEST_MOVE_PAGE:
+	case SAKURA_CONTROL_REQUEST_RENAME_PAGE:
+	case SAKURA_CONTROL_REQUEST_SET_PAGE_ARCHIVED:
 	case SAKURA_CONTROL_REQUEST_DELETE_PAGE:
 	case SAKURA_CONTROL_REQUEST_CREATE_TERMINAL:
 	case SAKURA_CONTROL_REQUEST_CREATE_CODEX:
@@ -2019,14 +2068,29 @@ sakura_agent_request_will_change_workspace(
 	if (agent == NULL || request == NULL ||
 	    !sakura_agent_request_changes_workspace(request->kind))
 		return FALSE;
+	page = sakura_core_workspace_find_page(agent->workspace, request->page_id);
+	if (request->kind == SAKURA_CONTROL_REQUEST_MOVE_PAGE) {
+		SakuraCoreGroup *group = sakura_core_workspace_find_group(
+			agent->workspace, request->group_id);
+		SakuraCoreTask *task = request->task_id != NULL &&
+		                       request->task_id[0] != '\0'
+		                     ? sakura_core_workspace_find_task(
+			                     agent->workspace, request->task_id) : NULL;
+
+		if (task != NULL)
+			group = task->group;
+		return page == NULL || page->group != group || page->task != task;
+	}
+	if (request->kind == SAKURA_CONTROL_REQUEST_RENAME_PAGE)
+		return page == NULL || g_strcmp0(page->title, request->title) != 0 ||
+		       page->title_set_by_user != request->title_set_by_user;
+	if (request->kind == SAKURA_CONTROL_REQUEST_SET_PAGE_ARCHIVED)
+		return page == NULL || page->archived != request->archived;
 	if (request->kind != SAKURA_CONTROL_REQUEST_UPDATE_PAGE)
 		return TRUE;
-	page = sakura_core_workspace_find_page(agent->workspace, request->page_id);
 	if (page == NULL)
 		return TRUE;
-	return g_strcmp0(page->title, request->title != NULL ? request->title : "") != 0 ||
-	       page->title_set_by_user != request->title_set_by_user ||
-	       page->archived != request->archived;
+	return FALSE;
 }
 
 

@@ -1957,16 +1957,11 @@ sakura_set_tab_label_text(const gchar *title, gint page)
 		tab->page->title_set_by_user = tab->label_set_byuser;
 		if (page_changed && sakura.agent_socket_path != NULL &&
 		    tab->page->id != NULL) {
-			SakuraGroup *group = tab->page->task != NULL
-			                   ? tab->page->task->group : tab->page->group;
 			GError *error = NULL;
 
-			if (!sakura_agent_update_page(
-					&sakura, tab->page->id,
-					group != NULL ? group->id : NULL,
-					tab->page->task != NULL ? tab->page->task->id : NULL,
-					tab->page->title, tab->page->title_set_by_user,
-					tab->page->archived, &error)) {
+			if (!sakura_agent_rename_page(
+					&sakura, tab->page->id, tab->page->title,
+					tab->page->title_set_by_user, &error)) {
 				if (error != NULL)
 					g_warning("Could not update page title through sakura-agent: %s",
 					          error->message);

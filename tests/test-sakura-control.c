@@ -511,6 +511,29 @@ test_mutation_request_roundtrip(void)
 	sakura_control_request_clear(&request);
 	g_byte_array_set_size(encoded, 0);
 
+	g_assert_true(sakura_control_encode_rename_page_request(
+		"rename-page", "page-1", "New page", TRUE, encoded));
+	g_assert_true(sakura_control_decode_request(encoded->data, encoded->len,
+	                                           &request, &error));
+	g_assert_no_error(error);
+	g_assert_cmpint(request.kind, ==, SAKURA_CONTROL_REQUEST_RENAME_PAGE);
+	g_assert_cmpstr(request.page_id, ==, "page-1");
+	g_assert_cmpstr(request.title, ==, "New page");
+	g_assert_true(request.title_set_by_user);
+	sakura_control_request_clear(&request);
+	g_byte_array_set_size(encoded, 0);
+
+	g_assert_true(sakura_control_encode_set_page_archived_request(
+		"archive-page", "page-1", TRUE, encoded));
+	g_assert_true(sakura_control_decode_request(encoded->data, encoded->len,
+	                                           &request, &error));
+	g_assert_no_error(error);
+	g_assert_cmpint(request.kind, ==, SAKURA_CONTROL_REQUEST_SET_PAGE_ARCHIVED);
+	g_assert_cmpstr(request.page_id, ==, "page-1");
+	g_assert_true(request.archived);
+	sakura_control_request_clear(&request);
+	g_byte_array_set_size(encoded, 0);
+
 	g_assert_true(sakura_control_encode_delete_page_request(
 		"delete-page", "page-1", encoded));
 	g_assert_true(sakura_control_decode_request(encoded->data, encoded->len,
@@ -2085,10 +2108,19 @@ test_agent_terminal_lifecycle(void)
 	                                              "page-agent-1"));
 
 	g_byte_array_set_size(request, 0);
-	g_assert_true(sakura_control_encode_update_page_request(
-		"page-update", "page-agent-1", "root", "root", "Agent page",
-		TRUE, TRUE, request));
-	test_agent_call_on_connection(command_connection, "page-update", request,
+	g_assert_true(sakura_control_encode_rename_page_request(
+		"page-rename", "page-agent-1", "Agent page", TRUE, request));
+	test_agent_call_on_connection(command_connection, "page-rename", request,
+	                              &response);
+	g_assert_true(response.has_snapshot);
+	sakura_control_response_clear(&response);
+	g_assert_true(test_agent_read_page_state_until(
+		subscriber_input, "page-agent-1", "Agent page", TRUE, FALSE));
+
+	g_byte_array_set_size(request, 0);
+	g_assert_true(sakura_control_encode_set_page_archived_request(
+		"page-archive", "page-agent-1", TRUE, request));
+	test_agent_call_on_connection(command_connection, "page-archive", request,
 	                              &response);
 	g_assert_true(response.has_snapshot);
 	sakura_control_response_clear(&response);

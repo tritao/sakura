@@ -185,6 +185,17 @@ message MovePageRequest {
   string task_id = 3;
 }
 
+message RenamePageRequest {
+  string page_id = 1;
+  string title = 2;
+  bool title_set_by_user = 3;
+}
+
+message SetPageArchivedRequest {
+  string page_id = 1;
+  bool archived = 2;
+}
+
 message DeletePageRequest {
   string page_id = 1;
 }
@@ -288,6 +299,8 @@ message Request {
     MoveGroupRequest move_group = 22;
     MoveTaskRequest move_task = 29;
     MovePageRequest move_page = 30;
+    RenamePageRequest rename_page = 31;
+    SetPageArchivedRequest set_page_archived = 32;
     ListFilesRequest list_files = 26;
     ReadFileRequest read_file = 27;
     WriteFileRequest write_file = 28;

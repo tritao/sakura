@@ -668,6 +668,52 @@ sakura_control_encode_move_page_request(const gchar *request_id,
 
 
 gboolean
+sakura_control_encode_rename_page_request(const gchar *request_id,
+                                           const gchar *page_id,
+                                           const gchar *title,
+                                           gboolean title_set_by_user,
+                                           GByteArray *payload)
+{
+	Sakura__Control__V1__RenamePageRequest rename_page =
+		SAKURA__CONTROL__V1__RENAME_PAGE_REQUEST__INIT;
+	Sakura__Control__V1__Request request = SAKURA__CONTROL__V1__REQUEST__INIT;
+
+	if (payload == NULL || request_id == NULL || request_id[0] == '\0' ||
+	    page_id == NULL || page_id[0] == '\0')
+		return FALSE;
+	rename_page.page_id = (gchar *)page_id;
+	rename_page.title = (gchar *)sakura_control_string(title);
+	rename_page.title_set_by_user = title_set_by_user;
+	request.request_id = (gchar *)request_id;
+	request.body_case = SAKURA__CONTROL__V1__REQUEST__BODY_RENAME_PAGE;
+	request.rename_page = &rename_page;
+	return sakura_control_pack_message(&request.base, payload);
+}
+
+
+gboolean
+sakura_control_encode_set_page_archived_request(const gchar *request_id,
+                                                 const gchar *page_id,
+                                                 gboolean archived,
+                                                 GByteArray *payload)
+{
+	Sakura__Control__V1__SetPageArchivedRequest set_archived =
+		SAKURA__CONTROL__V1__SET_PAGE_ARCHIVED_REQUEST__INIT;
+	Sakura__Control__V1__Request request = SAKURA__CONTROL__V1__REQUEST__INIT;
+
+	if (payload == NULL || request_id == NULL || request_id[0] == '\0' ||
+	    page_id == NULL || page_id[0] == '\0')
+		return FALSE;
+	set_archived.page_id = (gchar *)page_id;
+	set_archived.archived = archived;
+	request.request_id = (gchar *)request_id;
+	request.body_case = SAKURA__CONTROL__V1__REQUEST__BODY_SET_PAGE_ARCHIVED;
+	request.set_page_archived = &set_archived;
+	return sakura_control_pack_message(&request.base, payload);
+}
+
+
+gboolean
 sakura_control_encode_delete_page_request(const gchar *request_id,
                                           const gchar *page_id,
                                           GByteArray *payload)
@@ -1183,6 +1229,21 @@ sakura_control_decode_request(const guint8 *payload,
 			request->page_id = g_strdup(decoded->move_page->page_id);
 			request->group_id = g_strdup(decoded->move_page->group_id);
 			request->task_id = g_strdup(decoded->move_page->task_id);
+		}
+		break;
+	case SAKURA__CONTROL__V1__REQUEST__BODY_RENAME_PAGE:
+		if (decoded->rename_page != NULL) {
+			request->kind = SAKURA_CONTROL_REQUEST_RENAME_PAGE;
+			request->page_id = g_strdup(decoded->rename_page->page_id);
+			request->title = g_strdup(decoded->rename_page->title);
+			request->title_set_by_user = decoded->rename_page->title_set_by_user;
+		}
+		break;
+	case SAKURA__CONTROL__V1__REQUEST__BODY_SET_PAGE_ARCHIVED:
+		if (decoded->set_page_archived != NULL) {
+			request->kind = SAKURA_CONTROL_REQUEST_SET_PAGE_ARCHIVED;
+			request->page_id = g_strdup(decoded->set_page_archived->page_id);
+			request->archived = decoded->set_page_archived->archived;
 		}
 		break;
 	case SAKURA__CONTROL__V1__REQUEST__BODY_DELETE_PAGE:
