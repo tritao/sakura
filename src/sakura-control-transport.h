@@ -33,6 +33,7 @@ typedef enum {
 	SAKURA_CONTROL_REQUEST_MOVE_PAGE,
 	SAKURA_CONTROL_REQUEST_RENAME_PAGE,
 	SAKURA_CONTROL_REQUEST_SET_PAGE_ARCHIVED,
+	SAKURA_CONTROL_REQUEST_SET_TASK_STATUS,
 	SAKURA_CONTROL_REQUEST_LIST_FILES,
 	SAKURA_CONTROL_REQUEST_READ_FILE,
 	SAKURA_CONTROL_REQUEST_WRITE_FILE
@@ -78,6 +79,7 @@ typedef struct {
 	gsize input_length;
 	guint cols;
 	guint rows;
+	guint status;
 	guint64 after_sequence;
 	gboolean has_after_output_offset;
 	guint64 after_output_offset;
@@ -202,6 +204,9 @@ gboolean sakura_control_encode_rename_page_request(
 	gboolean title_set_by_user, GByteArray *payload);
 gboolean sakura_control_encode_set_page_archived_request(
 	const gchar *request_id, const gchar *page_id, gboolean archived,
+	GByteArray *payload);
+gboolean sakura_control_encode_set_task_status_request(
+	const gchar *request_id, const gchar *task_id, guint status,
 	GByteArray *payload);
 gboolean sakura_control_encode_update_page_request(
 	const gchar *request_id, const gchar *page_id, const gchar *group_id,

@@ -2316,6 +2316,17 @@ sakura_sidebar_task_status_cb(GtkWidget *widget, void *data)
 	                                           "sakura-task-status"));
 	if (status < SAKURA_TASK_READY || status > SAKURA_TASK_DONE)
 		return;
+	if (sakura.agent_socket_path != NULL) {
+		GError *error = NULL;
+
+		if (!sakura_agent_set_task_status(&sakura, task->id, status, &error)) {
+			if (error != NULL)
+				g_warning("Could not update task status through sakura-agent: %s",
+				          error->message);
+			g_clear_error(&error);
+			return;
+		}
+	}
 	sakura_workspace_begin_mutation();
 	if (task->sidebar_node != NULL)
 		sakura_sidebar_prepare_context(task->sidebar_node);
@@ -3724,6 +3735,18 @@ sakura_sidebar_task_start_cb(GtkWidget *widget, void *data)
 	(void)widget;
 	if (task == NULL)
 		return;
+	if (sakura.agent_socket_path != NULL) {
+		GError *error = NULL;
+
+		if (!sakura_agent_set_task_status(
+				&sakura, task->id, SAKURA_TASK_WORKING, &error)) {
+			if (error != NULL)
+				g_warning("Could not start task through sakura-agent: %s",
+				          error->message);
+			g_clear_error(&error);
+			return;
+		}
+	}
 	sakura_workspace_begin_mutation();
 	if (task->sidebar_node != NULL)
 		sakura_sidebar_prepare_context(task->sidebar_node);

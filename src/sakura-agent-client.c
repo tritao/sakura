@@ -1557,6 +1557,24 @@ sakura_agent_set_page_archived(SakuraApp *app, const gchar *page_id,
 
 
 gboolean
+sakura_agent_set_task_status(SakuraApp *app, const gchar *task_id,
+	                          SakuraTaskStatus status, GError **error)
+{
+	GByteArray *request = g_byte_array_new();
+	gchar *request_id = g_uuid_string_random();
+	gboolean result = sakura_agent_request_encoded_mutation(
+		app, request_id, request,
+		sakura_control_encode_set_task_status_request(
+			request_id, task_id, status, request),
+		"set task status", error);
+
+	g_byte_array_unref(request);
+	g_free(request_id);
+	return result;
+}
+
+
+gboolean
 sakura_agent_delete_page(SakuraApp *app, const gchar *page_id,
 	                       GError **error)
 {

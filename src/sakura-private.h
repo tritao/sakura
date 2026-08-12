@@ -1029,6 +1029,8 @@ gboolean sakura_agent_rename_page(SakuraApp *app, const gchar *page_id,
 gboolean sakura_agent_set_page_archived(SakuraApp *app,
                                         const gchar *page_id,
                                         gboolean archived, GError **error);
+gboolean sakura_agent_set_task_status(SakuraApp *app, const gchar *task_id,
+	                                  SakuraTaskStatus status, GError **error);
 gboolean sakura_agent_delete_page(SakuraApp *app, const gchar *page_id,
                                   GError **error);
 gboolean sakura_agent_set_task_archived(SakuraApp *app,

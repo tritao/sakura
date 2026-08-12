@@ -196,6 +196,11 @@ message SetPageArchivedRequest {
   bool archived = 2;
 }
 
+message SetTaskStatusRequest {
+  string task_id = 1;
+  uint32 status = 2;
+}
+
 message DeletePageRequest {
   string page_id = 1;
 }
@@ -301,6 +306,7 @@ message Request {
     MovePageRequest move_page = 30;
     RenamePageRequest rename_page = 31;
     SetPageArchivedRequest set_page_archived = 32;
+    SetTaskStatusRequest set_task_status = 33;
     ListFilesRequest list_files = 26;
     ReadFileRequest read_file = 27;
     WriteFileRequest write_file = 28;

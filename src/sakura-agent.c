@@ -794,6 +794,26 @@ sakura_agent_update_task(SakuraAgent *agent,
 
 
 static gboolean
+sakura_agent_set_task_status(SakuraAgent *agent,
+	                         const SakuraControlRequest *request,
+	                         GError **error)
+{
+	SakuraCoreTask *task;
+
+	if (request->status > SAKURA_TASK_DONE)
+		return sakura_agent_error(error, "task status is invalid");
+	task = sakura_core_workspace_find_task(agent->workspace, request->task_id);
+	if (task == NULL) {
+		g_set_error(error, G_IO_ERROR, G_IO_ERROR_NOT_FOUND,
+		            "task %s was not found", request->task_id);
+		return FALSE;
+	}
+	task->status = request->status;
+	return TRUE;
+}
+
+
+static gboolean
 sakura_agent_update_page(SakuraAgent *agent,
 	                      const SakuraControlRequest *request,
 	                      GError **error)
@@ -2017,6 +2037,9 @@ sakura_agent_apply_request(SakuraAgent *agent,
 	case SAKURA_CONTROL_REQUEST_UPDATE_TASK:
 		changed = sakura_agent_update_task(agent, request, error);
 		break;
+	case SAKURA_CONTROL_REQUEST_SET_TASK_STATUS:
+		changed = sakura_agent_set_task_status(agent, request, error);
+		break;
 	case SAKURA_CONTROL_REQUEST_MOVE_TASK:
 		changed = sakura_agent_move_task(agent, request, error);
 		break;
@@ -2111,6 +2134,7 @@ sakura_agent_request_changes_workspace(SakuraControlRequestKind kind)
 	case SAKURA_CONTROL_REQUEST_DELETE_GROUP:
 	case SAKURA_CONTROL_REQUEST_CREATE_TASK:
 	case SAKURA_CONTROL_REQUEST_UPDATE_TASK:
+	case SAKURA_CONTROL_REQUEST_SET_TASK_STATUS:
 	case SAKURA_CONTROL_REQUEST_MOVE_TASK:
 	case SAKURA_CONTROL_REQUEST_SET_TASK_ARCHIVED:
 	case SAKURA_CONTROL_REQUEST_DELETE_TASK:
@@ -2157,6 +2181,12 @@ sakura_agent_request_will_change_workspace(
 		       page->title_set_by_user != request->title_set_by_user;
 	if (request->kind == SAKURA_CONTROL_REQUEST_SET_PAGE_ARCHIVED)
 		return page == NULL || page->archived != request->archived;
+	if (request->kind == SAKURA_CONTROL_REQUEST_SET_TASK_STATUS) {
+		SakuraCoreTask *task = sakura_core_workspace_find_task(
+			agent->workspace, request->task_id);
+
+		return task == NULL || task->status != request->status;
+	}
 	if (request->kind != SAKURA_CONTROL_REQUEST_UPDATE_PAGE)
 		return TRUE;
 	if (page == NULL)
