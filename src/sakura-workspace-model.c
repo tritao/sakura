@@ -629,8 +629,9 @@ sakura_workspace_model_apply_snapshot(SakuraWorkspaceModel *model,
 			page->last_active_terminal_id = g_strdup(record->active_terminal_id);
 		}
 	}
-	/* A full desktop restore is authoritative for agent-owned tasks. An agent
-	 * merge deliberately skips this block because the agent has no page graph. */
+	/* Only legacy full-session restoration removes absent records. Agent merges
+	 * are authoritative updates but remain non-destructive while GTK restore is
+	 * still constructing presentation objects. */
 	if (remove_missing && model->tasks != NULL) {
 		for (gint index = (gint)model->tasks->len - 1; index >= 0; index--) {
 			SakuraTask *task = g_ptr_array_index(model->tasks, index);

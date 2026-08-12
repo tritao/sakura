@@ -561,9 +561,8 @@ sakura_agent_apply_workspace_snapshot(SakuraApp *app,
 	sakura_workspace_mark_changed(SAKURA_WORKSPACE_CHANGE_STRUCTURE |
 	                              SAKURA_WORKSPACE_CHANGE_METADATA);
 	sakura_workspace_end_mutation();
-	/* Agent mutations, including group reparenting, must reach the desktop
-	 * session file as well. Otherwise the next agent restart can reintroduce its
-	 * previous hierarchy. */
+	/* The desktop file stores presentation joins by stable ID. Refresh it after
+	 * agent changes without copying the authoritative hierarchy back into it. */
 	sakura_session_mark_dirty();
 	if (scope_needs_default && !app->session_shutting_down)
 		sakura_select_scope_default();
