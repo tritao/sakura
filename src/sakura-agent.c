@@ -730,6 +730,7 @@ sakura_agent_update_page(SakuraAgent *agent,
 	SakuraCorePage *page;
 	SakuraCoreGroup *group;
 	SakuraCoreTask *task = NULL;
+	gboolean page_created = FALSE;
 
 	if (request->page_id == NULL || request->page_id[0] == '\0')
 		return sakura_agent_error(error, "page id is required");
@@ -756,13 +757,58 @@ sakura_agent_update_page(SakuraAgent *agent,
 			sakura_core_page_free(page);
 			return sakura_agent_error(error, "could not register page");
 		}
+		page_created = TRUE;
 	}
-	page->group = task != NULL ? task->group : group;
-	page->task = task;
+	/* Existing page ownership is structural state and may only be changed by
+	 * move_page. This request carries group/task solely so it can register a
+	 * page that predates the agent. */
+	if (page_created) {
+		page->group = task != NULL ? task->group : group;
+		page->task = task;
+	}
 	g_free(page->title);
 	page->title = g_strdup(request->title != NULL ? request->title : "");
 	page->title_set_by_user = request->title_set_by_user;
 	page->archived = request->archived;
+	return TRUE;
+}
+
+
+static gboolean
+sakura_agent_move_page(SakuraAgent *agent,
+                       const SakuraControlRequest *request,
+                       GError **error)
+{
+	SakuraCorePage *page;
+	SakuraCoreGroup *group;
+	SakuraCoreTask *task = NULL;
+
+	if (request->page_id == NULL || request->page_id[0] == '\0')
+		return sakura_agent_error(error, "page id is required");
+	page = sakura_core_workspace_find_page(agent->workspace, request->page_id);
+	if (page == NULL) {
+		g_set_error(error, G_IO_ERROR, G_IO_ERROR_NOT_FOUND,
+		            "page %s was not found", request->page_id);
+		return FALSE;
+	}
+	group = sakura_agent_request_group(agent, request->group_id, error);
+	if (group == NULL)
+		return FALSE;
+	if (request->task_id != NULL && request->task_id[0] != '\0' &&
+	    g_strcmp0(request->task_id, "root") != 0) {
+		task = sakura_core_workspace_find_task(agent->workspace,
+		                                       request->task_id);
+		if (task == NULL) {
+			g_set_error(error, G_IO_ERROR, G_IO_ERROR_NOT_FOUND,
+			            "task %s was not found", request->task_id);
+			return FALSE;
+		}
+		if (task->group != group)
+			return sakura_agent_error(error,
+			                          "page task belongs to another group");
+	}
+	page->group = task != NULL ? task->group : group;
+	page->task = task;
 	return TRUE;
 }
 
@@ -865,8 +911,14 @@ sakura_agent_bind_page_terminal(SakuraAgent *agent, const gchar *page_id,
 		create->previous_page_title_set_by_user = page->title_set_by_user;
 	}
 	create->page = page;
-	page->group = group;
-	page->task = task;
+	/* A terminal-start request may have been queued before a concurrent page
+	 * move. Once the logical page exists, its own update-page mutation is the
+	 * authority for ownership; binding a late terminal must not restore the
+	 * stale group/task captured when startup began. */
+	if (create->page_created) {
+		page->group = group;
+		page->task = task;
+	}
 	g_free(page->active_terminal_id);
 	page->active_terminal_id = g_strdup(terminal_id);
 	if (page->title == NULL || page->title[0] == '\0') {
@@ -1860,6 +1912,9 @@ sakura_agent_apply_request(SakuraAgent *agent,
 	case SAKURA_CONTROL_REQUEST_UPDATE_PAGE:
 		changed = sakura_agent_update_page(agent, request, error);
 		break;
+	case SAKURA_CONTROL_REQUEST_MOVE_PAGE:
+		changed = sakura_agent_move_page(agent, request, error);
+		break;
 	case SAKURA_CONTROL_REQUEST_DELETE_PAGE:
 		changed = sakura_agent_delete_page(agent, request, error);
 		break;
@@ -1960,8 +2015,6 @@ sakura_agent_request_will_change_workspace(
 	SakuraAgent *agent, const SakuraControlRequest *request)
 {
 	SakuraCorePage *page;
-	SakuraCoreGroup *group;
-	SakuraCoreTask *task = NULL;
 
 	if (agent == NULL || request == NULL ||
 	    !sakura_agent_request_changes_workspace(request->kind))
@@ -1971,16 +2024,7 @@ sakura_agent_request_will_change_workspace(
 	page = sakura_core_workspace_find_page(agent->workspace, request->page_id);
 	if (page == NULL)
 		return TRUE;
-	group = sakura_core_workspace_find_group(agent->workspace,
-	                                        request->group_id);
-	if (request->task_id != NULL && request->task_id[0] != '\0' &&
-	    g_strcmp0(request->task_id, "root") != 0)
-		task = sakura_core_workspace_find_task(agent->workspace,
-		                                      request->task_id);
-	if (task != NULL)
-		group = task->group;
-	return page->group != group || page->task != task ||
-	       g_strcmp0(page->title, request->title != NULL ? request->title : "") != 0 ||
+	return g_strcmp0(page->title, request->title != NULL ? request->title : "") != 0 ||
 	       page->title_set_by_user != request->title_set_by_user ||
 	       page->archived != request->archived;
 }

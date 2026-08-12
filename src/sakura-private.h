@@ -927,6 +927,10 @@ gboolean sakura_workspace_model_move_group(SakuraWorkspaceModel *model,
 gboolean sakura_workspace_model_append_task(SakuraWorkspaceModel *model,
                                              SakuraTask *task,
                                              SakuraGroup *group);
+gboolean sakura_workspace_model_reorder_task(SakuraWorkspaceModel *model,
+                                              SakuraTask *source,
+                                              SakuraTask *target,
+                                              gboolean after);
 gboolean sakura_workspace_model_group_is_archived(const SakuraWorkspaceModel *model,
                                                    const SakuraGroup *group);
 gboolean sakura_workspace_model_task_is_archived(const SakuraWorkspaceModel *model,
@@ -1016,6 +1020,9 @@ gboolean sakura_agent_update_page(SakuraApp *app, const gchar *page_id,
                                   const gchar *group_id, const gchar *task_id,
                                   const gchar *title, gboolean title_set_by_user,
                                   gboolean archived, GError **error);
+gboolean sakura_agent_move_page(SakuraApp *app, const gchar *page_id,
+                                const gchar *group_id, const gchar *task_id,
+                                GError **error);
 gboolean sakura_agent_delete_page(SakuraApp *app, const gchar *page_id,
                                   GError **error);
 gboolean sakura_agent_set_task_archived(SakuraApp *app,

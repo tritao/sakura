@@ -499,6 +499,18 @@ test_mutation_request_roundtrip(void)
 	sakura_control_request_clear(&request);
 	g_byte_array_set_size(encoded, 0);
 
+	g_assert_true(sakura_control_encode_move_page_request(
+		"move-page", "page-1", "group-2", "task-2", encoded));
+	g_assert_true(sakura_control_decode_request(encoded->data, encoded->len,
+	                                           &request, &error));
+	g_assert_no_error(error);
+	g_assert_cmpint(request.kind, ==, SAKURA_CONTROL_REQUEST_MOVE_PAGE);
+	g_assert_cmpstr(request.page_id, ==, "page-1");
+	g_assert_cmpstr(request.group_id, ==, "group-2");
+	g_assert_cmpstr(request.task_id, ==, "task-2");
+	sakura_control_request_clear(&request);
+	g_byte_array_set_size(encoded, 0);
+
 	g_assert_true(sakura_control_encode_delete_page_request(
 		"delete-page", "page-1", encoded));
 	g_assert_true(sakura_control_decode_request(encoded->data, encoded->len,

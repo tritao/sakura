@@ -177,6 +177,14 @@ message UpdatePageRequest {
   bool archived = 6;
 }
 
+// Structural page ownership is intentionally separate from page metadata.
+// Metadata updates must never be able to move a page as a side effect.
+message MovePageRequest {
+  string page_id = 1;
+  string group_id = 2;
+  string task_id = 3;
+}
+
 message DeletePageRequest {
   string page_id = 1;
 }
@@ -279,6 +287,7 @@ message Request {
     DeletePageRequest delete_page = 21;
     MoveGroupRequest move_group = 22;
     MoveTaskRequest move_task = 29;
+    MovePageRequest move_page = 30;
     ListFilesRequest list_files = 26;
     ReadFileRequest read_file = 27;
     WriteFileRequest write_file = 28;

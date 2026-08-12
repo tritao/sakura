@@ -333,8 +333,18 @@ out:
 	if (mutation_locked)
 		g_mutex_unlock(&app->agent_workspace_mutation_mutex);
 	if (!success && error != NULL &&
-	    sakura_agent_error_is_revision_conflict(*error))
-		sakura_agent_refresh_after_revision_conflict(app);
+	    sakura_agent_error_is_revision_conflict(*error)) {
+		/* Error responses carry the authoritative revision. Advance it here,
+		 * on the command worker, before the next queued mutation is encoded.
+		 * Scheduling an asynchronous snapshot refresh alone leaves the rest of
+		 * the queue using the same stale revision and creates a warning storm. */
+		guint64 current_revision = response.error_current_revision != 0
+		                           ? response.error_current_revision
+		                           : response.workspace_revision;
+
+		if (current_revision != 0)
+			sakura_agent_workspace_revision_set(app, current_revision);
+	}
 	g_clear_pointer(&response_payload, g_byte_array_unref);
 	sakura_control_response_clear(&response);
 	g_byte_array_unref(request);
@@ -352,6 +362,8 @@ sakura_agent_command_thread(gpointer data)
 	for (;;) {
 		SakuraAgentCommand *command;
 		GError *error = NULL;
+		guint revision_retries = 0;
+		gboolean command_sent;
 
 		g_mutex_lock(&app->agent_command_mutex);
 		while (g_queue_is_empty(app->agent_command_queue) &&
@@ -381,7 +393,17 @@ sakura_agent_command_thread(gpointer data)
 			sakura_agent_command_free(command);
 			continue;
 		}
-		if (!sakura_agent_send_command(app, connection, command, &error)) {
+		command_sent = sakura_agent_send_command(app, connection, command, &error);
+		while (!command_sent && sakura_agent_error_is_revision_conflict(error) &&
+		       revision_retries++ < 3) {
+			/* A conflict guarantees that this mutation was not applied. Retrying
+			 * it with the revision captured from the error response is therefore
+			 * safe, and preserves the order of the command queue. */
+			g_clear_error(&error);
+			command_sent = sakura_agent_send_command(
+				app, connection, command, &error);
+		}
+		if (!command_sent) {
 			sakura_agent_report_command_failure(app, command, error);
 			g_clear_error(&error);
 			g_mutex_lock(&app->agent_command_mutex);
@@ -976,6 +998,7 @@ sakura_agent_request_mutation(SakuraApp *app, const gchar *request_id,
 	SakuraControlResponse response = { 0 };
 	gboolean success = FALSE;
 	gboolean mutation_locked = FALSE;
+	guint revision_retries = 0;
 
 	if (app == NULL || app->agent_socket_path == NULL || request_id == NULL ||
 	    request == NULL)
@@ -988,19 +1011,36 @@ sakura_agent_request_mutation(SakuraApp *app, const gchar *request_id,
 		g_mutex_lock(&app->agent_workspace_mutation_mutex);
 		mutation_locked = TRUE;
 	}
-	if (!sakura_control_request_set_expected_revision(
-			request, sakura_agent_workspace_revision_get(app))) {
-		g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_INVALID_DATA,
-		                    "could not add expected workspace revision");
-		goto out;
+	for (;;) {
+		if (!sakura_control_request_set_expected_revision(
+				request, sakura_agent_workspace_revision_get(app))) {
+			g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_INVALID_DATA,
+			                    "could not add expected workspace revision");
+			goto out;
+		}
+		if (sakura_control_client_request_with_cancellable(
+				connection, request, &response_payload,
+				app->agent_command_cancellable, error) &&
+		    sakura_control_decode_response(response_payload->data,
+		                                    response_payload->len, &response,
+		                                    error))
+			break;
+		if (!sakura_agent_error_is_revision_conflict(
+				error != NULL ? *error : NULL) || revision_retries++ >= 3)
+			goto out;
+		{
+			guint64 current_revision = response.error_current_revision != 0
+			                           ? response.error_current_revision
+			                           : response.workspace_revision;
+
+			if (current_revision == 0)
+				goto out;
+			sakura_agent_workspace_revision_set(app, current_revision);
+		}
+		g_clear_error(error);
+		g_clear_pointer(&response_payload, g_byte_array_unref);
+		sakura_control_response_clear(&response);
 	}
-	if (!sakura_control_client_request_with_cancellable(
-			connection, request, &response_payload,
-			app->agent_command_cancellable, error) ||
-	    !sakura_control_decode_response(response_payload->data,
-	                                    response_payload->len, &response,
-	                                    error))
-		goto out;
 	if (g_strcmp0(response.request_id, request_id) != 0) {
 		g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_INVALID_DATA,
 		                    "agent response id did not match request");
@@ -1048,6 +1088,7 @@ sakura_agent_request_accepted(SakuraApp *app, const gchar *request_id,
 	SakuraControlResponse response = { 0 };
 	gboolean success = FALSE;
 	gboolean mutation_locked = FALSE;
+	guint revision_retries = 0;
 
 	if (accepted_id != NULL)
 		*accepted_id = NULL;
@@ -1062,19 +1103,39 @@ sakura_agent_request_accepted(SakuraApp *app, const gchar *request_id,
 		g_mutex_lock(&app->agent_workspace_mutation_mutex);
 		mutation_locked = TRUE;
 	}
-	if (!sakura_control_request_set_expected_revision(
-			request, sakura_agent_workspace_revision_get(app))) {
-		g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_INVALID_DATA,
-		                    "could not add expected workspace revision");
-		goto out;
+	for (;;) {
+		if (!sakura_control_request_set_expected_revision(
+				request, sakura_agent_workspace_revision_get(app))) {
+			g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_INVALID_DATA,
+			                    "could not add expected workspace revision");
+			goto out;
+		}
+		if (sakura_control_client_request_with_cancellable(
+				connection, request, &response_payload,
+				app->agent_command_cancellable, error) &&
+		    sakura_control_decode_response(response_payload->data,
+		                                    response_payload->len, &response,
+		                                    error))
+			break;
+		if (!sakura_agent_error_is_revision_conflict(
+				error != NULL ? *error : NULL) || revision_retries++ >= 3)
+			goto out;
+		/* Creation was rejected before it could have side effects. Adopt the
+		 * authoritative revision while holding the mutation lock, then retry the
+		 * same stable terminal ID so concurrent restore jobs cannot cascade. */
+		{
+			guint64 current_revision = response.error_current_revision != 0
+			                           ? response.error_current_revision
+			                           : response.workspace_revision;
+
+			if (current_revision == 0)
+				goto out;
+			sakura_agent_workspace_revision_set(app, current_revision);
+		}
+		g_clear_error(error);
+		g_clear_pointer(&response_payload, g_byte_array_unref);
+		sakura_control_response_clear(&response);
 	}
-	if (!sakura_control_client_request_with_cancellable(
-			connection, request, &response_payload,
-			app->agent_command_cancellable, error) ||
-	    !sakura_control_decode_response(response_payload->data,
-	                                    response_payload->len, &response,
-	                                    error))
-		goto out;
 	if (g_strcmp0(response.request_id, request_id) != 0) {
 		g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_INVALID_DATA,
 		                    "agent response id did not match request");
@@ -1115,6 +1176,8 @@ sakura_agent_request_attached(SakuraApp *app, const gchar *request_id,
 	GByteArray *response_payload = NULL;
 	SakuraControlResponse response = { 0 };
 	gboolean success = FALSE;
+	gboolean mutation_locked = FALSE;
+	guint revision_retries = 0;
 
 	if (replay_data != NULL)
 		*replay_data = NULL;
@@ -1137,19 +1200,40 @@ sakura_agent_request_attached(SakuraApp *app, const gchar *request_id,
 		app->agent_socket_path, app->workspace_id, error);
 	if (connection == NULL)
 		return FALSE;
-	if (!sakura_control_request_set_expected_revision(
-			request, sakura_agent_workspace_revision_get(app))) {
-		g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_INVALID_DATA,
-		                    "could not add expected workspace revision");
-		goto out;
+	if (app->agent_workspace_mutation_mutex_initialized) {
+		g_mutex_lock(&app->agent_workspace_mutation_mutex);
+		mutation_locked = TRUE;
 	}
-	if (!sakura_control_client_request_with_cancellable(
-			connection, request, &response_payload,
-			app->agent_command_cancellable, error) ||
-		    !sakura_control_decode_response(response_payload->data,
-	                                    response_payload->len, &response,
-	                                    error))
-		goto out;
+	for (;;) {
+		if (!sakura_control_request_set_expected_revision(
+				request, sakura_agent_workspace_revision_get(app))) {
+			g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_INVALID_DATA,
+			                    "could not add expected workspace revision");
+			goto out;
+		}
+		if (sakura_control_client_request_with_cancellable(
+				connection, request, &response_payload,
+				app->agent_command_cancellable, error) &&
+		    sakura_control_decode_response(response_payload->data,
+		                                    response_payload->len, &response,
+		                                    error))
+			break;
+		if (!sakura_agent_error_is_revision_conflict(
+				error != NULL ? *error : NULL) || revision_retries++ >= 3)
+			goto out;
+		{
+			guint64 current_revision = response.error_current_revision != 0
+			                           ? response.error_current_revision
+			                           : response.workspace_revision;
+
+			if (current_revision == 0)
+				goto out;
+			sakura_agent_workspace_revision_set(app, current_revision);
+		}
+		g_clear_error(error);
+		g_clear_pointer(&response_payload, g_byte_array_unref);
+		sakura_control_response_clear(&response);
+	}
 	if (g_strcmp0(response.request_id, request_id) != 0) {
 		g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_INVALID_DATA,
 	                    "agent response id did not match attach request");
@@ -1179,9 +1263,8 @@ sakura_agent_request_attached(SakuraApp *app, const gchar *request_id,
 		*status = response.attached_status;
 	success = TRUE;
 out:
-	if (!success && error != NULL &&
-	    sakura_agent_error_is_revision_conflict(*error))
-		sakura_agent_refresh_after_revision_conflict(app);
+	if (mutation_locked)
+		g_mutex_unlock(&app->agent_workspace_mutation_mutex);
 	g_clear_pointer(&response_payload, g_byte_array_unref);
 	sakura_control_response_clear(&response);
 	sakura_control_client_close(connection);
@@ -1387,22 +1470,52 @@ sakura_agent_update_page(SakuraApp *app, const gchar *page_id,
 	                       const gchar *title, gboolean title_set_by_user,
 	                       gboolean archived, GError **error)
 {
-	SakuraAgentCommand *command;
+	GByteArray *request;
+	gchar *request_id;
+	gboolean result;
 
-	if (page_id == NULL || page_id[0] == '\0') {
+	if (app == NULL || app->agent_socket_path == NULL ||
+	    page_id == NULL || page_id[0] == '\0') {
 		g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT,
 		                    "page id is required");
 		return FALSE;
 	}
-	command = g_new0(SakuraAgentCommand, 1);
-	command->kind = SAKURA_AGENT_COMMAND_UPDATE_PAGE;
-	command->page_id = g_strdup(page_id);
-	command->group_id = g_strdup(group_id);
-	command->task_id = g_strdup(task_id);
-	command->title = g_strdup(title);
-	command->title_set_by_user = title_set_by_user;
-	command->archived = archived;
-	return sakura_agent_enqueue_command(app, command, error);
+	request_id = g_uuid_string_random();
+	request = g_byte_array_new();
+	result = sakura_agent_request_encoded_mutation(
+		app, request_id, request,
+		sakura_control_encode_update_page_request(
+			request_id, page_id, group_id, task_id, title,
+			title_set_by_user, archived, request),
+		"update page", error);
+	g_byte_array_unref(request);
+	g_free(request_id);
+	return result;
+}
+
+
+gboolean
+sakura_agent_move_page(SakuraApp *app, const gchar *page_id,
+                       const gchar *group_id, const gchar *task_id,
+                       GError **error)
+{
+	GByteArray *request;
+	gchar *request_id;
+	gboolean result;
+
+	if (app == NULL || app->agent_socket_path == NULL || page_id == NULL ||
+	    page_id[0] == '\0' || group_id == NULL || group_id[0] == '\0')
+		return FALSE;
+	request_id = g_uuid_string_random();
+	request = g_byte_array_new();
+	result = sakura_agent_request_encoded_mutation(
+		app, request_id, request,
+		sakura_control_encode_move_page_request(
+			request_id, page_id, group_id, task_id, request),
+		"move page", error);
+	g_byte_array_unref(request);
+	g_free(request_id);
+	return result;
 }
 
 

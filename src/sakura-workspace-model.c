@@ -1206,3 +1206,43 @@ sakura_workspace_model_append_task(SakuraWorkspaceModel *model,
 	sakura_workspace_model_normalize_task_orders(model, group, NULL);
 	return TRUE;
 }
+
+
+gboolean
+sakura_workspace_model_reorder_task(SakuraWorkspaceModel *model,
+                                     SakuraTask *source,
+                                     SakuraTask *target,
+                                     gboolean after)
+{
+	GList *siblings = NULL, *target_link;
+
+	if (model == NULL || source == NULL || target == NULL || source == target ||
+	    source->group != target->group || source->parent != target->parent ||
+	    sakura_workspace_model_find_task(model, source->id) != source ||
+	    sakura_workspace_model_find_task(model, target->id) != target)
+		return FALSE;
+	for (guint index = 0; model->tasks != NULL && index < model->tasks->len;
+	     index++) {
+		SakuraTask *task = g_ptr_array_index(model->tasks, index);
+
+		if (task != NULL && task != source && task->group == source->group &&
+		    task->parent == source->parent)
+			siblings = g_list_prepend(siblings, task);
+	}
+	siblings = g_list_sort(siblings, sakura_workspace_model_task_order_compare);
+	target_link = g_list_find(siblings, target);
+	if (target_link == NULL) {
+		g_list_free(siblings);
+		return FALSE;
+	}
+	if (after && target_link->next != NULL)
+		siblings = g_list_insert_before(siblings, target_link->next, source);
+	else if (after)
+		siblings = g_list_append(siblings, source);
+	else
+		siblings = g_list_insert_before(siblings, target_link, source);
+	for (GList *link = siblings; link != NULL; link = link->next)
+		((SakuraTask *)link->data)->order = g_list_position(siblings, link);
+	g_list_free(siblings);
+	return TRUE;
+}

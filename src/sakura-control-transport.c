@@ -642,6 +642,32 @@ sakura_control_encode_update_page_request(const gchar *request_id,
 
 
 gboolean
+sakura_control_encode_move_page_request(const gchar *request_id,
+                                         const gchar *page_id,
+                                         const gchar *group_id,
+                                         const gchar *task_id,
+                                         GByteArray *payload)
+{
+	Sakura__Control__V1__MovePageRequest move_page =
+		SAKURA__CONTROL__V1__MOVE_PAGE_REQUEST__INIT;
+	Sakura__Control__V1__Request request =
+		SAKURA__CONTROL__V1__REQUEST__INIT;
+
+	if (payload == NULL || request_id == NULL || request_id[0] == '\0' ||
+	    page_id == NULL || page_id[0] == '\0' || group_id == NULL ||
+	    group_id[0] == '\0')
+		return FALSE;
+	move_page.page_id = (gchar *)page_id;
+	move_page.group_id = (gchar *)group_id;
+	move_page.task_id = (gchar *)sakura_control_string(task_id);
+	request.request_id = (gchar *)request_id;
+	request.body_case = SAKURA__CONTROL__V1__REQUEST__BODY_MOVE_PAGE;
+	request.move_page = &move_page;
+	return sakura_control_pack_message(&request.base, payload);
+}
+
+
+gboolean
 sakura_control_encode_delete_page_request(const gchar *request_id,
                                           const gchar *page_id,
                                           GByteArray *payload)
@@ -1149,6 +1175,14 @@ sakura_control_decode_request(const guint8 *payload,
 			request->title = g_strdup(decoded->update_page->title);
 			request->title_set_by_user = decoded->update_page->title_set_by_user;
 			request->archived = decoded->update_page->archived;
+		}
+		break;
+	case SAKURA__CONTROL__V1__REQUEST__BODY_MOVE_PAGE:
+		if (decoded->move_page != NULL) {
+			request->kind = SAKURA_CONTROL_REQUEST_MOVE_PAGE;
+			request->page_id = g_strdup(decoded->move_page->page_id);
+			request->group_id = g_strdup(decoded->move_page->group_id);
+			request->task_id = g_strdup(decoded->move_page->task_id);
 		}
 		break;
 	case SAKURA__CONTROL__V1__REQUEST__BODY_DELETE_PAGE:

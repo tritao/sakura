@@ -60,6 +60,10 @@ static gboolean sakura_sidebar_reorder_node_to_group(
                                       SakuraSidebarNode *source,
                                       SakuraSidebarNode *target,
                                       GtkTreeViewDropPosition position);
+static gboolean sakura_sidebar_reorder_task_to_sibling(
+                                      SakuraSidebarNode *source,
+                                      SakuraSidebarNode *target,
+                                      GtkTreeViewDropPosition position);
 static gboolean sakura_sidebar_move_group_to_target(
                                       SakuraSidebarNode *source,
                                       SakuraSidebarNode *target,
@@ -447,6 +451,28 @@ sakura_sidebar_sync_page_to_agent(SakuraPage *page, SakuraGroup *group,
 }
 
 
+static gboolean
+sakura_sidebar_move_page_in_agent(SakuraPage *page, SakuraGroup *group,
+                                  SakuraTask *task)
+{
+	GError *error = NULL;
+	gboolean result;
+
+	if (sakura.agent_socket_path == NULL || page == NULL)
+		return TRUE;
+	if (task != NULL)
+		group = task->group;
+	result = sakura_agent_move_page(
+		&sakura, page->id, group != NULL ? group->id : "root",
+		task != NULL ? task->id : NULL, &error);
+	if (!result && error != NULL)
+		g_warning("Could not move page through sakura-agent: %s",
+		          error->message);
+	g_clear_error(&error);
+	return result;
+}
+
+
 void
 sakura_task_attach_page(SakuraTask *task, SakuraPage *page)
 {
@@ -458,7 +484,7 @@ sakura_task_attach_page(SakuraTask *task, SakuraPage *page)
 	group = sakura_workspace_model_group_for_task(sakura.workspace, task);
 	if (page->task == task)
 		return;
-	if (!sakura_sidebar_sync_page_to_agent(page, group, task))
+	if (!sakura_sidebar_move_page_in_agent(page, group, task))
 		return;
 	sakura_workspace_begin_mutation();
 	node = page->sidebar_node;
@@ -505,7 +531,7 @@ sakura_task_detach_page(SakuraPage *page)
 	group = old_task != NULL ? sakura_workspace_model_group_for_task(sakura.workspace, old_task)
 	                         : page->group;
 	group_node = sakura_sidebar_group_node(group);
-	if (!sakura_sidebar_sync_page_to_agent(page, group, NULL))
+	if (!sakura_sidebar_move_page_in_agent(page, group, NULL))
 		return;
 	sakura_sidebar_cancel_pending_selection();
 	sakura_sidebar_hide_page_panes(page);
@@ -2182,7 +2208,7 @@ sakura_sidebar_move_page_to_group(SakuraPage *page, SakuraSidebarNode *group)
 	new_group_id = g_strdup(new_group->id);
 	if (page->task == NULL && page->group == new_group)
 		goto success;
-	if (!sakura_sidebar_sync_page_to_agent(page, new_group, NULL))
+	if (!sakura_sidebar_move_page_in_agent(page, new_group, NULL))
 		goto fail;
 	new_group = sakura_workspace_group_by_id(new_group_id);
 	group = new_group != NULL ? new_group->sidebar_node : NULL;
@@ -2723,8 +2749,8 @@ sakura_sidebar_context_menu_new (struct sakura_sidebar_node *node)
 
 
 static SakuraSidebarNode *
-sakura_sidebar_drop_target_group(GtkWidget *widget, gint x, gint y,
-                                 GtkTreeViewDropPosition *drop_position)
+sakura_sidebar_drop_target_node(GtkWidget *widget, gint x, gint y,
+                                GtkTreeViewDropPosition *drop_position)
 {
 	GtkTreeView *tree = GTK_TREE_VIEW(widget);
 	GtkTreeModel *model = gtk_tree_view_get_model(tree);
@@ -2742,6 +2768,17 @@ sakura_sidebar_drop_target_group(GtkWidget *widget, gint x, gint y,
 		gtk_tree_model_get(model, &iter, SAKURA_SIDEBAR_COLUMN_NODE, &node, -1);
 	if (path != NULL)
 		gtk_tree_path_free(path);
+	return node;
+}
+
+
+static SakuraSidebarNode *
+sakura_sidebar_drop_target_group(GtkWidget *widget, gint x, gint y,
+                                 GtkTreeViewDropPosition *drop_position)
+{
+	SakuraSidebarNode *node = sakura_sidebar_drop_target_node(
+		widget, x, y, drop_position);
+
 	return node != NULL && node->type == SAKURA_SIDEBAR_GROUP ? node : NULL;
 }
 
@@ -2922,8 +2959,18 @@ sakura_sidebar_drag_motion_cb(GtkWidget *widget, GdkDragContext *context,
 	SakuraSidebarNode *target = sakura_sidebar_drop_target_group(widget, x, y,
 	                                                              &position);
 	SakuraSidebarNode *source = sakura_sidebar_drag_node(widget);
+	SakuraSidebarNode *raw_target = sakura_sidebar_drop_target_node(
+		widget, x, y, &position);
 
 	(void)data;
+	if (source != NULL && source->type == SAKURA_SIDEBAR_TASK &&
+	    raw_target != NULL && raw_target->type == SAKURA_SIDEBAR_TASK &&
+	    raw_target != source && source->task != NULL && raw_target->task != NULL &&
+	    source->task->group == raw_target->task->group &&
+	    source->task->parent == raw_target->task->parent) {
+		gdk_drag_status(context, GDK_ACTION_MOVE, time);
+		return TRUE;
+	}
 	if (target != NULL) {
 		if (sakura_sidebar_page_for_drag_node(source) != NULL) {
 			gdk_drag_status(context, GDK_ACTION_MOVE, time);
@@ -2960,10 +3007,18 @@ sakura_sidebar_drag_drop_cb(GtkWidget *widget, GdkDragContext *context,
 	SakuraSidebarNode *target = sakura_sidebar_drop_target_group(widget, x, y,
 	                                                              &position);
 	SakuraSidebarNode *source = sakura_sidebar_drag_node(widget);
+	SakuraSidebarNode *raw_target = sakura_sidebar_drop_target_node(
+		widget, x, y, &position);
 	SakuraPage *page = sakura_sidebar_page_for_drag_node(source);
 	SakuraTab *tab = page != NULL ? page->active_tab : NULL;
 
 	(void)data;
+	if (source != NULL && source->type == SAKURA_SIDEBAR_TASK &&
+	    raw_target != NULL && raw_target->type == SAKURA_SIDEBAR_TASK &&
+	    sakura_sidebar_reorder_task_to_sibling(source, raw_target, position)) {
+		gtk_drag_finish(context, TRUE, FALSE, time);
+		return TRUE;
+	}
 	if (target != NULL && page != NULL) {
 		/* Move the page, not just the terminal child row. This keeps the visible
 		 * page, its panes, and its persisted parent together. */
@@ -6008,6 +6063,67 @@ sakura_sidebar_reveal_node(SakuraSidebarNode *node, gboolean expand_node)
 		}
 	}
 	g_ptr_array_unref(ancestors);
+}
+
+
+static gboolean
+sakura_sidebar_reorder_task_to_sibling(SakuraSidebarNode *source,
+                                        SakuraSidebarNode *target,
+                                        GtkTreeViewDropPosition position)
+{
+	gchar *source_id, *target_id, *group_id, *parent_id;
+	SakuraTask *source_task, *target_task;
+	gboolean after, result = FALSE;
+
+	if (source == NULL || target == NULL || source == target ||
+	    source->type != SAKURA_SIDEBAR_TASK ||
+	    target->type != SAKURA_SIDEBAR_TASK || source->task == NULL ||
+	    target->task == NULL || source->task->group != target->task->group ||
+	    source->task->parent != target->task->parent)
+		return FALSE;
+	after = position == GTK_TREE_VIEW_DROP_AFTER ||
+	        position == GTK_TREE_VIEW_DROP_INTO_OR_AFTER;
+	source_id = g_strdup(source->task->id);
+	target_id = g_strdup(target->task->id);
+	group_id = g_strdup(source->task->group->id);
+	parent_id = g_strdup(source->task->parent != NULL
+	                     ? source->task->parent->id : NULL);
+	if (sakura.agent_socket_path != NULL) {
+		GError *error = NULL;
+
+		if (!sakura_agent_move_task(&sakura, source_id, group_id, parent_id,
+		                            target_id, after, &error)) {
+			if (error != NULL)
+				g_warning("Could not reorder task through sakura-agent: %s",
+				          error->message);
+			g_clear_error(&error);
+			goto out;
+		}
+	}
+	source_task = sakura_workspace_model_find_task(sakura.workspace, source_id);
+	target_task = sakura_workspace_model_find_task(sakura.workspace, target_id);
+	if (source_task == NULL || target_task == NULL)
+		goto out;
+	sakura_workspace_begin_mutation();
+	sakura_sidebar_cancel_pending_selection();
+	if (!sakura_workspace_model_reorder_task(sakura.workspace, source_task,
+	                                         target_task, after)) {
+		sakura_workspace_end_mutation();
+		goto out;
+	}
+	/* Reproject from the domain order so GTK cannot retain a different native
+	 * drag order. Stable selection and expansion IDs survive the rebuild. */
+	sakura_sidebar_rebuild_projection();
+	sakura_workspace_mark_changed(SAKURA_WORKSPACE_CHANGE_STRUCTURE);
+	sakura_session_mark_dirty();
+	sakura_workspace_end_mutation();
+	result = TRUE;
+out:
+	g_free(source_id);
+	g_free(target_id);
+	g_free(group_id);
+	g_free(parent_id);
+	return result;
 }
 
 

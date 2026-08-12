@@ -2190,6 +2190,15 @@ test_sidebar_order_survives_snapshot_roundtrip(void)
 	                                  NULL, &first_iter, NULL, NULL);
 	g_assert_cmpuint(task_b->order, ==, 0);
 	g_assert_cmpuint(task_a->order, ==, 1);
+	/* Precise sibling reorders are the operation sent to sakura-agent. The
+	 * desktop model must produce the identical order before it is snapshotted. */
+	g_assert_true(sakura_workspace_model_reorder_task(
+		sakura.workspace, task_a, task_b, FALSE));
+	g_assert_cmpuint(task_a->order, ==, 0);
+	g_assert_cmpuint(task_b->order, ==, 1);
+	sakura_sidebar_rebuild_projection();
+	group_a = model_group_a->sidebar_node;
+	group_b = model_group_b->sidebar_node;
 	assert_workspace_consistent();
 
 	source = test_workspace_snapshot_new();
@@ -2202,10 +2211,10 @@ test_sidebar_order_survives_snapshot_roundtrip(void)
 	g_assert_cmpuint(group_record->order, ==, 1);
 	g_assert_cmpuint(source->tasks->len, ==, 2);
 	task_record = g_ptr_array_index(source->tasks, 0);
-	g_assert_cmpstr(task_record->id, ==, "ordered-task-b");
+	g_assert_cmpstr(task_record->id, ==, "ordered-task-a");
 	g_assert_cmpuint(task_record->order, ==, 0);
 	task_record = g_ptr_array_index(source->tasks, 1);
-	g_assert_cmpstr(task_record->id, ==, "ordered-task-a");
+	g_assert_cmpstr(task_record->id, ==, "ordered-task-b");
 	g_assert_cmpuint(task_record->order, ==, 1);
 
 	key_file = g_key_file_new();
