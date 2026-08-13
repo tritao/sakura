@@ -88,6 +88,10 @@ static void sakura_sidebar_row_expansion_changed_cb(GtkTreeView *tree,
                                                      GtkTreeIter *iter,
                                                      GtkTreePath *path,
                                                      gpointer data);
+static gboolean sakura_sidebar_event_is_expander(GtkTreeView *tree,
+                                                  GtkTreePath *path,
+                                                  GtkTreeViewColumn *column,
+                                                  gint x);
 static gboolean sakura_sidebar_node_expansion_kind(
 	SakuraSidebarNode *node, SakuraSidebarExpansionKind *kind);
 static gchar *sakura_sidebar_expansion_key(SakuraSidebarExpansionKind kind,
@@ -3094,6 +3098,36 @@ sakura_sidebar_drag_drop_cb(GtkWidget *widget, GdkDragContext *context,
 }
 
 
+static gboolean
+sakura_sidebar_event_is_expander(GtkTreeView *tree,
+                                 GtkTreePath *path,
+                                 GtkTreeViewColumn *column,
+                                 gint x)
+{
+	GtkTreeModel *model;
+	GtkTreeIter iter;
+	GdkRectangle cell_area;
+	gint expander_width = 0;
+
+	if (tree == NULL || path == NULL || column == NULL ||
+	    column != gtk_tree_view_get_expander_column(tree) ||
+	    !gtk_tree_view_get_show_expanders(tree))
+		return FALSE;
+	model = gtk_tree_view_get_model(tree);
+	if (model == NULL || !gtk_tree_model_get_iter(model, &iter, path) ||
+	    !gtk_tree_model_iter_has_child(model, &iter))
+		return FALSE;
+	gtk_tree_view_get_cell_area(tree, path, column, &cell_area);
+	/* GTK lays out the expander immediately before the first renderer in the
+	 * expander column. Use the actual cell geometry and theme expander size
+	 * instead of a fixed screen coordinate; nested rows then work naturally. */
+	gtk_widget_style_get(GTK_WIDGET(tree), "expander-size", &expander_width, NULL);
+	if (expander_width <= 0)
+		expander_width = 16;
+	return x >= cell_area.x - expander_width - 4 && x < cell_area.x;
+}
+
+
 gboolean
 sakura_sidebar_button_press_cb (GtkWidget *widget, GdkEventButton *event, void *data)
 {
@@ -3102,6 +3136,7 @@ sakura_sidebar_button_press_cb (GtkWidget *widget, GdkEventButton *event, void *
 	GtkTreeIter iter;
 	GtkWidget *menu;
 	struct sakura_sidebar_node *node;
+	gboolean expander_click;
 
 	/* GTK starts a drag before its default selection handling necessarily runs.
 	 * Capture the row under the pointer so drag-begin cannot reuse a previously
@@ -3114,10 +3149,24 @@ sakura_sidebar_button_press_cb (GtkWidget *widget, GdkEventButton *event, void *
 				                   SAKURA_SIDEBAR_COLUMN_NODE, &node, -1);
 			else
 				node = NULL;
-			g_object_set_data_full(
-				G_OBJECT(widget), "sakura-sidebar-drag-node",
-				sakura_sidebar_action_target_new(node),
-				sakura_sidebar_action_target_destroy);
+			expander_click = sakura_sidebar_event_is_expander(
+				GTK_TREE_VIEW(widget), path, column, (gint)event->x);
+			if (!expander_click)
+				g_object_set_data_full(
+					G_OBJECT(widget), "sakura-sidebar-drag-node",
+					sakura_sidebar_action_target_new(node),
+					sakura_sidebar_action_target_destroy);
+			else
+				g_object_set_data_full(
+					G_OBJECT(widget), "sakura-sidebar-drag-node", NULL, NULL);
+			if (expander_click && event->type == GDK_BUTTON_PRESS) {
+				if (gtk_tree_view_row_expanded(GTK_TREE_VIEW(widget), path))
+					gtk_tree_view_collapse_row(GTK_TREE_VIEW(widget), path);
+				else
+					gtk_tree_view_expand_row(GTK_TREE_VIEW(widget), path, FALSE);
+				gtk_tree_path_free(path);
+				return TRUE;
+			}
 			gtk_tree_path_free(path);
 			path = NULL;
 		} else
@@ -3133,6 +3182,11 @@ sakura_sidebar_button_press_cb (GtkWidget *widget, GdkEventButton *event, void *
 	    GTK_IS_TREE_VIEW(widget) &&
 	    gtk_tree_view_get_path_at_pos(GTK_TREE_VIEW(widget), event->x, event->y,
 	                                  &path, &column, NULL, NULL)) {
+		if (sakura_sidebar_event_is_expander(
+				GTK_TREE_VIEW(widget), path, column, (gint)event->x)) {
+			gtk_tree_path_free(path);
+			return TRUE;
+		}
 		if (gtk_tree_model_get_iter(GTK_TREE_MODEL(sakura.sidebar_model), &iter, path))
 			gtk_tree_model_get(GTK_TREE_MODEL(sakura.sidebar_model), &iter,
 			                   SAKURA_SIDEBAR_COLUMN_NODE, &node, -1);

@@ -857,6 +857,22 @@ def sidebar_toggle_group(window, env, rows, row_index):
     time.sleep(0.4)
 
 
+def sidebar_click_expander(window, env, rows, row_index, depth=1):
+    """Click the GTK tree expander, before the first cell renderer."""
+    sidebar_scroll_to_top(window, env)
+    window_x, window_y, _, _ = window_geometry(window, env)
+    _, y = sidebar_row_center(window, env, rows, row_index)
+    # GTK's first-column cell begins after the expander; each tree level adds
+    # the theme's 18px indentation. Top-level groups are one level below the
+    # synthetic root row.
+    x = window_x + 28 + max(0, depth - 1) * 18
+    run(["xdotool", "key", "Escape"], env, check=False)
+    run(["xdotool", "mousemove", "--sync", str(x), str(y)], env)
+    time.sleep(0.15)
+    run(["xdotool", "click", "1"], env)
+    time.sleep(0.4)
+
+
 def open_task_context_menu(window, env, rows, row_index):
     sidebar_click_row(window, env, rows, row_index, 3)
     run(["xdotool", "key", "Home"], env)
@@ -1058,6 +1074,36 @@ def run_named_page_move_restart_case(binary, config_file, session_file,
     finally:
         if process is not None:
             close_window(process, window, env)
+
+
+def run_expander_click_case(binary, config_file, session_file, env, log_file):
+    """Verify the actual GTK expander hit target toggles reliably."""
+    write_fixture(config_file, session_file)
+    process, window = launch_sakura(binary, config_file, env, log_file)
+    try:
+        current = wait_for_session_ready(
+            session_file,
+            lambda value: ("group", "group-a") in
+            (read_expanded_sidebar(session_file) or set()),
+        )
+        rows = visual_rows_for_session(current)
+        group_row = rows.index(("group", "group-a"))
+        sidebar_click_expander(window, env, rows, group_row, depth=1)
+        wait_for_session_ready(
+            session_file,
+            lambda value: ("group", "group-a") not in
+            (read_expanded_sidebar(session_file) or set()),
+        )
+        collapsed = read_session(session_file)
+        sidebar_click_expander(
+            window, env, visual_rows_for_session(collapsed), group_row, depth=1)
+        wait_for_session_ready(
+            session_file,
+            lambda value: ("group", "group-a") in
+            (read_expanded_sidebar(session_file) or set()),
+        )
+    finally:
+        close_window(process, window, env)
 
 
 def run_drag_regression_case(binary, config_file, session_file, env, log_file):
@@ -1758,6 +1804,8 @@ def main():
                         help="run the deterministic sidebar expansion regression")
     parser.add_argument("--page-move-restart-only", action="store_true",
                         help="run the app-qt-free to qt-free restart regression")
+    parser.add_argument("--expander-only", action="store_true",
+                        help="run the real GTK expander-arrow click regression")
     parser.add_argument("--screenshot", metavar="PATH",
                         help="capture the sidebar window before dragging")
     args = parser.parse_args()
@@ -1765,7 +1813,7 @@ def main():
     if args.iterations < 1:
         parser.error("--iterations must be positive")
     exclusive_modes = sum((args.drag_only, args.expansion_only,
-                           args.page_move_restart_only))
+                           args.page_move_restart_only, args.expander_only))
     if exclusive_modes > 1:
         parser.error("single-case regression modes are mutually exclusive")
     binary = Path(args.binary).resolve()
@@ -1826,6 +1874,11 @@ def main():
                 run_named_page_move_restart_case(
                     binary, config_file, session_file, env, log_file)
                 print("app-qt-free page move/restart regression: passed")
+                return
+            if args.expander_only:
+                run_expander_click_case(
+                    binary, config_file, session_file, env, log_file)
+                print("GTK expander-arrow regression: passed")
                 return
             if args.drag_only:
                 run_drag_regression_case(binary, config_file, session_file,
