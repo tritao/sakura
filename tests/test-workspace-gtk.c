@@ -1501,6 +1501,46 @@ test_sidebar_selection_survives_projection_rebuild(void)
 
 
 static void
+test_sidebar_primary_click_overrides_pending_selection(void)
+{
+	SakuraPage *page_a, *page_c;
+	GtkTreeIter iter;
+	GtkTreePath *path;
+
+	setup_workspace();
+	setup_sidebar_fixture();
+	g_signal_connect(sakura.sidebar_selection, "changed",
+	                 G_CALLBACK(sakura_sidebar_selection_changed_cb), NULL);
+	page_a = sakura_page_at_page(0);
+	page_c = sakura_page_at_page(2);
+
+	/* Keep C highlighted while simulating notebook state and a queued sync to
+	 * A. Clicking C again emits no GtkTreeSelection::changed signal. */
+	g_assert_true(sakura_sidebar_get_iter(page_c->sidebar_node, &iter));
+	path = gtk_tree_model_get_path(GTK_TREE_MODEL(sakura.sidebar_model), &iter);
+	gtk_tree_selection_select_path(sakura.sidebar_selection, path);
+	gtk_tree_path_free(path);
+	while (g_main_context_pending(NULL))
+		g_main_context_iteration(NULL, FALSE);
+	sakura.workspace->active_page = page_a;
+	sakura.workspace->active_tab = page_a->active_tab;
+	gtk_notebook_set_current_page(GTK_NOTEBOOK(sakura.notebook), 0);
+	sakura_sidebar_queue_select_node_with_reason(
+		page_a->sidebar_node, SAKURA_SIDEBAR_SELECTION_CREATION);
+
+	sakura_sidebar_primary_click(page_c->sidebar_node);
+	while (g_main_context_pending(NULL))
+		g_main_context_iteration(NULL, FALSE);
+
+	g_assert_true(sakura_sidebar_selected_node() == page_c->sidebar_node);
+	g_assert_true(sakura.workspace->active_page == page_c);
+	g_assert_cmpint(gtk_notebook_get_current_page(GTK_NOTEBOOK(sakura.notebook)),
+	                ==, 2);
+	teardown_workspace();
+}
+
+
+static void
 test_programmatic_focus_does_not_queue_sidebar_selection(void)
 {
 	SakuraPage *page;
@@ -3413,6 +3453,8 @@ main(int argc, char **argv)
 	                test_sidebar_selection_priority);
 	g_test_add_func("/workspace/sidebar-selection-survives-rebuild",
 	                test_sidebar_selection_survives_projection_rebuild);
+	g_test_add_func("/workspace/sidebar-primary-click-overrides-pending-selection",
+	                test_sidebar_primary_click_overrides_pending_selection);
 	g_test_add_func("/workspace/programmatic-focus-does-not-queue-selection",
 	                test_programmatic_focus_does_not_queue_sidebar_selection);
 	g_test_add_func("/workspace/close-active-page-preserves-group",

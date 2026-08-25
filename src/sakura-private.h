@@ -265,7 +265,13 @@ struct sakura_app {
 	bool fullscreen;
 	bool config_modified;            /* Configuration has been modified */
 	bool externally_modified;        /* Configuration file has been modified by another process */
-	bool resized;
+	/* Keep top-level resize requests separate from user-driven resizes. GTK can
+	 * deliver several configure events while a programmatic request settles;
+	 * treating those as user input feeds a rounded-down terminal grid back into
+	 * the next resize and progressively shrinks the window. */
+	bool programmatic_resize;
+	guint programmatic_resize_source_id;
+	guint user_resize_source_id;
 	bool disable_numbered_tabswitch; /* For disabling direct tabswitching key */
 	bool use_fading;                 /* Fade the window when the focus change */
 	bool scrollable_tabs;
@@ -730,6 +736,7 @@ void sakura_install_codex_hook_cb(GtkWidget *widget, void *data);
 void sakura_close_tab_cb(GtkWidget *widget, void *data);
 void sakura_sidebar_init(gboolean restore_session);
 void sakura_sidebar_selection_changed_cb(GtkTreeSelection *selection, void *data);
+void sakura_sidebar_primary_click(SakuraSidebarNode *node);
 gboolean sakura_sidebar_button_press_cb(GtkWidget *widget, GdkEventButton *event,
                                          void *data);
 GtkWidget *sakura_sidebar_context_menu_new(SakuraSidebarNode *node);
@@ -813,6 +820,7 @@ void sakura_codex_resolve_resume_cwd_async(SakuraTab *tab,
                                            const gchar *fallback_cwd);
 void sakura_codex_set_name_async(SakuraTab *tab, const gchar *name);
 SakuraCodexTrackingState sakura_codex_tracking_state(void);
+gboolean sakura_codex_ensure_tracking(GError **error);
 void sakura_codex_tracking_menu_update(GtkWidget *item);
 void sakura_codex_tracking_status_cb(GtkWidget *widget, void *data);
 GtkWidget *sakura_open_here_menu_new(void);

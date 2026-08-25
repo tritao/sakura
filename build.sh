@@ -11,6 +11,7 @@ PROTOBUF_VERSION="${PROTOBUF_VERSION:-27.1}"
 PROTOBUF_C_VERSION="${PROTOBUF_C_VERSION:-1.5.2}"
 ABSEIL_REF="${ABSEIL_REF:-lts_2023_08_02}"
 PROTOBUF_PREFIX="${PROTOBUF_PREFIX:-"$DEPS_DIR/install"}"
+AUTO_INSTALL_SYSTEM_DEPS="${AUTO_INSTALL_SYSTEM_DEPS:-1}"
 
 # Set VTE_PREFIX explicitly only when VTE was installed outside the system
 # paths. With no prefix, CMake/pkg-config uses the system VTE package.
@@ -25,6 +26,43 @@ for required_command in cmake pkg-config tar; do
 		exit 1
 	fi
 done
+
+ensure_vte() {
+	if pkg-config --exists 'vte-2.91 >= 0.50'; then
+		return
+	fi
+
+	if [[ "$AUTO_INSTALL_SYSTEM_DEPS" != "1" ]]; then
+		echo "vte-2.91 >= 0.50 is required to build Sakura." >&2
+		echo "Install libvte-2.91-dev or rerun with AUTO_INSTALL_SYSTEM_DEPS=1." >&2
+		exit 1
+	fi
+
+	if ! command -v apt-get >/dev/null 2>&1; then
+		echo "vte-2.91 >= 0.50 is required to build Sakura." >&2
+		echo "Automatic installation is supported only on apt-based systems." >&2
+		echo "Install your distribution's VTE 2.91 development package and retry." >&2
+		exit 1
+	fi
+
+	local install_as=()
+	if [[ "$(id -u)" -ne 0 ]]; then
+		if ! command -v sudo >/dev/null 2>&1; then
+			echo "Installing libvte-2.91-dev requires root privileges, but sudo was not found." >&2
+			exit 1
+		fi
+		install_as=(sudo)
+	fi
+
+	echo "VTE development files are missing; installing libvte-2.91-dev..."
+	"${install_as[@]}" apt-get update
+	"${install_as[@]}" apt-get install -y libvte-2.91-dev
+
+	if ! pkg-config --exists 'vte-2.91 >= 0.50'; then
+		echo "libvte-2.91-dev was installed, but pkg-config still cannot find vte-2.91 >= 0.50." >&2
+		exit 1
+	fi
+}
 
 download_file() {
 	local url="$1"
@@ -154,6 +192,7 @@ ensure_protobuf() {
 	fi
 }
 
+ensure_vte
 ensure_protobuf
 
 if [[ -n "${VTE_PREFIX:-}" && -d "$VTE_PREFIX/usr" ]]; then

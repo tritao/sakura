@@ -439,6 +439,8 @@ static void     sakura_destroy_window_cb (GtkWidget *, void *);
 /* Main window callbacks */
 gboolean        sakura_key_press_cb (GtkWidget *, GdkEventKey *, gpointer);
 static gboolean sakura_resized_window_cb (GtkWidget *, GdkEventConfigure *, void *);
+static gboolean sakura_programmatic_resize_settled_cb (gpointer);
+static gboolean sakura_user_resize_settled_cb (gpointer);
 static gboolean sakura_focus_in_cb (GtkWidget *, GdkEvent *, void *);
 static gboolean sakura_focus_out_cb (GtkWidget *, GdkEvent *, void *);
 static void     sakura_conf_changed_cb (GtkWidget *, void *);
@@ -784,17 +786,69 @@ sakura_key_press_cb (GtkWidget *widget, GdkEventKey *event, gpointer user_data)
 
 
 static gboolean
+sakura_programmatic_resize_settled_cb (gpointer data)
+{
+	(void)data;
+	sakura.programmatic_resize_source_id = 0;
+	sakura.programmatic_resize = FALSE;
+	return G_SOURCE_REMOVE;
+}
+
+
+static gboolean
+sakura_user_resize_settled_cb (gpointer data)
+{
+	SakuraPage *page;
+	SakuraTab *tab;
+	gint page_index;
+
+	(void)data;
+	sakura.user_resize_source_id = 0;
+	if (sakura.session_shutting_down || sakura.programmatic_resize ||
+	    sakura.notebook == NULL)
+		return G_SOURCE_REMOVE;
+
+	page_index = gtk_notebook_get_current_page(GTK_NOTEBOOK(sakura.notebook));
+	page = sakura_page_at_page(page_index);
+	tab = page != NULL ? page->active_tab : NULL;
+	if (tab == NULL && page_index >= 0)
+		tab = sakura_tab_at_page(page_index);
+	if (tab == NULL || tab->vte == NULL)
+		return G_SOURCE_REMOVE;
+
+	/* Sample the final VTE allocation after the window manager has finished a
+	 * user resize. Do not resize the top-level window from this callback. */
+	sakura.columns = vte_terminal_get_column_count(VTE_TERMINAL(tab->vte));
+	sakura.rows = vte_terminal_get_row_count(VTE_TERMINAL(tab->vte));
+	return G_SOURCE_REMOVE;
+}
+
+
+static gboolean
 sakura_resized_window_cb (GtkWidget *widget, GdkEventConfigure *event, void *data)
 {
+	(void)widget;
+	(void)data;
 	if (sakura.session_shutting_down)
 		return FALSE;
-	if (event->width != sakura.width || event->height != sakura.height) {
-		//SAY("Configure event received. Current w %d h %d ConfigureEvent w %d h %d",
-		//sakura.width, sakura.height, event->width, event->height);
-		if (sakura.fade_window != NULL)
-			gtk_widget_hide(sakura.fade_window);
-		sakura.resized = TRUE;
-	}
+
+	/* Always remember the actual allocation. Window managers may adjust a
+	 * requested size by a few pixels, so the requested dimensions are not a
+	 * reliable baseline for the next configure event. */
+	sakura.width = event->width;
+	sakura.height = event->height;
+	if (sakura.programmatic_resize)
+		return FALSE;
+
+	if (sakura.fade_window != NULL)
+		gtk_widget_hide(sakura.fade_window);
+	if (sakura.user_resize_source_id != 0)
+		g_source_remove(sakura.user_resize_source_id);
+	/* Configure events arrive for every intermediate drag allocation. Sampling
+	 * the terminal grid only after they settle avoids retaining a transient,
+	 * rounded-down row or column count. */
+	sakura.user_resize_source_id = g_timeout_add(
+		150, sakura_user_resize_settled_cb, NULL);
 
 	return FALSE;
 }
@@ -2751,7 +2805,9 @@ sakura_init()
 		sakura_fullscreen_cb(NULL, NULL); /* FIXME: Move to sakura_set_size?? */
 	}
 
-	sakura.resized = FALSE;
+	sakura.programmatic_resize = FALSE;
+	sakura.programmatic_resize_source_id = 0;
+	sakura.user_resize_source_id = 0;
 	sakura.externally_modified = false;
 	sakura.first_run=true;
 
@@ -3313,6 +3369,15 @@ sakura_destroy()
 		g_source_remove(sakura.sidebar_spinner_source_id);
 		sakura.sidebar_spinner_source_id = 0;
 	}
+	if (sakura.programmatic_resize_source_id != 0) {
+		g_source_remove(sakura.programmatic_resize_source_id);
+		sakura.programmatic_resize_source_id = 0;
+	}
+	if (sakura.user_resize_source_id != 0) {
+		g_source_remove(sakura.user_resize_source_id);
+		sakura.user_resize_source_id = 0;
+	}
+	sakura.programmatic_resize = FALSE;
 	sakura_startup_stop();
 	sakura_sidebar_cancel_pending_selection();
 	sakura_focus_tab_cancel_pending();
@@ -3433,13 +3498,18 @@ sakura_set_size (void)
 	if (sk_tab == NULL || sk_tab->vte == NULL)
 		return;
 	sakura_update_geometry_hints();
-	/* Mayhaps an user resize happened. Check if row and columns have changed */
-	if (sakura.resized) {
-		sakura.columns = vte_terminal_get_column_count(VTE_TERMINAL(sk_tab->vte));
-		sakura.rows = vte_terminal_get_row_count(VTE_TERMINAL(sk_tab->vte));
-		sakura.resized = FALSE;
+	/* A configure-event has identified an external/user resize and its final
+	 * terminal grid has not settled yet. Workspace reconciliation, status
+	 * changes, or other internal layout work must not snap the top-level window
+	 * back to the previously stored rows and columns during that interval. */
+	if (sakura.user_resize_source_id != 0) {
+		if (current_page != NULL && current_page->panes != NULL) {
+			for (guint index = 0; index < current_page->panes->len; index++)
+				sakura_tab_sync_agent_size(g_ptr_array_index(
+					current_page->panes, index));
+		}
+		return;
 	}
-
 	gtk_style_context_get_padding(gtk_widget_get_style_context(sk_tab->vte),
 		gtk_widget_get_state_flags(sk_tab->vte),
 		&sk_tab->padding);
@@ -3487,7 +3557,29 @@ sakura_set_size (void)
 			                                             index));
 	}
 
-	gtk_window_resize(GTK_WINDOW(sakura.main_window), sakura.width, sakura.height);
+	{
+		gint current_width, current_height;
+
+		gtk_window_get_size(GTK_WINDOW(sakura.main_window),
+		                    &current_width, &current_height);
+		if (current_width == (gint)sakura.width &&
+		    current_height == (gint)sakura.height)
+			return;
+
+		/* Configure events caused by this request are not user resizes. Keep the
+		 * guard alive briefly because GTK/window managers can emit more than one
+		 * allocation while decorations and geometry increments settle. */
+		if (sakura.user_resize_source_id != 0) {
+			g_source_remove(sakura.user_resize_source_id);
+			sakura.user_resize_source_id = 0;
+		}
+		if (sakura.programmatic_resize_source_id != 0)
+			g_source_remove(sakura.programmatic_resize_source_id);
+		sakura.programmatic_resize = TRUE;
+		sakura.programmatic_resize_source_id = g_timeout_add(
+			250, sakura_programmatic_resize_settled_cb, NULL);
+		gtk_window_resize(GTK_WINDOW(sakura.main_window), sakura.width, sakura.height);
+	}
 }
 
 

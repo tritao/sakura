@@ -1952,6 +1952,19 @@ sakura_sidebar_selection_changed_cb (GtkTreeSelection *selection, void *data)
 }
 
 
+void
+sakura_sidebar_primary_click(SakuraSidebarNode *node)
+{
+	/* Button press is the earliest reliable indication of user intent.  In
+	 * particular, GtkTreeSelection does not emit "changed" when the user clicks
+	 * the row that is already highlighted, so an older notebook/focus request
+	 * could otherwise run from the idle queue and undo the click. */
+	sakura_sidebar_cancel_pending_selection();
+	if (node != NULL && node == sakura_sidebar_selected_node())
+		sakura_sidebar_selection_changed_cb(sakura.sidebar_selection, NULL);
+}
+
+
 struct sakura_sidebar_tool_target {
 	struct sakura_sidebar_action_target *context;
 	SakuraToolKind tool;
@@ -2076,17 +2089,50 @@ sakura_new_codex_in_scope_cb (GtkWidget *widget, void *data)
 {
 	struct sakura_sidebar_action_target *target = data;
 	SakuraSidebarNode *node = sakura_sidebar_action_target_node(target);
-	SakuraSidebarNode *parent = sakura_sidebar_creation_parent_for_context(node);
+	SakuraSidebarNode *parent;
+	SakuraGroup *group;
+	SakuraTask *task;
+	const gchar *reasoning_effort;
+	gchar *group_id;
+	gchar *task_id;
+	gchar *cwd;
 
 	if (target != NULL && node == NULL)
 		return;
+	parent = sakura_sidebar_creation_parent_for_context(node);
+	group = sakura_group_for_sidebar_node(parent);
+	task = parent != NULL && parent->type == SAKURA_SIDEBAR_TASK
+	     ? parent->task : NULL;
+	group_id = g_strdup(group != NULL && group->id != NULL ? group->id : "root");
+	task_id = g_strdup(task != NULL ? task->id : NULL);
+	cwd = sakura_sidebar_directory_for_node(parent);
+	reasoning_effort = widget != NULL
+	                 ? g_object_get_data(G_OBJECT(widget),
+	                                     SAKURA_CODEX_REASONING_EFFORT_DATA_KEY)
+	                 : NULL;
+
 	sakura_workspace_begin_mutation();
 	sakura_sidebar_prepare_context(node);
-	/* Preserve the row that opened the context menu. The generic Codex action
-	 * otherwise falls back to the currently selected tab's group, which may be
-	 * a child group of the clicked group. */
-	sakura_new_codex_cb(widget, parent);
+	/* Changing scope may rebuild the sidebar projection. Resolve the captured
+	 * stable ownership IDs again instead of retaining a pointer into the old
+	 * tree, and pass the captured folder explicitly so neither active-tab nor
+	 * process-CWD fallback can redirect the Codex workspace. */
+	if (task_id != NULL) {
+		task = sakura_workspace_model_find_task(sakura.workspace, task_id);
+		parent = task != NULL ? task->sidebar_node : NULL;
+	} else {
+		parent = sakura_sidebar_find_group_by_id(group_id);
+	}
+	if (parent == NULL)
+		parent = sakura.sidebar_root;
+	sakura_session_accept_changes();
+	sakura_add_tab_with_options(cwd, parent, NULL, FALSE, SAKURA_TAB_CODEX,
+	                            SAKURA_TOOL_NONE, NULL, NULL, reasoning_effort,
+	                            NULL, NULL, -1);
 	sakura_workspace_end_mutation();
+	g_free(cwd);
+	g_free(task_id);
+	g_free(group_id);
 }
 
 
@@ -3233,6 +3279,8 @@ sakura_sidebar_button_press_cb (GtkWidget *widget, GdkEventButton *event, void *
 				node = NULL;
 			expander_click = sakura_sidebar_event_is_expander(
 				GTK_TREE_VIEW(widget), path, column, (gint)event->x);
+			if (!expander_click && event->type == GDK_BUTTON_PRESS)
+				sakura_sidebar_primary_click(node);
 			if (!expander_click)
 				g_object_set_data_full(
 					G_OBJECT(widget), "sakura-sidebar-drag-node",

@@ -327,6 +327,10 @@ IF (Python3_Interpreter_FOUND)
 	          COMMAND ${Python3_EXECUTABLE}
 	                  ${CMAKE_SOURCE_DIR}/tests/test-codex-session-helper.py
 	                  --helper ${CMAKE_SOURCE_DIR}/scripts/sakura-codex-session-name)
+	ADD_TEST (NAME codex-session-hook
+	          COMMAND ${Python3_EXECUTABLE}
+	                  ${CMAKE_SOURCE_DIR}/tests/test-codex-session-hook.py
+	                  --helper ${CMAKE_SOURCE_DIR}/scripts/sakura-codex-session-hook)
 	ADD_CUSTOM_TARGET (session-stress
 		COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tests/session-stress.py
 		        --binary $<TARGET_FILE:sakura>

@@ -342,6 +342,13 @@ sakura_tab_spawn_codex(SakuraTab *tab, const gchar *cwd, gchar **env)
 	                    (gchar *)"--enable", (gchar *)"hooks",
 	                    NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL };
 	guint next_arg = 4;
+	GError *tracking_error = NULL;
+
+	if (!sakura_codex_ensure_tracking(&tracking_error)) {
+		g_warning("Codex session tracking is unavailable: %s",
+		          tracking_error != NULL ? tracking_error->message : "unknown error");
+		g_clear_error(&tracking_error);
+	}
 
 	if (sakura.startup.options.codex_unsafe_mode)
 		argv[next_arg++] = (gchar *)"--dangerously-bypass-approvals-and-sandbox";
@@ -2053,6 +2060,13 @@ sakura_update_tab_cwd(SakuraTab *tab)
 	gchar *cwd;
 
 	if (tab == NULL || tab->vte == NULL)
+		return FALSE;
+	/* A Codex workspace is selected at launch and persisted by Sakura. VTE's
+	 * OSC 7 state and /proc fallback can temporarily describe Sakura's own
+	 * launch directory while the TUI starts, which must not overwrite that
+	 * authoritative directory. Resumed sessions update it from Codex's thread
+	 * metadata in sakura_codex_session_info_complete(). */
+	if (tab->kind == SAKURA_TAB_CODEX)
 		return FALSE;
 
 	directory_uri = vte_terminal_get_current_directory_uri(VTE_TERMINAL(tab->vte));
