@@ -295,8 +295,9 @@ struct sakura_app {
 	guint session_save_source_id;
 	guint codex_tracking_source_id;
 	guint cwd_tracking_source_id;
-	guint sidebar_spinner_source_id;
-	guint sidebar_spinner_pulse;
+	guint sidebar_primary_click_source_id;
+	SakuraSidebarNodeType sidebar_primary_click_type;
+	gchar *sidebar_primary_click_id;
 	GSubprocess *codex_name_helper_process;
 	GSubprocess *agent_process;
 	GThreadPool *agent_terminal_start_pool;
@@ -737,6 +738,7 @@ void sakura_close_tab_cb(GtkWidget *widget, void *data);
 void sakura_sidebar_init(gboolean restore_session);
 void sakura_sidebar_selection_changed_cb(GtkTreeSelection *selection, void *data);
 void sakura_sidebar_primary_click(SakuraSidebarNode *node);
+void sakura_sidebar_cancel_primary_click(void);
 gboolean sakura_sidebar_button_press_cb(GtkWidget *widget, GdkEventButton *event,
                                          void *data);
 GtkWidget *sakura_sidebar_context_menu_new(SakuraSidebarNode *node);
@@ -956,7 +958,6 @@ void sakura_task_update_row(SakuraTask *task);
 void sakura_task_attach_page(SakuraTask *task, SakuraPage *page);
 void sakura_task_detach_page(SakuraPage *page);
 void sakura_task_free(SakuraTask *task);
-gboolean sakura_sidebar_spinner_pulse_cb(gpointer data);
 void sakura_session_mark_dirty(void);
 void sakura_session_flush(void);
 gboolean sakura_session_write_snapshot(SakuraApp *app,

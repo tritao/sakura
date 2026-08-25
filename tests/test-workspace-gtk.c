@@ -832,6 +832,7 @@ teardown_workspace(void)
 	guint index;
 
 	sakura_sidebar_cancel_pending_selection();
+	sakura_sidebar_cancel_primary_click();
 	sakura_focus_tab_cancel_pending();
 	/* Fixture tests can start the asynchronous Codex name helper. Stop it
 	 * before the global Sakura record is reset so its callbacks do not retain
@@ -1233,11 +1234,11 @@ test_sidebar_hides_redundant_directory(void)
 
 
 static void
-test_sidebar_pulses_nested_rows(void)
+test_sidebar_running_status_is_stable(void)
 {
 	SakuraPage *page;
 	SakuraTab *tab;
-	guint before, after;
+	gchar *status_markup;
 
 	setup_workspace();
 	page = sakura_page_at_page(1);
@@ -1255,13 +1256,12 @@ test_sidebar_pulses_nested_rows(void)
 	setup_sidebar_fixture();
 
 	tab->status = SAKURA_TAB_STATUS_RUNNING;
-	sakura.sidebar_spinner_pulse = 41;
 	sakura_sidebar_update_tab(tab);
-	before = test_sidebar_uint_column(tab, SAKURA_SIDEBAR_COLUMN_STATUS_PULSE);
-	sakura_sidebar_spinner_pulse_cb(NULL);
-	after = test_sidebar_uint_column(tab, SAKURA_SIDEBAR_COLUMN_STATUS_PULSE);
-	g_assert_cmpuint(before, ==, 41);
-	g_assert_cmpuint(after, ==, 42);
+	status_markup = test_sidebar_column(tab, SAKURA_SIDEBAR_COLUMN_STATUS_MARKUP);
+	g_assert_nonnull(strstr(status_markup, "●"));
+	g_assert_cmpuint(test_sidebar_uint_column(
+		tab, SAKURA_SIDEBAR_COLUMN_STATUS_PULSE), ==, 0);
+	g_free(status_markup);
 
 	teardown_workspace();
 }
@@ -1529,6 +1529,10 @@ test_sidebar_primary_click_overrides_pending_selection(void)
 		page_a->sidebar_node, SAKURA_SIDEBAR_SELECTION_CREATION);
 
 	sakura_sidebar_primary_click(page_c->sidebar_node);
+	/* The button callback must not mutate GTK selection/notebook state while
+	 * GtkTreeView still owns the click's internal path. */
+	g_assert_true(sakura.workspace->active_page == page_a);
+	g_assert_cmpuint(sakura.sidebar_primary_click_source_id, !=, 0);
 	while (g_main_context_pending(NULL))
 		g_main_context_iteration(NULL, FALSE);
 
@@ -3439,8 +3443,8 @@ main(int argc, char **argv)
 	                test_snapshot_destroy_restore_equivalence);
 	g_test_add_func("/workspace/sidebar-directory-subtitles",
 	                test_sidebar_hides_redundant_directory);
-	g_test_add_func("/workspace/sidebar-pulses-nested-rows",
-	                test_sidebar_pulses_nested_rows);
+	g_test_add_func("/workspace/sidebar-running-status-is-stable",
+	                test_sidebar_running_status_is_stable);
 	g_test_add_func("/workspace/sidebar-selects-created-tab",
 	                test_sidebar_selects_created_tab);
 	g_test_add_func("/workspace/reconciles-at-outer-mutation-boundary",

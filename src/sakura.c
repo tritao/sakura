@@ -486,7 +486,6 @@ static void     sakura_set_cursor_cb (GtkWidget *, void *);
 static void     sakura_blinking_cursor_cb (GtkWidget *, void *);
 static void     sakura_audible_bell_cb (GtkWidget *, void *);
 static void     sakura_urgent_bell_cb (GtkWidget *, void *);
-gboolean       sakura_sidebar_spinner_pulse_cb (gpointer);
 void            sakura_tab_set_status (struct sakura_tab *, SakuraTabStatus, gboolean);
 void            sakura_tab_clear_attention (struct sakura_tab *);
 SakuraTab *       sakura_find_codex_tab_by_tracking_token (const gchar *);
@@ -3365,10 +3364,7 @@ sakura_destroy()
 		g_source_remove(sakura.cwd_tracking_source_id);
 		sakura.cwd_tracking_source_id = 0;
 	}
-	if (sakura.sidebar_spinner_source_id != 0) {
-		g_source_remove(sakura.sidebar_spinner_source_id);
-		sakura.sidebar_spinner_source_id = 0;
-	}
+	sakura_sidebar_cancel_primary_click();
 	if (sakura.programmatic_resize_source_id != 0) {
 		g_source_remove(sakura.programmatic_resize_source_id);
 		sakura.programmatic_resize_source_id = 0;

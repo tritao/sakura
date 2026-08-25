@@ -1952,16 +1952,55 @@ sakura_sidebar_selection_changed_cb (GtkTreeSelection *selection, void *data)
 }
 
 
+static gboolean
+sakura_sidebar_primary_click_idle(gpointer data)
+{
+	SakuraSidebarNode *node;
+	SakuraSidebarNodeType type = sakura.sidebar_primary_click_type;
+	gchar *id = g_steal_pointer(&sakura.sidebar_primary_click_id);
+
+	(void)data;
+	sakura.sidebar_primary_click_source_id = 0;
+	if (!sakura.session_shutting_down && id != NULL) {
+		node = sakura_sidebar_find_node_by_identity(type, id);
+		if (node != NULL) {
+			/* Resolve the row only after GTK has released the event's internal
+			 * tree path. The projection may have changed in the meantime. */
+			sakura_sidebar_select_node_now(node);
+			sakura_sidebar_selection_changed_cb(sakura.sidebar_selection, NULL);
+		}
+	}
+	g_free(id);
+	return G_SOURCE_REMOVE;
+}
+
+
+void
+sakura_sidebar_cancel_primary_click(void)
+{
+	if (sakura.sidebar_primary_click_source_id != 0) {
+		g_source_remove(sakura.sidebar_primary_click_source_id);
+		sakura.sidebar_primary_click_source_id = 0;
+	}
+	g_clear_pointer(&sakura.sidebar_primary_click_id, g_free);
+}
+
+
 void
 sakura_sidebar_primary_click(SakuraSidebarNode *node)
 {
-	/* Button press is the earliest reliable indication of user intent.  In
-	 * particular, GtkTreeSelection does not emit "changed" when the user clicks
-	 * the row that is already highlighted, so an older notebook/focus request
-	 * could otherwise run from the idle queue and undo the click. */
+	/* Button press is the earliest reliable indication of user intent, but GTK
+	 * still owns the event's tree path until dispatch completes. Cancel stale
+	 * synchronization now and defer any model/selection work until idle. */
 	sakura_sidebar_cancel_pending_selection();
-	if (node != NULL && node == sakura_sidebar_selected_node())
-		sakura_sidebar_selection_changed_cb(sakura.sidebar_selection, NULL);
+	sakura_sidebar_cancel_primary_click();
+	if (node != NULL && node->id != NULL &&
+	    node == sakura_sidebar_selected_node()) {
+		sakura.sidebar_primary_click_type = node->type;
+		sakura.sidebar_primary_click_id = g_strdup(node->id);
+		sakura.sidebar_primary_click_source_id = g_idle_add(
+			sakura_sidebar_primary_click_idle, NULL);
+	}
 }
 
 
@@ -5332,7 +5371,7 @@ sakura_sidebar_init (gboolean restore_session)
 	GtkWidget *empty_state, *empty_label, *empty_new;
 	GtkWidget *scrolled;
 	GtkCellRenderer *icon_renderer, *attention_renderer, *status_renderer,
-	                *spinner_renderer, *text_renderer;
+	                *text_renderer;
 	GtkTreeViewColumn *column;
 	gchar **group_ids = NULL, **group_parents = NULL, **group_titles = NULL,
 	       **group_directories = NULL;
@@ -5382,10 +5421,6 @@ sakura_sidebar_init (gboolean restore_session)
 	g_object_set(status_renderer, "xalign", 0.5, "yalign", 0.5,
 	             "xpad", 0, "ypad", 0, NULL);
 	gtk_cell_renderer_set_fixed_size(status_renderer, 16, 16);
-	spinner_renderer = gtk_cell_renderer_spinner_new();
-	g_object_set(spinner_renderer, "xalign", 0.5, "yalign", 0.5,
-	             "xpad", 0, "ypad", 0, NULL);
-	gtk_cell_renderer_set_fixed_size(spinner_renderer, 16, 16);
 	text_renderer = gtk_cell_renderer_text_new();
 	g_object_set(text_renderer, "ellipsize", PANGO_ELLIPSIZE_END, NULL);
 	column = gtk_tree_view_column_new();
@@ -5403,10 +5438,6 @@ sakura_sidebar_init (gboolean restore_session)
 	gtk_tree_view_column_add_attribute(column, status_renderer, "markup", SAKURA_SIDEBAR_COLUMN_STATUS_MARKUP);
 	gtk_tree_view_column_add_attribute(column, status_renderer, "visible",
 	                                  SAKURA_SIDEBAR_COLUMN_STATUS_MARKER_VISIBLE);
-	gtk_tree_view_column_pack_start(column, spinner_renderer, FALSE);
-	gtk_tree_view_column_add_attribute(column, spinner_renderer, "active", SAKURA_SIDEBAR_COLUMN_STATUS_ACTIVE);
-	gtk_tree_view_column_add_attribute(column, spinner_renderer, "visible", SAKURA_SIDEBAR_COLUMN_STATUS_ACTIVE);
-	gtk_tree_view_column_add_attribute(column, spinner_renderer, "pulse", SAKURA_SIDEBAR_COLUMN_STATUS_PULSE);
 	gtk_tree_view_column_pack_start(column, text_renderer, TRUE);
 	gtk_tree_view_column_add_attribute(column, text_renderer, "markup", SAKURA_SIDEBAR_COLUMN_MARKUP);
 	gtk_tree_view_append_column(GTK_TREE_VIEW(sakura.sidebar_tree), column);
@@ -5634,9 +5665,6 @@ sakura_sidebar_init (gboolean restore_session)
 	if (!sakura.sidebar_visible)
 		gtk_widget_hide(sakura.sidebar);
 	sakura_tab_bar_refresh();
-	sakura.sidebar_spinner_source_id = g_timeout_add(100,
-	                                                 sakura_sidebar_spinner_pulse_cb,
-	                                                 NULL);
 }
 
 
@@ -5750,52 +5778,6 @@ sakura_cwd_tracking_poll_cb (gpointer data)
 	return G_SOURCE_CONTINUE;
 }
 
-
-
-static void
-sakura_sidebar_pulse_rows(GtkTreeModel *model, GtkTreeIter *parent)
-{
-	GtkTreeIter iter;
-	gboolean valid;
-
-	valid = parent == NULL
-	      ? gtk_tree_model_get_iter_first(model, &iter)
-	      : gtk_tree_model_iter_children(model, &iter, parent);
-	while (valid) {
-		gboolean active;
-
-		gtk_tree_model_get(model, &iter,
-		                   SAKURA_SIDEBAR_COLUMN_STATUS_ACTIVE, &active,
-		                   -1);
-		if (active)
-			gtk_tree_store_set(sakura.sidebar_model, &iter,
-			                   SAKURA_SIDEBAR_COLUMN_STATUS_PULSE,
-			                   sakura.sidebar_spinner_pulse,
-			                   -1);
-		if (gtk_tree_model_iter_has_child(model, &iter))
-			sakura_sidebar_pulse_rows(model, &iter);
-		valid = gtk_tree_model_iter_next(model, &iter);
-	}
-}
-
-
-gboolean
-sakura_sidebar_spinner_pulse_cb(gpointer data)
-{
-	GtkTreeModel *model;
-
-	(void)data;
-	if (sakura.session_shutting_down || sakura.sidebar_model == NULL) {
-		sakura.sidebar_spinner_source_id = 0;
-		return G_SOURCE_REMOVE;
-	}
-
-	sakura.sidebar_spinner_pulse++;
-	model = GTK_TREE_MODEL(sakura.sidebar_model);
-	sakura_sidebar_pulse_rows(model, NULL);
-
-	return G_SOURCE_CONTINUE;
-}
 
 
 static SakuraTabStatus
@@ -5913,7 +5895,11 @@ sakura_sidebar_set_node_row(SakuraSidebarNode *node, GtkTreeIter *iter)
 		status_color = "#8c8c8c";
 		status_symbol = "▶";
 	}
-	if (!status_running && status_color != NULL && status_symbol != NULL)
+	if (status_running && status_symbol == NULL)
+		status_symbol = "●";
+	if (status_running && status_color == NULL)
+		status_color = "#4c9be8";
+	if (status_color != NULL && status_symbol != NULL)
 		status_markup = g_strdup_printf("<span foreground=\"%s\">%s</span>",
 		                                status_color, status_symbol);
 	status_marker_visible = status_markup != NULL;
@@ -5982,9 +5968,8 @@ sakura_sidebar_set_node_row(SakuraSidebarNode *node, GtkTreeIter *iter)
 	                   SAKURA_SIDEBAR_COLUMN_STATUS_MARKUP, status_markup,
 	                   SAKURA_SIDEBAR_COLUMN_STATUS_MARKER_VISIBLE,
 	                   status_marker_visible,
-	                   SAKURA_SIDEBAR_COLUMN_STATUS_ACTIVE, status_running,
-	                   SAKURA_SIDEBAR_COLUMN_STATUS_PULSE,
-	                   status_running ? sakura.sidebar_spinner_pulse : 0,
+	                   SAKURA_SIDEBAR_COLUMN_STATUS_ACTIVE, FALSE,
+	                   SAKURA_SIDEBAR_COLUMN_STATUS_PULSE, 0,
 	                   SAKURA_SIDEBAR_COLUMN_TOOLTIP, tooltip_markup,
 	                   SAKURA_SIDEBAR_COLUMN_NODE, node,
 	                   -1);

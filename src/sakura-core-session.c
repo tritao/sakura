@@ -324,6 +324,7 @@ sakura_session_layout_reachable(const SakuraSessionLayoutRecord *record,
 
 static gboolean
 sakura_session_layout_valid(const SakuraSessionSnapshot *snapshot,
+                             gboolean external_workspace,
                              GError **error)
 {
 	GHashTable *pages = g_hash_table_new(g_str_hash, g_str_equal);
@@ -343,11 +344,11 @@ sakura_session_layout_valid(const SakuraSessionSnapshot *snapshot,
 		SakuraSessionTaskRecord *task = g_ptr_array_index(snapshot->tasks, index);
 		g_hash_table_add(tasks, task->id);
 	}
-	if (snapshot->active_group_id != NULL &&
+	if (!external_workspace && snapshot->active_group_id != NULL &&
 	    g_strcmp0(snapshot->active_group_id, "root") != 0 &&
 	    !g_hash_table_contains(groups, snapshot->active_group_id))
 		goto invalid;
-	if (snapshot->selected_task_id != NULL && snapshot->selected_task_id[0] != '\0' &&
+	if (!external_workspace && snapshot->selected_task_id != NULL && snapshot->selected_task_id[0] != '\0' &&
 	    !g_hash_table_contains(tasks, snapshot->selected_task_id))
 		goto invalid;
 
@@ -366,15 +367,15 @@ sakura_session_layout_valid(const SakuraSessionSnapshot *snapshot,
 		                          g_strcmp0(page->parent_id, "root") != 0 &&
 		                          g_hash_table_contains(tasks, page->parent_id);
 
-		if (page->parent_id != NULL && g_strcmp0(page->parent_id, "root") != 0 &&
+		if (!external_workspace && page->parent_id != NULL && g_strcmp0(page->parent_id, "root") != 0 &&
 		    !g_hash_table_contains(groups, page->parent_id) &&
 		    !g_hash_table_contains(tasks, page->parent_id))
 			goto invalid;
-		if (page->group_id != NULL && page->group_id[0] != '\0' &&
+		if (!external_workspace && page->group_id != NULL && page->group_id[0] != '\0' &&
 		    g_strcmp0(page->group_id, "root") != 0 &&
 		    !g_hash_table_contains(groups, page->group_id))
 			goto invalid;
-		if (has_task && !g_hash_table_contains(tasks, page->task_id))
+		if (!external_workspace && has_task && !g_hash_table_contains(tasks, page->task_id))
 			goto invalid;
 		if (has_task && g_strcmp0(page->parent_id, page->task_id) != 0)
 			goto invalid;
@@ -806,13 +807,17 @@ sakura_session_snapshot_load_into(GKeyFile *key_file,
 	}
 	sakura_session_repair_duplicate_page_ids(snapshot);
 
-	return sakura_session_group_ids_valid(snapshot, error) &&
+	{
+		gboolean external_workspace = g_key_file_get_boolean(
+			key_file, "Session", "external_workspace", NULL);
+
+		return sakura_session_group_ids_valid(snapshot, error) &&
 	       sakura_session_task_ids_valid(snapshot, error) &&
 	       sakura_session_terminal_ids_valid(
-		       snapshot,
-		       g_key_file_get_boolean(key_file, "Session",
-		                              "external_workspace", NULL), error) &&
-	       (version < 4 || sakura_session_layout_valid(snapshot, error));
+		       snapshot, external_workspace, error) &&
+	       (version < 4 || sakura_session_layout_valid(
+		       snapshot, external_workspace, error));
+	}
 }
 
 

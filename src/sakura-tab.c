@@ -3091,10 +3091,21 @@ sakura_tab_button_button_press_cb(GtkWidget *widget, GdkEventButton *event,
 		gtk_menu_shell_append(GTK_MENU_SHELL(menu), item);
 		gtk_menu_shell_append(GTK_MENU_SHELL(menu), gtk_separator_menu_item_new());
 	}
-	item = gtk_menu_item_new_with_label(_("Rename terminal..."));
-	g_signal_connect_data(item, "activate", G_CALLBACK(sakura_set_name_dialog_cb),
-	                      g_strdup(tab->terminal_id),
-	                      sakura_tab_string_data_free, 0);
+	if (tab->kind == SAKURA_TAB_CODEX) {
+		item = gtk_menu_item_new_with_label(_("Rename Codex session..."));
+		gtk_widget_set_sensitive(item, tab->codex_session_id != NULL &&
+		                               tab->codex_session_id[0] != '\0');
+		g_signal_connect_data(item, "activate",
+		                      G_CALLBACK(sakura_rename_codex_session_cb),
+		                      g_strdup(tab->terminal_id),
+		                      sakura_tab_string_data_free, 0);
+	} else {
+		item = gtk_menu_item_new_with_label(_("Rename terminal..."));
+		g_signal_connect_data(item, "activate",
+		                      G_CALLBACK(sakura_set_name_dialog_cb),
+		                      g_strdup(tab->terminal_id),
+		                      sakura_tab_string_data_free, 0);
+	}
 	gtk_menu_shell_append(GTK_MENU_SHELL(menu), item);
 	gtk_menu_shell_append(GTK_MENU_SHELL(menu), gtk_separator_menu_item_new());
 	item = gtk_menu_item_new_with_label(_("Close terminal"));
