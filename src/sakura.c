@@ -3364,6 +3364,7 @@ sakura_destroy()
 		g_source_remove(sakura.cwd_tracking_source_id);
 		sakura.cwd_tracking_source_id = 0;
 	}
+	sakura_sidebar_spinner_stop();
 	sakura_sidebar_cancel_primary_click();
 	if (sakura.programmatic_resize_source_id != 0) {
 		g_source_remove(sakura.programmatic_resize_source_id);

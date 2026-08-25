@@ -295,6 +295,8 @@ struct sakura_app {
 	guint session_save_source_id;
 	guint codex_tracking_source_id;
 	guint cwd_tracking_source_id;
+	guint sidebar_spinner_source_id;
+	guint sidebar_spinner_pulse;
 	guint sidebar_primary_click_source_id;
 	SakuraSidebarNodeType sidebar_primary_click_type;
 	gchar *sidebar_primary_click_id;
@@ -850,6 +852,8 @@ void sakura_add_tab_with_options(const gchar *restore_cwd,
 void sakura_sidebar_update_tab(SakuraTab *tab);
 void sakura_workspace_start_page_runtime(SakuraPage *page);
 void sakura_sidebar_update_attention_count(void);
+gboolean sakura_sidebar_spinner_pulse_cb(gpointer data);
+void sakura_sidebar_spinner_stop(void);
 gboolean sakura_sidebar_get_iter(SakuraSidebarNode *node, GtkTreeIter *iter);
 void sakura_sidebar_free_node(SakuraSidebarNode *node);
 void sakura_sidebar_insert_node(SakuraSidebarNode *node);

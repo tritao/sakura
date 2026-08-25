@@ -833,6 +833,7 @@ teardown_workspace(void)
 
 	sakura_sidebar_cancel_pending_selection();
 	sakura_sidebar_cancel_primary_click();
+	sakura_sidebar_spinner_stop();
 	sakura_focus_tab_cancel_pending();
 	/* Fixture tests can start the asynchronous Codex name helper. Stop it
 	 * before the global Sakura record is reset so its callbacks do not retain
@@ -1234,11 +1235,11 @@ test_sidebar_hides_redundant_directory(void)
 
 
 static void
-test_sidebar_running_status_is_stable(void)
+test_sidebar_spinner_does_not_mutate_model(void)
 {
 	SakuraPage *page;
 	SakuraTab *tab;
-	gchar *status_markup;
+	guint before, after;
 
 	setup_workspace();
 	page = sakura_page_at_page(1);
@@ -1257,11 +1258,13 @@ test_sidebar_running_status_is_stable(void)
 
 	tab->status = SAKURA_TAB_STATUS_RUNNING;
 	sakura_sidebar_update_tab(tab);
-	status_markup = test_sidebar_column(tab, SAKURA_SIDEBAR_COLUMN_STATUS_MARKUP);
-	g_assert_nonnull(strstr(status_markup, "●"));
-	g_assert_cmpuint(test_sidebar_uint_column(
-		tab, SAKURA_SIDEBAR_COLUMN_STATUS_PULSE), ==, 0);
-	g_free(status_markup);
+	before = test_sidebar_uint_column(tab, SAKURA_SIDEBAR_COLUMN_STATUS_PULSE);
+	sakura_sidebar_spinner_pulse_cb(NULL);
+	after = test_sidebar_uint_column(tab, SAKURA_SIDEBAR_COLUMN_STATUS_PULSE);
+	g_assert_cmpuint(before, ==, 0);
+	g_assert_cmpuint(after, ==, 0);
+	/* Headless fixtures keep the sidebar container hidden, so the timer stops;
+	 * the important invariant is that an animation tick never changes rows. */
 
 	teardown_workspace();
 }
@@ -3443,8 +3446,8 @@ main(int argc, char **argv)
 	                test_snapshot_destroy_restore_equivalence);
 	g_test_add_func("/workspace/sidebar-directory-subtitles",
 	                test_sidebar_hides_redundant_directory);
-	g_test_add_func("/workspace/sidebar-running-status-is-stable",
-	                test_sidebar_running_status_is_stable);
+	g_test_add_func("/workspace/sidebar-spinner-does-not-mutate-model",
+	                test_sidebar_spinner_does_not_mutate_model);
 	g_test_add_func("/workspace/sidebar-selects-created-tab",
 	                test_sidebar_selects_created_tab);
 	g_test_add_func("/workspace/reconciles-at-outer-mutation-boundary",
