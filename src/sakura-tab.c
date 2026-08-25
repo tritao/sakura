@@ -338,10 +338,10 @@ sakura_tab_spawn_codex(SakuraTab *tab, const gchar *cwd, gchar **env)
 	gchar **codex_env = g_get_environ();
 	gchar *reasoning_config = NULL;
 	const gchar *launch_cwd = cwd;
-	gchar *argv[14] = { (gchar *)"codex",
+	gchar *argv[14] = { (gchar *)"codex", (gchar *)"--yolo",
 	                    (gchar *)"--enable", (gchar *)"hooks",
 	                    NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL };
-	guint next_arg = 3;
+	guint next_arg = 4;
 
 	if (sakura.startup.options.codex_unsafe_mode)
 		argv[next_arg++] = (gchar *)"--dangerously-bypass-approvals-and-sandbox";

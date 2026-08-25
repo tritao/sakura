@@ -92,6 +92,16 @@ static gboolean sakura_sidebar_event_is_expander(GtkTreeView *tree,
                                                   GtkTreePath *path,
                                                   GtkTreeViewColumn *column,
                                                   gint x);
+struct sakura_sidebar_pending_toggle {
+	GtkTreeView *tree;
+	SakuraSidebarNodeType type;
+	gchar *id;
+	gboolean expanded;
+};
+static gboolean sakura_sidebar_toggle_row_idle(gpointer data);
+static void sakura_sidebar_pending_toggle_free(gpointer data);
+static void sakura_sidebar_queue_row_toggle(GtkTreeView *tree,
+	                                           GtkTreePath *path);
 static gboolean sakura_sidebar_node_expansion_kind(
 	SakuraSidebarNode *node, SakuraSidebarExpansionKind *kind);
 static gchar *sakura_sidebar_expansion_key(SakuraSidebarExpansionKind kind,
@@ -3128,6 +3138,78 @@ sakura_sidebar_event_is_expander(GtkTreeView *tree,
 }
 
 
+static gboolean
+sakura_sidebar_toggle_row_idle(gpointer data)
+{
+	struct sakura_sidebar_pending_toggle *pending = data;
+	SakuraSidebarNode *node;
+	GtkTreeIter iter;
+	GtkTreePath *path;
+
+	if (pending == NULL || pending->tree == NULL ||
+	    pending->tree != GTK_TREE_VIEW(sakura.sidebar_tree) ||
+	    sakura.session_shutting_down || sakura.sidebar_model == NULL)
+		return G_SOURCE_REMOVE;
+
+	node = sakura_sidebar_find_node_by_identity(pending->type, pending->id);
+	if (node == NULL || !sakura_sidebar_get_iter(node, &iter))
+		return G_SOURCE_REMOVE;
+	path = gtk_tree_model_get_path(GTK_TREE_MODEL(sakura.sidebar_model), &iter);
+	if (path != NULL) {
+		/* The tree view owns the current event's internal row path. Defer the
+		 * actual mutation until after GTK finishes dispatching the button event,
+		 * then resolve the row again by stable sidebar identity. */
+		if (gtk_tree_view_row_expanded(pending->tree, path) != pending->expanded) {
+			if (pending->expanded)
+				gtk_tree_view_expand_row(pending->tree, path, FALSE);
+			else
+				gtk_tree_view_collapse_row(pending->tree, path);
+		}
+		gtk_tree_path_free(path);
+	}
+	return G_SOURCE_REMOVE;
+}
+
+
+static void
+sakura_sidebar_pending_toggle_free(gpointer data)
+{
+	struct sakura_sidebar_pending_toggle *pending = data;
+
+	if (pending == NULL)
+		return;
+	if (pending->tree != NULL)
+		g_object_unref(pending->tree);
+	g_free(pending->id);
+	g_free(pending);
+}
+
+
+static void
+sakura_sidebar_queue_row_toggle(GtkTreeView *tree, GtkTreePath *path)
+{
+	struct sakura_sidebar_pending_toggle *pending;
+	GtkTreeIter iter;
+	SakuraSidebarNode *node = NULL;
+
+	if (tree == NULL || path == NULL || sakura.sidebar_model == NULL ||
+	    !gtk_tree_model_get_iter(GTK_TREE_MODEL(sakura.sidebar_model), &iter, path))
+		return;
+	gtk_tree_model_get(GTK_TREE_MODEL(sakura.sidebar_model), &iter,
+	                   SAKURA_SIDEBAR_COLUMN_NODE, &node, -1);
+	if (node == NULL || node->id == NULL || node->id[0] == '\0')
+		return;
+
+	pending = g_new0(struct sakura_sidebar_pending_toggle, 1);
+	pending->tree = GTK_TREE_VIEW(g_object_ref(tree));
+	pending->type = node->type;
+	pending->id = g_strdup(node->id);
+	pending->expanded = !gtk_tree_view_row_expanded(tree, path);
+	g_idle_add_full(G_PRIORITY_DEFAULT_IDLE, sakura_sidebar_toggle_row_idle,
+	                pending, sakura_sidebar_pending_toggle_free);
+}
+
+
 gboolean
 sakura_sidebar_button_press_cb (GtkWidget *widget, GdkEventButton *event, void *data)
 {
@@ -3160,10 +3242,7 @@ sakura_sidebar_button_press_cb (GtkWidget *widget, GdkEventButton *event, void *
 				g_object_set_data_full(
 					G_OBJECT(widget), "sakura-sidebar-drag-node", NULL, NULL);
 			if (expander_click && event->type == GDK_BUTTON_PRESS) {
-				if (gtk_tree_view_row_expanded(GTK_TREE_VIEW(widget), path))
-					gtk_tree_view_collapse_row(GTK_TREE_VIEW(widget), path);
-				else
-					gtk_tree_view_expand_row(GTK_TREE_VIEW(widget), path, FALSE);
+				sakura_sidebar_queue_row_toggle(GTK_TREE_VIEW(widget), path);
 				gtk_tree_path_free(path);
 				return TRUE;
 			}
@@ -3194,10 +3273,7 @@ sakura_sidebar_button_press_cb (GtkWidget *widget, GdkEventButton *event, void *
 			node = NULL;
 
 		if (node != NULL && node->type == SAKURA_SIDEBAR_GROUP) {
-			if (gtk_tree_view_row_expanded(GTK_TREE_VIEW(widget), path))
-				gtk_tree_view_collapse_row(GTK_TREE_VIEW(widget), path);
-			else
-				gtk_tree_view_expand_row(GTK_TREE_VIEW(widget), path, FALSE);
+			sakura_sidebar_queue_row_toggle(GTK_TREE_VIEW(widget), path);
 			gtk_tree_path_free(path);
 			return TRUE;
 		}
