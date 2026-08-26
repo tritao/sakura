@@ -5350,10 +5350,12 @@ sakura_workspace_restore_job_step(gpointer data)
 	SakuraWorkspaceRestoreJob *job = data;
 	SakuraSessionSnapshot *snapshot;
 	gboolean step_success;
+	gint64 trace_started;
 
 	if (job == NULL || sakura.session_shutting_down)
 		return G_SOURCE_REMOVE;
 	snapshot = job->snapshot;
+	trace_started = sakura_ui_latency_trace_begin();
 	if (job->restore_layout) {
 		if (job->index >= snapshot->pages->len) {
 			sakura_workspace_restore_job_finalize(job, TRUE);
@@ -5369,6 +5371,7 @@ sakura_workspace_restore_job_step(gpointer data)
 		step_success = sakura_workspace_restore_tab_record(job,
 			g_ptr_array_index(snapshot->tabs, job->index));
 	}
+	sakura_ui_latency_trace_end("workspace-restore-step", trace_started);
 	if (!step_success) {
 		job->failed = TRUE;
 		sakura_workspace_restore_job_finalize(job, FALSE);

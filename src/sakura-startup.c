@@ -31,15 +31,21 @@ sakura_startup_set_status(const gchar *status)
 static void
 sakura_startup_maybe_finish_loading(SakuraApp *app)
 {
+	gboolean was_visible;
+
 	if (app == NULL || app->startup.phase != SAKURA_STARTUP_READY ||
 	    app->startup.pending_terminal_starts != 0)
 		return;
+	was_visible = app->startup.overlay != NULL &&
+	              gtk_widget_get_visible(app->startup.overlay);
 	if (app->startup.spinner != NULL) {
 		gtk_spinner_stop(GTK_SPINNER(app->startup.spinner));
 		gtk_widget_hide(app->startup.spinner);
 	}
 	if (app->startup.overlay != NULL)
 		gtk_widget_hide(app->startup.overlay);
+	if (was_visible)
+		sakura_ui_latency_trace_milestone("terminal-ready");
 }
 
 
@@ -72,6 +78,7 @@ sakura_startup_finish(void)
 	sakura.first_run = FALSE;
 	sakura_sanitize_working_directory();
 	sakura.startup.phase = SAKURA_STARTUP_READY;
+	sakura_ui_latency_trace_milestone("workspace-ready");
 	sakura_startup_maybe_finish_loading(&sakura);
 	sakura.startup.restore_source_id = 0;
 	if (sakura.startup.finished_callback != NULL)
@@ -94,6 +101,7 @@ sakura_startup_restore_complete(gboolean success, gpointer data)
 		for (guint index = 0; index < sakura.startup.options.ntabs; index++)
 			sakura_add_tab();
 	}
+	sakura_ui_latency_trace_milestone("workspace-restored");
 	sakura_startup_set_status(_("Starting selected terminal sessions…"));
 	sakura_startup_finish();
 }
@@ -145,8 +153,9 @@ sakura_startup_start_agent_cb(gpointer data)
 	sakura_startup_set_status(_("Starting workspace agent…"));
 	if (!sakura_agent_start(&sakura))
 		g_debug("Local sakura-agent is unavailable; continuing with the desktop model");
-	sakura.startup.restore_source_id = g_timeout_add(
-		50, sakura_startup_restore_workspace_cb, NULL);
+	sakura_ui_latency_trace_milestone("agent-started");
+	sakura.startup.restore_source_id = g_idle_add(
+		sakura_startup_restore_workspace_cb, NULL);
 	return G_SOURCE_REMOVE;
 }
 
@@ -160,8 +169,8 @@ sakura_startup_restore_cb(gpointer data)
 		return G_SOURCE_REMOVE;
 	}
 	sakura_startup_set_status(_("Starting workspace agent…"));
-	sakura.startup.restore_source_id = g_timeout_add(
-		50, sakura_startup_start_agent_cb, NULL);
+	sakura.startup.restore_source_id = g_idle_add(
+		sakura_startup_start_agent_cb, NULL);
 	return G_SOURCE_REMOVE;
 }
 
@@ -213,6 +222,7 @@ sakura_startup_begin(const SakuraStartupOptions *options,
 	sakura.startup.pending_terminal_starts = 0;
 	sakura.startup.phase = SAKURA_STARTUP_SCHEDULED;
 	sakura.session_restoring = TRUE;
+	sakura_ui_latency_trace_milestone("window-show-requested");
 	gtk_widget_show(sakura.main_window);
 	/* Let GTK paint the loading surface before starting agent/session work. */
 	sakura.startup.restore_source_id = g_timeout_add(

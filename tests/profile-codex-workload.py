@@ -28,6 +28,8 @@ BACKGROUND_ACTIVITY_PATTERN = re.compile(
 PAINT_LATENCY_PATTERN = re.compile(
     r"selection-paint-latency-us=(\d+) terminal=(profile-codex-\d+)")
 FRAME_INTERVAL_PATTERN = re.compile(r"ui-frame-interval-us=(\d+)")
+STARTUP_MILESTONE_PATTERN = re.compile(
+    r"startup-milestone-us=(\d+) name=([a-z-]+)")
 
 
 def require(command):
@@ -81,6 +83,75 @@ def window_origin(window, env):
     values = dict(line.split("=", 1) for line in result.stdout.splitlines()
                   if "=" in line)
     return int(values["X"]), int(values["Y"])
+
+
+def startup_probe(binary, root, config, base_env, sessions, index):
+    stats_dir = root / f"startup-stats-{index:02d}"
+    log_path = root / f"startup-{index:02d}.log"
+    env = base_env.copy()
+    env["SAKURA_PROFILE_STATS_DIR"] = str(stats_dir)
+    write_fixture(config, sessions)
+    launched_us = time.monotonic_ns() // 1000
+    with log_path.open("w", encoding="utf-8") as log:
+        app = subprocess.Popen([str(binary), "--config-file", config.name],
+                               cwd=root, env=env, stdout=log,
+                               stderr=subprocess.STDOUT)
+        try:
+            wait_for_window(app.pid, env)
+            window_us = time.monotonic_ns() // 1000
+            deadline = time.monotonic() + 10
+            milestones = {}
+            converged_us = None
+            while time.monotonic() < deadline and app.poll() is None:
+                try:
+                    contents = log_path.read_text(encoding="utf-8",
+                                                  errors="replace")
+                except OSError:
+                    contents = ""
+                milestones.update({name: int(stamp)
+                                   for stamp, name in
+                                   STARTUP_MILESTONE_PATTERN.findall(contents)})
+                if converged_us is None and len(list(stats_dir.glob("*"))) >= sessions:
+                    converged_us = time.monotonic_ns() // 1000
+                if "terminal-ready" in milestones and converged_us is not None:
+                    break
+                time.sleep(0.01)
+            if "terminal-ready" not in milestones:
+                raise RuntimeError("startup probe did not reach terminal readiness")
+            if converged_us is None:
+                raise RuntimeError("startup probe did not converge Codex workers")
+            restore_step_us = [
+                int(value) for value, cause in ACTIVITY_PATTERN.findall(contents)
+                if cause == "workspace-restore-step"
+            ]
+            return {
+                "window_visible_us": window_us - launched_us,
+                "agent_started_us": milestones["agent-started"] - launched_us,
+                "workspace_restored_us": milestones["workspace-restored"] - launched_us,
+                "workspace_ready_us": milestones["workspace-ready"] - launched_us,
+                "terminal_ready_us": milestones["terminal-ready"] - launched_us,
+                "codex_converged_us": converged_us - launched_us,
+                "window_to_terminal_ready_us": (
+                    milestones["terminal-ready"] - window_us),
+                "agent_to_workspace_ready_us": (
+                    milestones["workspace-ready"] - milestones["agent-started"]),
+                "restore_step_total_us": sum(restore_step_us),
+                "restore_step_max_us": max(restore_step_us, default=0),
+            }
+        finally:
+            terminate_process_tree(app)
+
+
+def startup_summary(probes):
+    report = {"runs": len(probes), "cold": {}, "warm": {}}
+    for key in probes[0] if probes else ():
+        report["cold"][key.removesuffix("_us") + "_ms"] = round(
+            probes[0][key] / 1000, 3)
+        warm_values = [probe[key] for probe in probes[1:]]
+        if warm_values:
+            report["warm"][key.removesuffix("_us") + "_ms"] = duration_summary(
+                warm_values)
+    return report
 
 
 def start_interaction_workload(app, env, sessions, interval):
@@ -330,6 +401,35 @@ def process_tree(root_pid):
     return result
 
 
+def terminate_process_tree(process):
+    if process is None:
+        return
+    pids = process_tree(process.pid) if process.poll() is None else {process.pid}
+    if process.poll() is None:
+        process.send_signal(signal.SIGTERM)
+        try:
+            process.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            process.wait(timeout=3)
+    descendants = pids - {process.pid}
+    for pid in descendants:
+        try:
+            os.kill(pid, signal.SIGTERM)
+        except ProcessLookupError:
+            pass
+    deadline = time.monotonic() + 1
+    while descendants and time.monotonic() < deadline:
+        descendants = {pid for pid in descendants if Path(f"/proc/{pid}").exists()}
+        if descendants:
+            time.sleep(0.02)
+    for pid in descendants:
+        try:
+            os.kill(pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+
+
 def read_metrics(pids):
     totals = {"cpu_ticks": 0, "rss_bytes": 0, "read_bytes": 0,
               "write_bytes": 0, "read_syscalls": 0, "write_syscalls": 0,
@@ -386,16 +486,21 @@ def main():
     parser.add_argument("--max-paint-p95-ms", type=float, default=40.0)
     parser.add_argument("--max-frame-interval-p95-ms", type=float, default=30.0)
     parser.add_argument("--max-frame-intervals-over-50", type=int, default=3)
+    parser.add_argument("--startup-runs", type=int, default=3,
+                        help="isolated startup probes before steady-state profiling")
+    parser.add_argument("--max-startup-window-ms", type=float, default=1000.0)
+    parser.add_argument("--max-startup-terminal-ms", type=float, default=3000.0)
+    parser.add_argument("--max-startup-convergence-ms", type=float, default=5000.0)
     parser.add_argument("--json", metavar="PATH", help="also write metrics as JSON")
     args = parser.parse_args()
     if (args.sessions < 1 or args.duration <= 0 or args.warmup < 0 or
-            args.interaction_interval < 0):
+            args.interaction_interval < 0 or args.startup_runs < 0):
         parser.error("sessions and duration must be positive; warmup cannot be negative")
     binary = Path(args.binary).resolve()
     if not binary.is_file():
         raise SystemExit(f"binary not found: {binary}")
     require("Xvfb")
-    if args.interaction_interval > 0:
+    if args.interaction_interval > 0 or args.startup_runs > 0:
         require("xdotool")
 
     with tempfile.TemporaryDirectory(prefix="sakura-codex-profile-") as temporary:
@@ -415,6 +520,14 @@ def main():
             "CODEX_HOME": str(root / "codex-home"),
         })
         xvfb, env["DISPLAY"] = start_xvfb()
+        startup_probes = [
+            startup_probe(binary, root, config, env, args.sessions, index)
+            for index in range(args.startup_runs)
+        ]
+        startup_report = startup_summary(startup_probes)
+        # Each probe is allowed to persist its session. Restore the identical
+        # fixture before the detailed steady-state run.
+        write_fixture(config, args.sessions)
         log_path = root / "sakura.log"
         log = log_path.open("w", encoding="utf-8")
         app = subprocess.Popen([str(binary), "--config-file", config.name],
@@ -477,6 +590,7 @@ def main():
             display_cpu_seconds = delta(after_display, before_display, "cpu_ticks") / clock_ticks
             report = {
                 "profile": args.profile, "sessions": args.sessions,
+                "startup": startup_report,
                 "duration_seconds": round(elapsed, 3),
                 "cpu_seconds": round(cpu_seconds, 3),
                 "average_cpu_percent_one_core": round(cpu_seconds / elapsed * 100, 2),
@@ -670,16 +784,29 @@ def main():
                         f"{args.max_main_loop_stalls_over_50}")
                 if errors:
                     raise RuntimeError("interaction benchmark failed: " + "; ".join(errors))
+            if startup_probes:
+                startup_errors = []
+                cold = startup_report["cold"]
+                if cold["window_visible_ms"] > args.max_startup_window_ms:
+                    startup_errors.append("cold window visibility exceeds threshold")
+                if cold["terminal_ready_ms"] > args.max_startup_terminal_ms:
+                    startup_errors.append("cold terminal readiness exceeds threshold")
+                if cold["codex_converged_ms"] > args.max_startup_convergence_ms:
+                    startup_errors.append("cold Codex convergence exceeds threshold")
+                warm = startup_report["warm"]
+                if warm:
+                    if warm["window_visible_ms"]["p95_ms"] > args.max_startup_window_ms:
+                        startup_errors.append("warm window visibility p95 exceeds threshold")
+                    if warm["terminal_ready_ms"]["p95_ms"] > args.max_startup_terminal_ms:
+                        startup_errors.append("warm terminal readiness p95 exceeds threshold")
+                    if warm["codex_converged_ms"]["p95_ms"] > args.max_startup_convergence_ms:
+                        startup_errors.append("warm Codex convergence p95 exceeds threshold")
+                if startup_errors:
+                    raise RuntimeError("startup benchmark failed: " + "; ".join(startup_errors))
         finally:
             if stop_interactions is not None:
                 stop_interactions()
-            if app.poll() is None:
-                app.send_signal(signal.SIGTERM)
-                try:
-                    app.wait(timeout=5)
-                except subprocess.TimeoutExpired:
-                    app.kill()
-                    app.wait(timeout=3)
+            terminate_process_tree(app)
             log.close()
             if xvfb.poll() is None:
                 xvfb.terminate()

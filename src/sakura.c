@@ -3499,6 +3499,15 @@ sakura_ui_latency_trace_request_paint(const gchar *terminal_id,
 
 
 void
+sakura_ui_latency_trace_milestone(const gchar *name)
+{
+	if (sakura.ui_latency_trace_enabled && name != NULL)
+		g_message("startup-milestone-us=%" G_GINT64_FORMAT " name=%s",
+		          g_get_monotonic_time(), name);
+}
+
+
+void
 sakura_destroy()
 {
 	gboolean window_disposing;

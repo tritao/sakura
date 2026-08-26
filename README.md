@@ -195,11 +195,16 @@ includes click-to-active and selection-to-focus p50/p95/p99/max latency,
 selection-to-painted-frame latency, frame intervals, missed or incorrect
 switches, GTK main-loop stalls with recent-cause attribution, timed UI
 activities, CPU, memory, I/O, and context-switch metrics.
+Before the sustained workload it also runs three isolated startup probes. The
+first is reported as cold and the following runs as warm, with launch-to-window,
+agent, workspace, terminal-readiness, Codex-convergence, and restore-step
+timings. Set `--startup-runs 0` when only steady-state measurements are needed.
 The command fails if switch failures exceed 1%, focus-sample coverage falls
 below 98%, active p95 exceeds 50 ms, focus p95 exceeds 25 ms, stall p95 exceeds
 50 ms, paint p95 exceeds 40 ms, frame-interval p95 exceeds 30 ms, or more than
-three stalls or frame intervals exceed 50 ms. Use `--interaction-interval 0`
-for throughput-only profiling.
+three stalls or frame intervals exceed 50 ms. Startup gates require the window
+within 1 second, a usable terminal within 3 seconds, and Codex convergence
+within 5 seconds. Use `--interaction-interval 0` for throughput-only profiling.
 
 Tracked Codex tabs show their current state in the terminal sidebar: working,
 needs approval, ready to review, interrupted, or error. Working tabs show an

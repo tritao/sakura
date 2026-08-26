@@ -713,6 +713,7 @@ gint64 sakura_ui_latency_trace_begin(void);
 void sakura_ui_latency_trace_end(const gchar *cause, gint64 started_us);
 void sakura_ui_latency_trace_request_paint(const gchar *terminal_id,
                                            gint64 selection_us);
+void sakura_ui_latency_trace_milestone(const gchar *name);
 gboolean sakura_term_buttonpressed_cb(GtkWidget *widget, GdkEventButton *event,
                                       gpointer user_data);
 gboolean sakura_term_buttonreleased_cb(GtkWidget *widget, GdkEventButton *event,
