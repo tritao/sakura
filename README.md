@@ -43,6 +43,23 @@ Make sure your distribution sources the vte script for OSC 7 support in no login
 
 **sakura** has several command line options. Run `sakura --help` for a full list.
 
+### Controlling a running workspace
+
+`sakura-ctl` opens pages in an already running Sakura workspace. When exactly
+one workspace is running it is selected automatically:
+
+```sh
+sakura-ctl new
+sakura-ctl new --working-directory ~/dev/project
+sakura-ctl codex --working-directory ~/dev/project --reasoning high
+sakura-ctl codex --resume SESSION_ID
+```
+
+Use `sakura-ctl list` to show discoverable workspaces. If more than one is
+running, select one with `--workspace ID` (a unique ID prefix is accepted) or
+`--session-file PATH`. The command prints the created terminal ID on success.
+Run `sakura-ctl --help` for placement, terminal-size, and direct-socket options.
+
 ### Codex sessions
 
 Sakura can restore Codex conversations by their saved session ID. The installer

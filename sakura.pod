@@ -138,6 +138,14 @@ Open a Codex session by ID or name.
 
 =back
 
+=head1 CONTROLLING A RUNNING WORKSPACE
+
+C<sakura-ctl> creates pages in an already running Sakura workspace. Use
+C<sakura-ctl new> for a shell page, C<sakura-ctl codex> for a new Codex page,
+and C<sakura-ctl codex --resume SESSION> to resume a Codex session. If multiple
+workspaces are running, use C<sakura-ctl list> and select one with
+C<--workspace=ID> or C<--session-file=PATH>.
+
 =head1 GTK+ OPTIONS
 
 =over 8
