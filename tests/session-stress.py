@@ -49,7 +49,7 @@ TERMINAL_TITLES = [f"Stress terminal {index:02d}"
 CODEX_TERMINAL_INDEX = 3
 CODEX_SESSION_ID = "stress-codex-session"
 SELECTED_TERMINAL_INDEX = 3
-CURRENT_SESSION_VERSION = 10
+CURRENT_SESSION_VERSION = 11
 
 
 def workspace_state_file(session_file):

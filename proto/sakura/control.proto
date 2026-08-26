@@ -43,6 +43,8 @@ message Terminal {
   string codex_session_id = 10;
   string codex_reasoning_effort = 11;
   string tracking_token = 12;
+  string page_id = 13;
+  uint32 order = 14;
 }
 
 message Page {

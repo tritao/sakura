@@ -9,6 +9,7 @@
 #include "sakura/control.pb-c.h"
 
 static gchar *test_agent_workspace_id;
+static void test_agent_handshake_on_connection(GSocketConnection *connection);
 
 static SakuraSessionSnapshot *test_load_agent_session(const gchar *session_path);
 static void test_save_agent_session(const gchar *session_path,
@@ -772,6 +773,7 @@ test_agent_start_with_workspace(const gchar *socket_path,
 	g_assert_no_error(error);
 	g_assert_nonnull(process);
 	connection = test_agent_connect_wait(socket_path);
+	test_agent_handshake_on_connection(connection);
 	g_io_stream_close(G_IO_STREAM(connection), NULL, NULL);
 	g_object_unref(connection);
 	return process;
@@ -796,9 +798,6 @@ test_agent_stop(GSubprocess *process)
 	g_assert_true(g_subprocess_get_successful(process));
 	g_object_unref(process);
 }
-
-
-static void test_agent_handshake_on_connection(GSocketConnection *connection);
 
 
 static void

@@ -874,13 +874,15 @@ sakura_tab_start_agent_terminal(SakuraTab *tab, const gchar *cwd)
 	}
 	if (!attached) {
 		g_clear_error(&error);
-		if (!sakura_agent_create_terminal(&sakura, tab->terminal_id, page_id,
-		                                  group_id, task_id, cwd, cols, rows,
-		                                  &created_terminal_id, &error)) {
+		if (!sakura_agent_restart_terminal(
+				&sakura, tab->terminal_id, page_id, group_id, task_id, cwd,
+				cols, rows, tab->kind, tab->codex_session_id,
+				tab->codex_reasoning_effort, tab->codex_tracking_token, &error)) {
 			g_clear_error(&error);
 			g_free(replay_data);
 			return FALSE;
 		}
+		created_terminal_id = g_strdup(tab->terminal_id);
 		tab->agent_last_output_offset = 0;
 	}
 	if (!sakura_tab_finish_agent_terminal_start(

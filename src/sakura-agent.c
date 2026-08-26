@@ -1322,6 +1322,14 @@ sakura_agent_create_terminal_with_kind(SakuraAgent *agent,
 	create.core->codex_session_id = g_strdup(request->resume_session_id);
 	create.core->codex_reasoning_effort = g_strdup(request->reasoning_effort);
 	create.core->tracking_token = codex ? g_strdup(tracking_token) : NULL;
+	create.core->page_id = g_strdup(request->page_id);
+	for (guint index = 0; agent->workspace->terminals != NULL &&
+	                     index < agent->workspace->terminals->len; index++) {
+		SakuraCoreTerminal *terminal = g_ptr_array_index(
+			agent->workspace->terminals, index);
+		if (terminal != NULL && terminal->order >= create.core->order)
+			create.core->order = terminal->order + 1;
+	}
 	if (!sakura_core_workspace_add_terminal(agent->workspace, create.core)) {
 		sakura_agent_error(error, "could not register terminal");
 		goto fail;
@@ -1588,6 +1596,8 @@ sakura_agent_restart_terminal(SakuraAgent *agent,
 	gchar *reasoning_effort = NULL;
 	gchar *tracking_token = NULL;
 	gchar *restart_cwd = NULL;
+	gchar *restart_page_id = NULL;
+	guint logical_order = G_MAXUINT;
 	guint existing_index = 0;
 	guint logical_index = G_MAXUINT;
 
@@ -1602,6 +1612,10 @@ sakura_agent_restart_terminal(SakuraAgent *agent,
 	if (logical_terminal != NULL) {
 		g_ptr_array_find(agent->workspace->terminals, logical_terminal,
 		                 &logical_index);
+		logical_order = logical_terminal->order;
+		restart_page_id = g_strdup(logical_terminal->page_id);
+		if (restart_page_id != NULL && restart_page_id[0] != '\0')
+			restart_request.page_id = restart_page_id;
 		restart_request.group_id = logical_terminal->group != NULL
 		                         ? logical_terminal->group->id : "root";
 		restart_request.task_id = logical_terminal->task != NULL
@@ -1663,6 +1677,7 @@ sakura_agent_restart_terminal(SakuraAgent *agent,
 		g_free(reasoning_effort);
 		g_free(tracking_token);
 		g_free(restart_cwd);
+		g_free(restart_page_id);
 		return sakura_agent_error(error, "could not replace logical terminal");
 	}
 	gboolean created = sakura_agent_create_terminal_with_kind(
@@ -1675,10 +1690,17 @@ sakura_agent_restart_terminal(SakuraAgent *agent,
 			agent->workspace->terminals->len - 1);
 		g_ptr_array_insert(agent->workspace->terminals, logical_index, replacement);
 	}
+	if (created && logical_order != G_MAXUINT) {
+		SakuraCoreTerminal *replacement = sakura_core_workspace_find_terminal(
+			agent->workspace, request->terminal_id);
+		if (replacement != NULL)
+			replacement->order = logical_order;
+	}
 	g_free(resume_session_id);
 	g_free(reasoning_effort);
 	g_free(tracking_token);
 	g_free(restart_cwd);
+	g_free(restart_page_id);
 	return created;
 }
 

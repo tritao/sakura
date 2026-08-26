@@ -1492,6 +1492,8 @@ sakura_control_fill_terminal(Sakura__Control__V1__Terminal *message,
 		terminal->codex_reasoning_effort);
 	message->tracking_token = (gchar *)sakura_control_string(
 		terminal->tracking_token);
+	message->page_id = (gchar *)sakura_control_string(terminal->page_id);
+	message->order = terminal->order;
 }
 
 
@@ -2197,6 +2199,8 @@ sakura_control_decode_workspace_snapshot(
 		tab->codex_reasoning_effort =
 			g_strdup(wire_terminal->codex_reasoning_effort);
 		tab->codex_tracking_token = g_strdup(wire_terminal->tracking_token);
+		tab->page_id = g_strdup(wire_terminal->page_id);
+		tab->order = wire_terminal->order;
 		g_ptr_array_add(decoded_snapshot->tabs, tab);
 	}
 	for (gsize index = 0; index < wire_snapshot->n_pages; index++) {
