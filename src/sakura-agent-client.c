@@ -526,10 +526,148 @@ sakura_agent_enqueue_command(SakuraApp *app, SakuraAgentCommand *command,
 
 
 static gboolean
+sakura_agent_snapshot_has_page(const SakuraSessionSnapshot *snapshot,
+	                            const gchar *page_id)
+{
+	for (guint index = 0; snapshot != NULL && snapshot->pages != NULL &&
+	                     index < snapshot->pages->len; index++) {
+		SakuraSessionPageRecord *record = g_ptr_array_index(snapshot->pages, index);
+
+		if (record != NULL && g_strcmp0(record->id, page_id) == 0)
+			return TRUE;
+	}
+	return FALSE;
+}
+
+
+static SakuraSessionPageRecord *
+sakura_agent_snapshot_page(const SakuraSessionSnapshot *snapshot,
+	                        const gchar *page_id)
+{
+	for (guint index = 0; snapshot != NULL && snapshot->pages != NULL &&
+	                     index < snapshot->pages->len; index++) {
+		SakuraSessionPageRecord *record = g_ptr_array_index(snapshot->pages, index);
+
+		if (record != NULL && g_strcmp0(record->id, page_id) == 0)
+			return record;
+	}
+	return NULL;
+}
+
+
+static SakuraPage *
+sakura_agent_local_page(const gchar *page_id)
+{
+	for (guint index = 0; sakura.workspace != NULL &&
+	                     sakura.workspace->pages != NULL &&
+	                     index < sakura.workspace->pages->len; index++) {
+		SakuraPage *page = g_ptr_array_index(sakura.workspace->pages, index);
+
+		if (page != NULL && g_strcmp0(page->id, page_id) == 0)
+			return page;
+	}
+	return NULL;
+}
+
+
+static gboolean
+sakura_agent_materialize_snapshot_terminals(const SakuraSessionSnapshot *snapshot)
+{
+	gboolean changed = FALSE;
+	SakuraTab *previous_active = sakura.workspace->active_tab;
+
+	for (guint index = 0; snapshot != NULL && snapshot->tabs != NULL &&
+	                     index < snapshot->tabs->len; index++) {
+		SakuraSessionTabRecord *record = g_ptr_array_index(snapshot->tabs, index);
+		SakuraSessionPageRecord *page_record;
+		SakuraSidebarNode *parent;
+		SakuraPage *page;
+		SakuraTab *tab;
+		SakuraTabLaunchConfig config = { 0 };
+
+		if (record == NULL || record->terminal_id == NULL ||
+		    record->page_id == NULL ||
+		    sakura_find_pane_by_terminal_id(record->terminal_id) != NULL)
+			continue;
+		page_record = sakura_agent_snapshot_page(snapshot, record->page_id);
+		if (page_record == NULL)
+			continue;
+		page = sakura_agent_local_page(page_record->id);
+		if (page_record->task_id != NULL && page_record->task_id[0] != '\0') {
+			SakuraTask *task = sakura_workspace_model_find_task(
+				sakura.workspace, page_record->task_id);
+
+			parent = task != NULL ? task->sidebar_node : NULL;
+		} else {
+			parent = sakura_sidebar_find_group_by_id(page_record->group_id);
+		}
+		config.suppress_selection = TRUE;
+		config.suppress_current_cwd_fallback = TRUE;
+		/* GTK-only model tests have no agent endpoint. Production snapshots do,
+		 * and attach immediately to the already-running authoritative PTY. */
+		config.defer_process_start = sakura.agent_socket_path == NULL;
+		config.order = record->order;
+		config.has_order = TRUE;
+		config.codex_tracking_token = record->codex_tracking_token;
+		if (page == NULL)
+			config.page_id = page_record->id;
+		else {
+			config.target_page = page;
+			config.target_layout = page->layout_root;
+			config.target_ratio = SAKURA_LAYOUT_DEFAULT_RATIO;
+			config.split_direction = SAKURA_SPLIT_RIGHT;
+		}
+		sakura_tab_add_with_options(
+			record->cwd, parent, page_record->title,
+			page_record->title_set_by_user, record->kind,
+			sakura_tool_from_id(record->tool_id), record->codex_session_id,
+			record->codex_session_name, record->codex_model,
+			record->codex_reasoning_effort, record->tool_target,
+			record->terminal_id, record->colorset, &config);
+		tab = sakura_find_pane_by_terminal_id(record->terminal_id);
+		if (tab == NULL || tab->page == NULL)
+			continue;
+		tab->page->agent_owned = TRUE;
+		g_free(tab->page->title);
+		tab->page->title = g_strdup(page_record->title != NULL
+		                         ? page_record->title : "");
+		tab->page->title_set_by_user = page_record->title_set_by_user;
+		tab->page->archived = page_record->archived;
+		sakura_sidebar_update_page(tab->page);
+		changed = TRUE;
+	}
+	if (previous_active != NULL && previous_active->page != NULL && changed)
+		sakura_select_tab(previous_active, FALSE);
+	return changed;
+}
+
+
+static gboolean
+sakura_agent_remove_missing_page_proxies(const SakuraSessionSnapshot *snapshot)
+{
+	gboolean changed = FALSE;
+
+	if (sakura.workspace == NULL || sakura.workspace->pages == NULL)
+		return FALSE;
+	for (gint index = (gint)sakura.workspace->pages->len - 1; index >= 0; index--) {
+		SakuraPage *page = g_ptr_array_index(sakura.workspace->pages, index);
+
+		if (page == NULL || !page->agent_owned ||
+		    sakura_agent_snapshot_has_page(snapshot, page->id))
+			continue;
+		if (sakura_tab_delete_page(index))
+			changed = TRUE;
+	}
+	return changed;
+}
+
+
+static gboolean
 sakura_agent_apply_workspace_snapshot(SakuraApp *app,
                                        SakuraSessionSnapshot *snapshot)
 {
 	gboolean scope_needs_default = FALSE;
+	gboolean structure_changed;
 
 	if (app == NULL || snapshot == NULL || app->workspace == NULL ||
 	    app->session_shutting_down)
@@ -577,6 +715,22 @@ sakura_agent_apply_workspace_snapshot(SakuraApp *app,
 	sakura_workspace_mark_changed(SAKURA_WORKSPACE_CHANGE_PROJECTION |
 	                              SAKURA_WORKSPACE_CHANGE_METADATA);
 	sakura_workspace_end_mutation();
+	app->agent_snapshot_reconciling = TRUE;
+	structure_changed = sakura_agent_materialize_snapshot_terminals(snapshot);
+	structure_changed = sakura_agent_remove_missing_page_proxies(snapshot) ||
+	                    structure_changed;
+	if (structure_changed) {
+		/* Newly materialized pages now have stable GTK identities, so replay the
+		 * metadata merge that deliberately skipped them above. */
+		sakura_workspace_begin_mutation();
+		sakura_workspace_model_merge_agent_snapshot(app->workspace, snapshot);
+		sakura_sidebar_rebuild_projection();
+		sakura_workspace_mark_changed(SAKURA_WORKSPACE_CHANGE_STRUCTURE |
+		                              SAKURA_WORKSPACE_CHANGE_PROJECTION |
+		                              SAKURA_WORKSPACE_CHANGE_METADATA);
+		sakura_workspace_end_mutation();
+	}
+	app->agent_snapshot_reconciling = FALSE;
 	/* The desktop file stores presentation joins by stable ID. Refresh it after
 	 * agent changes without copying the authoritative hierarchy back into it. */
 	sakura_session_mark_dirty();

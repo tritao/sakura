@@ -689,6 +689,8 @@ sakura_tab_finish_agent_terminal_start(
 	tab->agent_cols = cols;
 	tab->agent_rows = rows;
 	tab->agent_backed = TRUE;
+	if (tab->page != NULL)
+		tab->page->agent_owned = TRUE;
 	tab->agent_terminal_exited = FALSE;
 	tab->agent_terminal_lost = FALSE;
 	tab->runtime_deferred = FALSE;
@@ -1281,6 +1283,8 @@ sakura_tab_add_with_options (const gchar *restore_cwd,
 		.execute_on_existing_tabs = FALSE,
 		.suppress_current_cwd_fallback = FALSE,
 		.defer_process_start = FALSE,
+		.suppress_selection = FALSE,
+		.page_id = NULL,
 		.target_page = NULL,
 		.target_layout = NULL,
 		.target_ratio = SAKURA_LAYOUT_DEFAULT_RATIO,
@@ -1305,7 +1309,7 @@ sakura_tab_add_with_options (const gchar *restore_cwd,
 		}
 	}
 	if (!split_into_page) {
-		tab_page = sakura_page_new(NULL);
+		tab_page = sakura_page_new(config->page_id);
 		tab_page->container = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
 		if (sakura_layout_leaf_new(tab_page, sk_tab) == NULL) {
 			sakura_page_free(tab_page);
@@ -1560,7 +1564,8 @@ sakura_tab_add_with_options (const gchar *restore_cwd,
 		/* Call set_current page after showing the widget: gtk ignores this
 		 * function in the window is not visible *sigh*. Gtk documentation
 		 * says this is for "historical" reasons. Me arse */
-		if (!(sakura.session_restoring && config->defer_process_start))
+		if (!config->suppress_selection &&
+		    !(sakura.session_restoring && config->defer_process_start))
 			gtk_notebook_set_current_page(GTK_NOTEBOOK(sakura.notebook), index);
 		/* The switch-page callback is suppressed while the surrounding
 		 * workspace mutation is open. Reflect the page GTK actually selected
@@ -1645,7 +1650,7 @@ sakura_tab_add_with_options (const gchar *restore_cwd,
 	trace_started = sakura_ui_latency_trace_begin();
 	sakura_tab_configure_terminal(sk_tab);
 	sakura_ui_latency_trace_end("tab-terminal-configure", trace_started);
-	if (!sakura.session_restoring)
+	if (!sakura.session_restoring && !config->suppress_selection)
 		sakura_sidebar_select_created_tab(sk_tab);
 
 }
@@ -1799,6 +1804,7 @@ sakura_tab_delete_page(gint page)
 	}
 	if (agent_page_backed && agent_page_id != NULL &&
 	    sakura.agent_socket_path != NULL &&
+	    !sakura.agent_snapshot_reconciling &&
 	    !sakura.session_restoring && !sakura.session_shutting_down) {
 		GError *error = NULL;
 

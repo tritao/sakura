@@ -580,9 +580,9 @@ sakura_workspace_model_apply_snapshot(SakuraWorkspaceModel *model,
 				task->group = group;
 			}
 		}
-		/* Pages are agent-owned logical records, but their GTK surfaces are
-		 * desktop-owned. Reconcile only existing surfaces by stable page ID;
-		 * creating or destroying widgets remains a desktop restore operation. */
+		/* GTK surfaces are reconciled separately by the desktop adapter. Once a
+		 * surface exists, apply the agent-owned page relationships and metadata
+		 * here by stable page ID. */
 		for (guint index = 0; snapshot->pages != NULL &&
 		                     index < snapshot->pages->len; index++) {
 			SakuraSessionPageRecord *record =

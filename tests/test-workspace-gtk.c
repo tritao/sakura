@@ -3164,6 +3164,11 @@ test_agent_snapshot_merge_uses_agent_page_ownership(void)
 	SakuraSessionSnapshot *agent_snapshot;
 	SakuraSessionGroupRecord *group_record;
 	SakuraSessionPageRecord *page_record;
+	SakuraSessionPageRecord *external_page_record;
+	SakuraSessionTabRecord *external_tab_record;
+	SakuraTab *previous_active;
+	SakuraTab *external_tab;
+	GtkWidget *test_window;
 
 	setup_workspace();
 	setup_sidebar_fixture();
@@ -3216,6 +3221,52 @@ test_agent_snapshot_merge_uses_agent_page_ownership(void)
 	sakura_sidebar_rebuild_projection();
 	g_assert_nonnull(page->sidebar_node);
 	g_assert_true(page->sidebar_node->parent == sakura.sidebar_root);
+
+	/* A complete agent event can also introduce a terminal created by
+	 * sakura-ctl after the GTK workspace is already live. Materialize a proxy
+	 * without changing the user's selected terminal. */
+	test_window = gtk_window_new(GTK_WINDOW_TOPLEVEL);
+	sakura.main_window = test_window;
+	previous_active = sakura.workspace->active_tab;
+	agent_snapshot = sakura_session_snapshot_new();
+	external_page_record = g_new0(SakuraSessionPageRecord, 1);
+	external_page_record->id = g_strdup("external-page");
+	external_page_record->parent_id = g_strdup("root");
+	external_page_record->group_id = g_strdup("root");
+	external_page_record->title = g_strdup("External Codex");
+	external_page_record->title_set_by_user = TRUE;
+	g_ptr_array_add(agent_snapshot->pages, external_page_record);
+	external_tab_record = g_new0(SakuraSessionTabRecord, 1);
+	external_tab_record->terminal_id = g_strdup("external-terminal");
+	external_tab_record->page_id = g_strdup("external-page");
+	external_tab_record->parent_id = g_strdup("root");
+	external_tab_record->cwd = g_strdup("/tmp");
+	external_tab_record->kind = SAKURA_TAB_CODEX;
+	external_tab_record->codex_model = g_strdup("gpt-5.6-luna");
+	external_tab_record->codex_reasoning_effort = g_strdup("xhigh");
+	g_ptr_array_add(agent_snapshot->tabs, external_tab_record);
+	sakura.agent_pending_snapshot = agent_snapshot;
+	agent_snapshot = NULL;
+	sakura_agent_apply_pending_snapshot(&sakura);
+	external_tab = sakura_find_pane_by_terminal_id("external-terminal");
+	g_assert_nonnull(external_tab);
+	g_assert_nonnull(external_tab->page);
+	g_assert_true(external_tab->page->agent_owned);
+	g_assert_cmpstr(external_tab->page->id, ==, "external-page");
+	g_assert_cmpstr(external_tab->page->title, ==, "External Codex");
+	g_assert_cmpstr(external_tab->codex_model, ==, "gpt-5.6-luna");
+	g_assert_cmpstr(external_tab->codex_reasoning_effort, ==, "xhigh");
+	g_assert_true(sakura.workspace->active_tab == previous_active);
+
+	/* Once the authoritative snapshot no longer contains that page, remove
+	 * only the proxy and do not send a redundant delete command to the agent. */
+	agent_snapshot = sakura_session_snapshot_new();
+	sakura.agent_pending_snapshot = agent_snapshot;
+	agent_snapshot = NULL;
+	sakura_agent_apply_pending_snapshot(&sakura);
+	g_assert_null(sakura_find_pane_by_terminal_id("external-terminal"));
+	gtk_widget_destroy(test_window);
+	sakura.main_window = NULL;
 
 	sakura_session_snapshot_free(agent_snapshot);
 	test_sidebar_remove_group(group->sidebar_node);

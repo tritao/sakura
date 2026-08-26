@@ -1615,6 +1615,7 @@ sakura_workspace_reconcile(void)
 		if ((changes & (SAKURA_WORKSPACE_CHANGE_STRUCTURE |
 		                SAKURA_WORKSPACE_CHANGE_SCOPE |
 		                SAKURA_WORKSPACE_CHANGE_GEOMETRY)) != 0 &&
+		    !sakura.agent_snapshot_reconciling &&
 		    sakura.notebook != NULL &&
 		    gtk_notebook_get_n_pages(GTK_NOTEBOOK(sakura.notebook)) > 0)
 			sakura_set_size();

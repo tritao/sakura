@@ -113,6 +113,8 @@ typedef struct {
 	gboolean execute_on_existing_tabs;
 	gboolean suppress_current_cwd_fallback;
 	gboolean defer_process_start;
+	gboolean suppress_selection;
+	const gchar *page_id;
 	guint order;
 	gboolean has_order;
 	const gchar *codex_tracking_token;
@@ -307,6 +309,7 @@ struct sakura_app {
 	guint workspace_mutation_depth;
 	guint workspace_pending_changes;
 	gboolean workspace_reconciling;
+	gboolean agent_snapshot_reconciling;
 	/* Notebook signals can arrive while a workspace mutation is changing the
 	 * model. Keep the latest physical selection until the outer transaction
 	 * reconciles the model and GTK again. */
@@ -508,6 +511,8 @@ struct sakura_page {
 	SakuraTab *tab_bar_tab;
 	GPtrArray *panes;
 	gboolean zoomed;
+	/* True when this GTK page was materialized from an agent snapshot. */
+	gboolean agent_owned;
 };
 
 struct sakura_layout_node {
