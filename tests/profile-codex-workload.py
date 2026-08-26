@@ -197,6 +197,83 @@ def startup_summary(probes):
     return report
 
 
+def wait_for_log_milestone(app, log_path, name, timeout=10):
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline and app.poll() is None:
+        try:
+            contents = log_path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            contents = ""
+        if any(found == name for _, found in
+               STARTUP_MILESTONE_PATTERN.findall(contents)):
+            return
+        time.sleep(0.01)
+    raise RuntimeError(f"Sakura did not reach {name}")
+
+
+def wait_for_worker_count(app, stats_dir, count, timeout=10):
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline and app.poll() is None:
+        if len(list(stats_dir.glob("*"))) >= count:
+            return
+        time.sleep(0.01)
+    raise RuntimeError("Codex workers did not converge before cold switching")
+
+
+def run_cold_switch_workload(app, env, log, log_path, sessions):
+    """Visit untouched restored sessions and measure their first selection."""
+    if sessions < 2:
+        return {"targets": [], "active_us": [], "focus_us": [],
+                "paint_us": [], "failures": []}
+    window = wait_for_window(app.pid, env)
+    x, y = window_origin(window, env)
+    run_xdotool(env, "windowfocus", "--sync", window)
+    row_x = x + 100
+    singleton_group_offset = 25 if sessions <= 6 else 0
+    first_row_y = y + 73 + 25 + singleton_group_offset + 12
+    targets = list(range(1, min(6, sessions)))
+    active_us = []
+    failures = []
+    # Bare Xvfb may consume the first click while activating the client. Prime
+    # the already-selected row so every measured click is a real first touch.
+    for _ in range(2):
+        run_xdotool(env, "mousemove", row_x, first_row_y)
+        run_xdotool(env, "click", "--delay", 0, 1)
+        time.sleep(0.05)
+    log.flush()
+    offset = log.tell()
+    for index in targets:
+        terminal_id = f"profile-codex-{index:03d}"
+        title = f"Codex workload {index + 1:02d}"
+        run_xdotool(env, "mousemove", row_x, first_row_y + index * 25)
+        started = time.monotonic_ns() // 1000
+        run_xdotool(env, "click", "--delay", 0, 1)
+        deadline = time.monotonic() + 0.5
+        selected = False
+        while time.monotonic() < deadline and app.poll() is None:
+            if run_xdotool(env, "getwindowname", window).stdout.strip() == title:
+                active_us.append(time.monotonic_ns() // 1000 - started)
+                selected = True
+                break
+            time.sleep(0.002)
+        if not selected:
+            failures.append(terminal_id)
+        time.sleep(0.05)
+    time.sleep(0.1)
+    log.flush()
+    with log_path.open(encoding="utf-8", errors="replace") as trace_log:
+        trace_log.seek(offset)
+        contents = trace_log.read()
+    target_ids = {f"profile-codex-{index:03d}" for index in targets}
+    focus_us = [int(value) for value, terminal_id in
+                LATENCY_PATTERN.findall(contents) if terminal_id in target_ids]
+    paint_us = [int(value) for value, terminal_id in
+                PAINT_LATENCY_PATTERN.findall(contents) if terminal_id in target_ids]
+    return {"targets": targets, "active_us": active_us,
+            "focus_us": focus_us, "paint_us": paint_us,
+            "failures": failures}
+
+
 def start_interaction_workload(app, env, sessions, interval):
     """Select the first six sessions back and forth using real X events."""
     if interval <= 0 or sessions < 2:
@@ -528,6 +605,9 @@ def main():
     parser.add_argument("--max-main-loop-stall-p95-ms", type=float, default=50.0)
     parser.add_argument("--max-main-loop-stalls-over-50", type=int, default=3)
     parser.add_argument("--max-paint-p95-ms", type=float, default=40.0)
+    parser.add_argument("--max-cold-switch-active-ms", type=float, default=25.0)
+    parser.add_argument("--max-cold-switch-focus-ms", type=float, default=50.0)
+    parser.add_argument("--max-cold-switch-paint-ms", type=float, default=50.0)
     parser.add_argument("--max-frame-interval-p95-ms", type=float, default=30.0)
     parser.add_argument("--max-frame-intervals-over-50", type=int, default=3)
     parser.add_argument("--startup-runs", type=int, default=3,
@@ -584,7 +664,14 @@ def main():
         expected_interactions = []
         observed_interactions = []
         active_latency_us = []
+        cold_switch = {"targets": [], "active_us": [], "focus_us": [],
+                       "paint_us": [], "failures": []}
         try:
+            wait_for_log_milestone(app, log_path, "workspace-ready")
+            wait_for_worker_count(
+                app, root / "producer-stats", args.sessions)
+            cold_switch = run_cold_switch_workload(
+                app, env, log, log_path, args.sessions)
             deadline = time.monotonic() + args.warmup
             while time.monotonic() < deadline and app.poll() is None:
                 time.sleep(0.1)
@@ -654,6 +741,18 @@ def main():
                 "workload_workers": len(producer_stats),
                 "active_workload_workers": sum(row[0] for row in producer_stats),
                 "workload_output_bytes": sum(row[1] for row in producer_stats),
+                "cold_switch_attempts": len(cold_switch["targets"]),
+                "cold_switch_failures": len(cold_switch["failures"]),
+                "cold_switch_failure_ids": cold_switch["failures"],
+                "cold_switch_active_latency_ms_max": (
+                    round(max(cold_switch["active_us"]) / 1000, 3)
+                    if cold_switch["active_us"] else None),
+                "cold_switch_focus_latency_ms_max": (
+                    round(max(cold_switch["focus_us"]) / 1000, 3)
+                    if cold_switch["focus_us"] else None),
+                "cold_switch_paint_latency_ms_max": (
+                    round(max(cold_switch["paint_us"]) / 1000, 3)
+                    if cold_switch["paint_us"] else None),
             }
             log.flush()
             with log_path.open(encoding="utf-8", errors="replace") as latency_log:
@@ -771,6 +870,28 @@ def main():
             if args.json:
                 Path(args.json).write_text(json.dumps(report, indent=2, sort_keys=True) + "\n",
                                            encoding="utf-8")
+            cold_errors = []
+            cold_attempts = report["cold_switch_attempts"]
+            if cold_attempts > 0:
+                if report["cold_switch_failures"]:
+                    cold_errors.append(
+                        f"{report['cold_switch_failures']} first-touch switches failed")
+                if len(cold_switch["focus_us"]) != cold_attempts:
+                    cold_errors.append("incomplete first-touch focus samples")
+                if len(cold_switch["paint_us"]) != cold_attempts:
+                    cold_errors.append("incomplete first-touch paint samples")
+                cold_active = report["cold_switch_active_latency_ms_max"]
+                cold_focus = report["cold_switch_focus_latency_ms_max"]
+                cold_paint = report["cold_switch_paint_latency_ms_max"]
+                if cold_active is None or cold_active > args.max_cold_switch_active_ms:
+                    cold_errors.append("first-touch active latency exceeds threshold")
+                if cold_focus is None or cold_focus > args.max_cold_switch_focus_ms:
+                    cold_errors.append("first-touch focus latency exceeds threshold")
+                if cold_paint is None or cold_paint > args.max_cold_switch_paint_ms:
+                    cold_errors.append("first-touch paint latency exceeds threshold")
+            if cold_errors:
+                raise RuntimeError(
+                    "cold-switch benchmark failed: " + "; ".join(cold_errors))
             if args.interaction_interval > 0:
                 errors = []
                 attempts = report["sidebar_switch_attempts"]

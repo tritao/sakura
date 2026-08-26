@@ -1482,7 +1482,7 @@ sakura_workspace_start_page_runtime(SakuraPage *page)
 	for (guint index = 0; index < page->panes->len; index++) {
 		SakuraTab *tab = g_ptr_array_index(page->panes, index);
 		if (tab != NULL && tab->runtime_deferred)
-			sakura_tab_start_deferred_runtime(tab);
+			sakura_tab_start_deferred_runtime_async(tab);
 	}
 }
 

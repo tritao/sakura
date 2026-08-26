@@ -559,6 +559,7 @@ struct sakura_tab {
 	gboolean agent_terminal_lost;
 	gboolean runtime_deferred;
 	gboolean runtime_start_pending;
+	guint runtime_start_source_id;
 	guint order;
 	gboolean has_order;
 #ifdef HAVE_WEBKITGTK
@@ -652,6 +653,7 @@ SakuraTab *sakura_tab_for_vte(VteTerminal *vte);
 SakuraTab *sakura_find_pane_by_terminal_id(const gchar *terminal_id);
 gboolean sakura_tab_start_agent_terminal(SakuraTab *tab, const gchar *cwd);
 gboolean sakura_tab_start_deferred_runtime(SakuraTab *tab);
+void sakura_tab_start_deferred_runtime_async(SakuraTab *tab);
 gboolean sakura_tab_restart_agent_terminal(SakuraTab *tab);
 void sakura_tab_agent_feed_output(SakuraTab *tab, const guint8 *data,
                                   gsize data_length, guint64 start_offset,

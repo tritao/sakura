@@ -1044,6 +1044,39 @@ sakura_tab_start_deferred_runtime(SakuraTab *tab)
 }
 
 
+static gboolean
+sakura_tab_start_deferred_runtime_idle(gpointer data)
+{
+	gchar *terminal_id = data;
+	SakuraTab *tab = sakura_find_pane_by_terminal_id(terminal_id);
+
+	if (tab != NULL) {
+		tab->runtime_start_source_id = 0;
+		if (tab->runtime_deferred && tab->page == sakura.workspace->active_page) {
+			sakura_tab_start_deferred_runtime(tab);
+			if (tab == sakura.workspace->active_tab)
+				sakura_focus_tab(tab);
+		}
+	}
+	return G_SOURCE_REMOVE;
+}
+
+
+void
+sakura_tab_start_deferred_runtime_async(SakuraTab *tab)
+{
+	if (tab == NULL || !tab->runtime_deferred ||
+	    tab->runtime_start_source_id != 0 || tab->terminal_id == NULL)
+		return;
+	/* Let GTK commit and paint the selection/placeholder before materializing
+	 * and attaching the terminal runtime. A newer selection makes the callback
+	 * a no-op, so rapid navigation never starts stale work. */
+	tab->runtime_start_source_id = g_idle_add_full(
+		G_PRIORITY_LOW, sakura_tab_start_deferred_runtime_idle,
+		g_strdup(tab->terminal_id), g_free);
+}
+
+
 gboolean
 sakura_tab_restart_agent_terminal(SakuraTab *tab)
 {
@@ -2794,6 +2827,10 @@ sakura_tab_free(SakuraTab *tab)
 	if (tab->codex_name_retry_source_id != 0) {
 		g_source_remove(tab->codex_name_retry_source_id);
 		tab->codex_name_retry_source_id = 0;
+	}
+	if (tab->runtime_start_source_id != 0) {
+		g_source_remove(tab->runtime_start_source_id);
+		tab->runtime_start_source_id = 0;
 	}
 	if (tab->vte != NULL)
 		g_object_remove_weak_pointer(G_OBJECT(tab->vte),
