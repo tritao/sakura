@@ -3442,6 +3442,7 @@ sakura_destroy()
 		if (sakura.session_ready)
 			sakura_session_flush();
 	}
+	sakura_session_save_shutdown();
 	sakura.session_shutting_down = TRUE;
 	sakura_ui_latency_trace_stop();
 	if (sakura.workspace->panes != NULL) {

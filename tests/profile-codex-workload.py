@@ -23,6 +23,8 @@ LATENCY_PATTERN = re.compile(
 STALL_PATTERN = re.compile(
     r"ui-main-loop-stall-us=(\d+) cause=([a-z-]+) cause-age-us=(-?\d+)")
 ACTIVITY_PATTERN = re.compile(r"ui-activity-us=(\d+) cause=([a-z-]+)")
+BACKGROUND_ACTIVITY_PATTERN = re.compile(
+    r"ui-background-activity-us=(\d+) cause=([a-z-]+)")
 
 
 def require(command):
@@ -494,6 +496,8 @@ def main():
             latency_events = LATENCY_PATTERN.findall(trace_contents)
             stall_events = STALL_PATTERN.findall(trace_contents)
             activity_events = ACTIVITY_PATTERN.findall(trace_contents)
+            background_activity_events = BACKGROUND_ACTIVITY_PATTERN.findall(
+                trace_contents)
             if expected_interactions:
                 latency_events = latency_events[-len(expected_interactions):]
             latency_us = [int(value) for value, _ in latency_events]
@@ -512,6 +516,9 @@ def main():
             activity_by_cause = {}
             for value, cause in activity_events:
                 activity_by_cause.setdefault(cause, []).append(int(value))
+            background_activity_by_cause = {}
+            for value, cause in background_activity_events:
+                background_activity_by_cause.setdefault(cause, []).append(int(value))
             report.update({
                 "sidebar_switch_attempts": len(expected_interactions),
                 "sidebar_switch_samples": len(latency_us),
@@ -543,6 +550,11 @@ def main():
                 "ui_activity_durations": {
                     cause: duration_summary(values)
                     for cause, values in sorted(activity_by_cause.items())
+                },
+                "background_activity_durations": {
+                    cause: duration_summary(values)
+                    for cause, values in sorted(
+                        background_activity_by_cause.items())
                 },
             })
             failures = [

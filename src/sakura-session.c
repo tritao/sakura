@@ -13,8 +13,16 @@
 
 #define _(String) gettext(String)
 
+static gboolean sakura_session_write_snapshot_file(
+	const gchar *sessionfile, const SakuraSessionSnapshot *snapshot);
 
 #ifndef SAKURA_CORE_TEST
+typedef struct {
+	SakuraSessionSnapshot *snapshot;
+	gchar *sessionfile;
+	guint64 generation;
+} SakuraSessionSaveJob;
+
 static gboolean
 sakura_session_save_timeout_cb(gpointer data)
 {
@@ -23,6 +31,103 @@ sakura_session_save_timeout_cb(gpointer data)
 	app->session_save_source_id = 0;
 	sakura_session_flush();
 	return G_SOURCE_REMOVE;
+}
+
+
+static void
+sakura_session_save_job_free(SakuraSessionSaveJob *job)
+{
+	if (job == NULL)
+		return;
+	sakura_session_snapshot_free(job->snapshot);
+	g_free(job->sessionfile);
+	g_free(job);
+}
+
+
+static gboolean
+sakura_session_save_completion_cb(gpointer data)
+{
+	SakuraApp *app = data;
+	gboolean retry = FALSE;
+
+	if (app == NULL || !app->session_save_worker_initialized)
+		return G_SOURCE_REMOVE;
+	g_mutex_lock(&app->session_save_mutex);
+	app->session_save_completion_source_id = 0;
+	if (app->session_saved_generation == app->session_change_generation)
+		app->session_dirty = FALSE;
+	else if (!app->session_save_worker_stopping &&
+	         !app->session_save_worker_busy &&
+	         app->session_save_pending_job == NULL &&
+	         app->session_save_source_id == 0)
+		retry = TRUE;
+	g_mutex_unlock(&app->session_save_mutex);
+	if (retry)
+		app->session_save_source_id = g_timeout_add(
+			500, sakura_session_save_timeout_cb, app);
+	return G_SOURCE_REMOVE;
+}
+
+
+static gpointer
+sakura_session_save_worker(gpointer data)
+{
+	SakuraApp *app = data;
+
+	for (;;) {
+		SakuraSessionSaveJob *job;
+		gboolean saved;
+		gint64 started_us;
+
+		g_mutex_lock(&app->session_save_mutex);
+		while (app->session_save_pending_job == NULL &&
+		       !app->session_save_worker_stopping)
+			g_cond_wait(&app->session_save_cond, &app->session_save_mutex);
+		if (app->session_save_pending_job == NULL &&
+		    app->session_save_worker_stopping) {
+			g_mutex_unlock(&app->session_save_mutex);
+			break;
+		}
+		job = app->session_save_pending_job;
+		app->session_save_pending_job = NULL;
+		app->session_save_worker_busy = TRUE;
+		g_mutex_unlock(&app->session_save_mutex);
+
+		started_us = g_get_monotonic_time();
+		saved = sakura_session_write_snapshot_file(job->sessionfile,
+		                                            job->snapshot);
+		if (g_getenv("SAKURA_LATENCY_TRACE") != NULL)
+			g_message("ui-background-activity-us=%" G_GINT64_FORMAT
+			          " cause=session-persistence",
+			          g_get_monotonic_time() - started_us);
+
+		g_mutex_lock(&app->session_save_mutex);
+		if (saved && job->generation > app->session_saved_generation)
+			app->session_saved_generation = job->generation;
+		app->session_save_worker_busy = FALSE;
+		g_cond_broadcast(&app->session_save_cond);
+		if (!app->session_save_worker_stopping &&
+		    app->session_save_completion_source_id == 0)
+			app->session_save_completion_source_id = g_idle_add(
+				sakura_session_save_completion_cb, app);
+		g_mutex_unlock(&app->session_save_mutex);
+		sakura_session_save_job_free(job);
+	}
+	return NULL;
+}
+
+
+static void
+sakura_session_save_worker_ensure(SakuraApp *app)
+{
+	if (app->session_save_worker_initialized)
+		return;
+	g_mutex_init(&app->session_save_mutex);
+	g_cond_init(&app->session_save_cond);
+	app->session_save_worker_initialized = TRUE;
+	app->session_save_thread = g_thread_new(
+		"sakura-session-save", sakura_session_save_worker, app);
 }
 
 
@@ -103,6 +208,7 @@ void
 sakura_session_mark_dirty(void)
 {
 	sakura.session_dirty = TRUE;
+	sakura.session_change_generation++;
 	if (sakura.sessionfile == NULL || sakura.session_new_window ||
 	    !sakura.session_ready || sakura.session_restoring || sakura.dont_save ||
 	    sakura.session_restore_failed || sakura.session_shutting_down)
@@ -119,7 +225,7 @@ void
 sakura_session_flush(void)
 {
 	SakuraSessionSnapshot *snapshot;
-	gboolean saved;
+	SakuraSessionSaveJob *job, *replaced;
 	gint64 trace_started;
 
 	if (sakura.session_save_source_id != 0) {
@@ -146,11 +252,58 @@ sakura_session_flush(void)
 		snapshot->show_archived = sakura.show_archived;
 		sakura_sidebar_capture_expansion(snapshot);
 	}
-	saved = sakura_session_write_snapshot(&sakura, snapshot);
-	sakura_session_snapshot_free(snapshot);
-	if (saved)
+	if (snapshot == NULL) {
+		sakura_ui_latency_trace_end("session-snapshot", trace_started);
+		return;
+	}
+	job = g_new0(SakuraSessionSaveJob, 1);
+	job->snapshot = snapshot;
+	job->sessionfile = g_strdup(sakura.sessionfile);
+	job->generation = sakura.session_change_generation;
+	sakura_session_save_worker_ensure(&sakura);
+	g_mutex_lock(&sakura.session_save_mutex);
+	replaced = sakura.session_save_pending_job;
+	sakura.session_save_pending_job = job;
+	g_cond_signal(&sakura.session_save_cond);
+	g_mutex_unlock(&sakura.session_save_mutex);
+	sakura_session_save_job_free(replaced);
+	sakura_ui_latency_trace_end("session-snapshot", trace_started);
+}
+
+
+void
+sakura_session_save_shutdown(void)
+{
+	SakuraSessionSaveJob *pending;
+
+	if (!sakura.session_save_worker_initialized)
+		return;
+	if (sakura.session_save_source_id != 0) {
+		g_source_remove(sakura.session_save_source_id);
+		sakura.session_save_source_id = 0;
+	}
+	g_mutex_lock(&sakura.session_save_mutex);
+	sakura.session_save_worker_stopping = TRUE;
+	g_cond_signal(&sakura.session_save_cond);
+	g_mutex_unlock(&sakura.session_save_mutex);
+	g_thread_join(sakura.session_save_thread);
+	sakura.session_save_thread = NULL;
+	if (sakura.session_save_completion_source_id != 0) {
+		g_source_remove(sakura.session_save_completion_source_id);
+		sakura.session_save_completion_source_id = 0;
+	}
+	g_mutex_lock(&sakura.session_save_mutex);
+	pending = sakura.session_save_pending_job;
+	sakura.session_save_pending_job = NULL;
+	if (sakura.session_saved_generation == sakura.session_change_generation)
 		sakura.session_dirty = FALSE;
-	sakura_ui_latency_trace_end("session-persistence", trace_started);
+	g_mutex_unlock(&sakura.session_save_mutex);
+	sakura_session_save_job_free(pending);
+	g_cond_clear(&sakura.session_save_cond);
+	g_mutex_clear(&sakura.session_save_mutex);
+	sakura.session_save_worker_initialized = FALSE;
+	sakura.session_save_worker_stopping = FALSE;
+	sakura.session_save_worker_busy = FALSE;
 }
 #endif
 
@@ -241,6 +394,16 @@ gboolean
 sakura_session_write_snapshot(SakuraApp *app,
                               const SakuraSessionSnapshot *snapshot)
 {
+	if (app == NULL || snapshot == NULL || app->sessionfile == NULL)
+		return FALSE;
+	return sakura_session_write_snapshot_file(app->sessionfile, snapshot);
+}
+
+
+static gboolean
+sakura_session_write_snapshot_file(const gchar *sessionfile,
+                                   const SakuraSessionSnapshot *snapshot)
+{
 	GKeyFile *key_file;
 	GError *error = NULL;
 	gchar *data = NULL;
@@ -248,7 +411,7 @@ sakura_session_write_snapshot(SakuraApp *app,
 	gsize data_length = 0;
 	gboolean saved = FALSE;
 
-	if (app == NULL || snapshot == NULL || app->sessionfile == NULL)
+	if (sessionfile == NULL || snapshot == NULL)
 		return FALSE;
 
 	key_file = g_key_file_new();
@@ -287,11 +450,11 @@ sakura_session_write_snapshot(SakuraApp *app,
 		return FALSE;
 	}
 
-	temporary_file = g_strdup_printf("%s.tmp.%d", app->sessionfile, (int)getpid());
+	temporary_file = g_strdup_printf("%s.tmp.%d", sessionfile, (int)getpid());
 	if (!g_file_set_contents(temporary_file, data, data_length, &error) ||
 	    chmod(temporary_file, 0600) != 0 ||
-	    !sakura_session_backup_existing(app->sessionfile) ||
-	    g_rename(temporary_file, app->sessionfile) != 0) {
+	    !sakura_session_backup_existing(sessionfile) ||
+	    g_rename(temporary_file, sessionfile) != 0) {
 		g_warning("Could not save session: %s",
 		          error != NULL ? error->message : g_strerror(errno));
 		g_clear_error(&error);

@@ -307,6 +307,16 @@ struct sakura_app {
 	bool session_dirty;
 	bool session_new_window;
 	guint session_save_source_id;
+	GThread *session_save_thread;
+	GMutex session_save_mutex;
+	GCond session_save_cond;
+	gboolean session_save_worker_initialized;
+	gboolean session_save_worker_stopping;
+	gboolean session_save_worker_busy;
+	gpointer session_save_pending_job;
+	guint session_save_completion_source_id;
+	guint64 session_change_generation;
+	guint64 session_saved_generation;
 	guint codex_tracking_source_id;
 	GFileMonitor *codex_tracking_monitor;
 	guint cwd_tracking_source_id;
@@ -994,6 +1004,7 @@ void sakura_task_detach_page(SakuraPage *page);
 void sakura_task_free(SakuraTask *task);
 void sakura_session_mark_dirty(void);
 void sakura_session_flush(void);
+void sakura_session_save_shutdown(void);
 gboolean sakura_session_write_snapshot(SakuraApp *app,
                                        const SakuraSessionSnapshot *snapshot);
 gboolean sakura_session_load_file(SakuraApp *app, gboolean restore_session);

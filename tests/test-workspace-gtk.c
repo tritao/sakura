@@ -863,6 +863,7 @@ teardown_workspace(void)
 	sakura_sidebar_cancel_primary_click();
 	sakura_sidebar_spinner_stop();
 	sakura_focus_tab_cancel_pending();
+	sakura_session_save_shutdown();
 	g_clear_pointer(&sakura.selection_intent_terminal_id, g_free);
 	sakura.selection_intent_us = 0;
 	/* Fixture tests can start the asynchronous Codex name helper. Stop it
@@ -1070,6 +1071,58 @@ test_snapshot_destroy_restore_equivalence(void)
 	sakura_session_snapshot_free(source);
 	sakura_session_snapshot_free(loaded);
 	teardown_workspace();
+}
+
+
+static void
+test_background_save_shutdown_persists_latest_snapshot(void)
+{
+	SakuraPage *latest;
+	GKeyFile *saved;
+	GError *error = NULL;
+	gchar *directory, *session_path, *selected_terminal_id;
+
+	directory = g_dir_make_tmp("sakura-background-save-XXXXXX", &error);
+	g_assert_no_error(error);
+	g_assert_nonnull(directory);
+	session_path = g_build_filename(directory, "workspace.session", NULL);
+	setup_workspace();
+	setup_sidebar_fixture();
+	sakura.sessionfile = g_strdup(session_path);
+	sakura.session_ready = TRUE;
+
+	/* Queue one snapshot, then replace it while the worker may already be
+	 * serializing. Shutdown must drain the newest generation before returning. */
+	sakura_session_mark_dirty();
+	sakura_session_flush();
+	latest = sakura_page_at_page(2);
+	sakura_select_tab(latest->active_tab, FALSE);
+	sakura_session_mark_dirty();
+	sakura_session_flush();
+	sakura_session_save_shutdown();
+
+	saved = g_key_file_new();
+	g_assert_true(g_key_file_load_from_file(saved, session_path,
+	                                       G_KEY_FILE_NONE, &error));
+	g_assert_no_error(error);
+	selected_terminal_id = g_key_file_get_string(
+		saved, "Session", "selected_terminal_id", &error);
+	g_assert_no_error(error);
+	g_assert_cmpstr(selected_terminal_id, ==, latest->active_tab->terminal_id);
+	g_free(selected_terminal_id);
+	g_key_file_free(saved);
+
+	g_clear_pointer(&sakura.sessionfile, g_free);
+	teardown_workspace();
+	g_remove(session_path);
+	{
+		gchar *backup_path = g_strdup_printf("%s.bak", session_path);
+		g_remove(backup_path);
+		g_free(backup_path);
+	}
+	g_rmdir(directory);
+	g_free(session_path);
+	g_free(directory);
 }
 
 
@@ -3538,6 +3591,8 @@ main(int argc, char **argv)
 	                test_select_and_detach_by_identity);
 	g_test_add_func("/workspace/snapshot-destroy-restore",
 	                test_snapshot_destroy_restore_equivalence);
+	g_test_add_func("/workspace/background-save-shutdown-latest",
+	                test_background_save_shutdown_persists_latest_snapshot);
 	g_test_add_func("/workspace/sidebar-directory-subtitles",
 	                test_sidebar_hides_redundant_directory);
 	g_test_add_func("/workspace/sidebar-spinner-does-not-mutate-model",
