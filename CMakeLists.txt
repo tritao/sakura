@@ -61,6 +61,7 @@ ADD_CUSTOM_TARGET (sakura-proto-generated
 
 SET (SAKURA_CONTROL_TRANSPORT_SOURCES
 	src/sakura-control-transport.c
+	src/sakura-control-discovery.c
 	${SAKURA_PROTO_GENERATED_C})
 
 ADD_LIBRARY (sakura-control-client STATIC

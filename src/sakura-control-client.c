@@ -328,6 +328,19 @@ sakura_control_client_create_terminal(
 	const gchar *group_id, const gchar *task_id, const gchar *cwd, guint cols,
 	guint rows, gchar **created_terminal_id, GError **error)
 {
+	return sakura_control_client_create_terminal_with_page(
+		connection, terminal_id, NULL, group_id, task_id, cwd, cols, rows,
+		created_terminal_id, error);
+}
+
+
+gboolean
+sakura_control_client_create_terminal_with_page(
+	SakuraControlClientConnection *connection, const gchar *terminal_id,
+	const gchar *page_id, const gchar *group_id, const gchar *task_id,
+	const gchar *cwd, guint cols, guint rows, gchar **created_terminal_id,
+	GError **error)
+{
 	GByteArray *request = g_byte_array_new();
 	SakuraControlResponse response = { 0 };
 	gchar *request_id = g_uuid_string_random();
@@ -335,9 +348,9 @@ sakura_control_client_create_terminal(
 
 	if (created_terminal_id != NULL)
 		*created_terminal_id = NULL;
-	if (!sakura_control_encode_create_terminal_request(
-		    request_id, terminal_id, group_id, task_id, cwd, cols, rows,
-		    request) ||
+	if (!sakura_control_encode_create_terminal_request_with_page(
+		    request_id, terminal_id, page_id, group_id, task_id, cwd, cols,
+		    rows, request) ||
 	    !sakura_control_client_request_terminal(connection, request_id, request,
 	                                            &response,
 	                                            error))

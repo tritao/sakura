@@ -16,6 +16,7 @@
 #include <glib/gstdio.h>
 
 #include "sakura-control-transport.h"
+#include "sakura-control-discovery.h"
 
 
 typedef struct _SakuraAgent SakuraAgent;
@@ -2773,8 +2774,15 @@ main(int argc, char **argv)
 	g_unix_signal_add(SIGINT, sakura_agent_quit_cb, loop);
 	g_unix_signal_add(SIGTERM, sakura_agent_quit_cb, loop);
 	g_socket_service_start(service);
+	if (!sakura_control_workspace_publish(agent.workspace_id, socket_path,
+	                                     session_path, &error)) {
+		g_warning("Could not publish Sakura workspace endpoint: %s",
+		          error != NULL ? error->message : "unknown error");
+		g_clear_error(&error);
+	}
 	g_main_loop_run(loop);
 	g_socket_service_stop(service);
+	sakura_control_workspace_unpublish(agent.workspace_id);
 	g_main_loop_unref(loop);
 	g_object_unref(service);
 	g_mutex_lock(&agent.state_mutex);

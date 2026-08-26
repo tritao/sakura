@@ -130,6 +130,11 @@ gboolean sakura_control_client_create_terminal(
 	SakuraControlClientConnection *connection, const gchar *terminal_id,
 	const gchar *group_id, const gchar *task_id, const gchar *cwd, guint cols,
 	guint rows, gchar **created_terminal_id, GError **error);
+gboolean sakura_control_client_create_terminal_with_page(
+	SakuraControlClientConnection *connection, const gchar *terminal_id,
+	const gchar *page_id, const gchar *group_id, const gchar *task_id,
+	const gchar *cwd, guint cols, guint rows, gchar **created_terminal_id,
+	GError **error);
 gboolean sakura_control_client_create_codex_terminal(
 	SakuraControlClientConnection *connection, const gchar *terminal_id,
 	const gchar *page_id, const gchar *group_id, const gchar *task_id,
