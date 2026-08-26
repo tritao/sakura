@@ -533,6 +533,23 @@ sakura_agent_terminal_id_is_valid(const gchar *terminal_id)
 }
 
 
+static gboolean
+sakura_agent_codex_session_id_is_valid(const gchar *session_id)
+{
+	if (session_id == NULL || strlen(session_id) != 36)
+		return FALSE;
+	for (guint index = 0; index < 36; index++) {
+		if (index == 8 || index == 13 || index == 18 || index == 23) {
+			if (session_id[index] != '-')
+				return FALSE;
+		} else if (!g_ascii_isxdigit(session_id[index])) {
+			return FALSE;
+		}
+	}
+	return TRUE;
+}
+
+
 static void
 sakura_agent_terminal_stop(SakuraAgentTerminal *terminal)
 {
@@ -633,13 +650,25 @@ sakura_agent_terminal_reader(gpointer data)
 		}
 		if (terminal->core != NULL) {
 			GByteArray *event = g_byte_array_new();
+			GError *persist_error = NULL;
 
 			terminal->core->status = SAKURA_TERMINAL_EXITED;
+			if (terminal->core->kind == SAKURA_TAB_CODEX)
+				terminal->core->resume_on_start = FALSE;
 			if (sakura_control_encode_terminal_status_event(
 					++agent->sequence, terminal->id, terminal->core->status,
 					"terminal process exited", event))
 				sakura_agent_broadcast_payload(agent, event);
 			g_byte_array_unref(event);
+			agent->workspace_revision++;
+			agent->sequence++;
+			if (!sakura_agent_persist_workspace(agent, &persist_error)) {
+				g_warning("Could not persist exited terminal %s: %s",
+				          terminal->id, persist_error != NULL
+				          ? persist_error->message : "unknown error");
+				g_clear_error(&persist_error);
+			}
+			sakura_agent_broadcast_event(agent);
 		}
 		g_mutex_unlock(&agent->state_mutex);
 	}
@@ -1386,6 +1415,7 @@ sakura_agent_create_terminal_with_kind(SakuraAgent *agent,
 	title = NULL;
 	create.core->status = SAKURA_TERMINAL_RUNNING;
 	create.core->kind = codex ? SAKURA_TAB_CODEX : SAKURA_TAB_SHELL;
+	create.core->resume_on_start = codex;
 	create.core->codex_session_id = g_strdup(request->resume_session_id);
 	create.core->codex_model = g_strdup(request->model);
 	create.core->codex_reasoning_effort = g_strdup(request->reasoning_effort);
@@ -1668,6 +1698,7 @@ sakura_agent_restart_terminal(SakuraAgent *agent,
 	gchar *model = NULL;
 	gchar *reasoning_effort = NULL;
 	gchar *tracking_token = NULL;
+	gchar *session_name = NULL;
 	gchar *restart_cwd = NULL;
 	gchar *restart_page_id = NULL;
 	guint logical_order = G_MAXUINT;
@@ -1715,6 +1746,7 @@ sakura_agent_restart_terminal(SakuraAgent *agent,
 		restart_request.model = model;
 		restart_request.reasoning_effort = reasoning_effort;
 		restart_request.tracking_token = tracking_token;
+		session_name = g_strdup(logical_terminal->codex_session_name);
 	}
 	else if (request->has_order)
 		logical_order = request->order;
@@ -1756,6 +1788,7 @@ sakura_agent_restart_terminal(SakuraAgent *agent,
 		g_free(model);
 		g_free(reasoning_effort);
 		g_free(tracking_token);
+		g_free(session_name);
 		g_free(restart_cwd);
 		g_free(restart_page_id);
 		return sakura_agent_error(error, "could not replace logical terminal");
@@ -1773,16 +1806,71 @@ sakura_agent_restart_terminal(SakuraAgent *agent,
 	if (created && logical_order != G_MAXUINT) {
 		SakuraCoreTerminal *replacement = sakura_core_workspace_find_terminal(
 			agent->workspace, request->terminal_id);
-		if (replacement != NULL)
+		if (replacement != NULL) {
 			replacement->order = logical_order;
+			g_free(replacement->codex_session_name);
+			replacement->codex_session_name = g_strdup(session_name);
+		}
 	}
 	g_free(resume_session_id);
 	g_free(model);
 	g_free(reasoning_effort);
 	g_free(tracking_token);
+	g_free(session_name);
 	g_free(restart_cwd);
 	g_free(restart_page_id);
 	return created;
+}
+
+
+static void
+sakura_agent_resume_saved_codex_terminals(SakuraAgent *agent)
+{
+	g_autoptr(GPtrArray) terminal_ids = g_ptr_array_new_with_free_func(g_free);
+
+	for (guint index = 0; agent != NULL && agent->workspace != NULL &&
+	                     agent->workspace->terminals != NULL &&
+	                     index < agent->workspace->terminals->len; index++) {
+		SakuraCoreTerminal *terminal = g_ptr_array_index(
+			agent->workspace->terminals, index);
+
+		if (terminal != NULL && terminal->kind == SAKURA_TAB_CODEX &&
+		    terminal->resume_on_start &&
+		    sakura_agent_codex_session_id_is_valid(terminal->codex_session_id))
+			g_ptr_array_add(terminal_ids, g_strdup(terminal->id));
+	}
+	for (guint index = 0; index < terminal_ids->len; index++) {
+		const gchar *terminal_id = g_ptr_array_index(terminal_ids, index);
+		SakuraCoreTerminal *terminal = sakura_core_workspace_find_terminal(
+			agent->workspace, terminal_id);
+		SakuraControlRequest request = { 0 };
+		g_autofree gchar *accepted_id = NULL;
+		GError *error = NULL;
+
+		if (terminal == NULL)
+			continue;
+		request.kind = SAKURA_CONTROL_REQUEST_RESTART_TERMINAL;
+		/* The restart operation replaces and frees the logical terminal. Keep
+		 * request identity in the independent ID list, not in that object. */
+		request.terminal_id = (gchar *)terminal_id;
+		request.terminal_kind = SAKURA_TAB_CODEX;
+		request.resume_session_id = terminal->codex_session_id;
+		request.model = terminal->codex_model;
+		request.reasoning_effort = terminal->codex_reasoning_effort;
+		request.tracking_token = terminal->tracking_token;
+		request.order = terminal->order;
+		request.has_order = TRUE;
+		if (!sakura_agent_restart_terminal(agent, &request, &accepted_id,
+		                                   NULL, &error)) {
+			terminal = sakura_core_workspace_find_terminal(
+				agent->workspace, terminal_id);
+			if (terminal != NULL)
+				terminal->status = SAKURA_TERMINAL_ERROR;
+			g_warning("Could not auto-resume Codex terminal %s: %s",
+			          terminal_id, error != NULL ? error->message : "unknown error");
+			g_clear_error(&error);
+		}
+	}
 }
 
 
@@ -2937,6 +3025,7 @@ main(int argc, char **argv)
 	                   ? g_strdup_printf("%s.codex", session_path) : NULL;
 	g_mutex_init(&agent.state_mutex);
 	g_cond_init(&agent.connections_drained);
+	sakura_agent_resume_saved_codex_terminals(&agent);
 	if (!sakura_agent_persist_workspace(&agent, &error)) {
 		g_printerr("Could not persist agent workspace: %s\n",
 		           error != NULL ? error->message : "unknown error");

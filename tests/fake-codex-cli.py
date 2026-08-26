@@ -29,6 +29,9 @@ if tracking_dir and tracking_token and "no-session" not in sys.argv:
         encoding="utf-8",
     )
 
+if "exit-immediately" in sys.argv:
+    sys.exit(0)
+
 
 signal.signal(signal.SIGHUP, signal.SIG_IGN)
 signal.signal(signal.SIGTERM, lambda *_args: sys.exit(0))

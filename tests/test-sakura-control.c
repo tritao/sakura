@@ -90,6 +90,8 @@ test_snapshot_response_roundtrip(void)
 	third->order = 2;
 	first->order = 0;
 	second->order = 1;
+	second->kind = SAKURA_TAB_CODEX;
+	second->resume_on_start = TRUE;
 	g_assert_true(sakura_core_workspace_add_terminal(workspace, third));
 	g_assert_true(sakura_core_workspace_add_terminal(workspace, first));
 	g_assert_true(sakura_core_workspace_add_terminal(workspace, second));
@@ -113,6 +115,8 @@ test_snapshot_response_roundtrip(void)
 		snapshot->tabs, 0))->terminal_id, ==, "terminal-first");
 	g_assert_cmpstr(((SakuraSessionTabRecord *)g_ptr_array_index(
 		snapshot->tabs, 1))->terminal_id, ==, "terminal-second");
+	g_assert_true(((SakuraSessionTabRecord *)g_ptr_array_index(
+		snapshot->tabs, 1))->resume_on_start);
 	g_assert_cmpstr(((SakuraSessionTabRecord *)g_ptr_array_index(
 		snapshot->tabs, 2))->terminal_id, ==, "terminal-third");
 

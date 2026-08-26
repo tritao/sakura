@@ -377,6 +377,10 @@ sakura_workspace_model_snapshot_new(const SakuraWorkspaceModel *model,
 		                    ? g_strdup(tab->codex_model) : NULL;
 		record->codex_reasoning_effort = tab->kind == SAKURA_TAB_CODEX
 		                              ? g_strdup(tab->codex_reasoning_effort) : NULL;
+		record->resume_on_start = tab->kind == SAKURA_TAB_CODEX &&
+		                          tab->agent_backed &&
+		                          tab->codex_session_id != NULL &&
+		                          tab->codex_session_id[0] != '\0';
 		record->colorset = tab->colorset;
 		record->title_set_by_user = tab->label_set_byuser;
 		record->title = tab->label_set_byuser

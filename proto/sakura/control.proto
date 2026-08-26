@@ -47,6 +47,7 @@ message Terminal {
   uint32 order = 14;
   string codex_model = 15;
   string codex_session_name = 16;
+  bool resume_on_start = 17;
 }
 
 message Page {

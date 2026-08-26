@@ -790,6 +790,8 @@ sakura_session_snapshot_load_into(GKeyFile *key_file,
 		                                          "runtime_status", NULL)
 		                    ? g_key_file_get_integer(key_file, section,
 		                                             "runtime_status", NULL) : 0;
+		tab->resume_on_start = g_key_file_get_boolean(
+			key_file, section, "resume_on_start", NULL);
 		if (g_key_file_has_key(key_file, section, "colorset", NULL)) {
 			gint colorset = g_key_file_get_integer(key_file, section, "colorset", NULL);
 			if (colorset >= 0 && colorset < NUM_COLORSETS)
@@ -810,6 +812,10 @@ sakura_session_snapshot_load_into(GKeyFile *key_file,
 		          ? SAKURA_TAB_CODEX
 		          : g_strcmp0(kind, "tool") == 0 || g_strcmp0(kind, "gitui") == 0
 		          ? SAKURA_TAB_TOOL : SAKURA_TAB_SHELL;
+		if (!g_key_file_has_key(key_file, section, "resume_on_start", NULL) &&
+		    tab->kind == SAKURA_TAB_CODEX &&
+		    tab->runtime_status == SAKURA_TERMINAL_RUNNING)
+			tab->resume_on_start = TRUE;
 		if (g_strcmp0(kind, "gitui") == 0 && tab->tool_id == NULL)
 			tab->tool_id = g_strdup("gitui");
 		if (tab->parent_id == NULL)
@@ -1026,6 +1032,8 @@ sakura_session_snapshot_save(const SakuraSessionSnapshot *snapshot,
 			                      tab->codex_tracking_token);
 		g_key_file_set_integer(key_file, section, "runtime_status",
 		                       tab->runtime_status);
+		g_key_file_set_boolean(key_file, section, "resume_on_start",
+		                       tab->resume_on_start);
 		if (tab->colorset >= 0 && tab->colorset < NUM_COLORSETS)
 			g_key_file_set_integer(key_file, section, "colorset", tab->colorset);
 		g_key_file_set_boolean(key_file, section, "title_set_by_user", tab->title_set_by_user);

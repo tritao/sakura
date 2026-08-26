@@ -138,6 +138,7 @@ test_workspace_restore_snapshot(void)
 	tab->codex_reasoning_effort = g_strdup("xhigh");
 	tab->codex_tracking_token = g_strdup("tracking-a");
 	tab->runtime_status = SAKURA_TERMINAL_RUNNING;
+	tab->resume_on_start = TRUE;
 	tab->order = 4;
 	g_ptr_array_add(snapshot->tabs, tab);
 
@@ -160,6 +161,7 @@ test_workspace_restore_snapshot(void)
 	                                                       "terminal-a");
 	g_assert_nonnull(restored_terminal);
 	g_assert_cmpint(restored_terminal->status, ==, SAKURA_TERMINAL_EXITED);
+	g_assert_true(restored_terminal->resume_on_start);
 	g_assert_cmpstr(restored_terminal->codex_session_id, ==, "session-a");
 	g_assert_cmpstr(restored_terminal->codex_session_name, ==, "Agent session");
 	g_assert_cmpstr(restored_terminal->codex_model, ==, "gpt-5.6-luna");
@@ -174,6 +176,7 @@ test_workspace_restore_snapshot(void)
 	g_assert_cmpstr(tab->parent_id, ==, "task-a");
 	g_assert_cmpstr(tab->codex_session_name, ==, "Agent session");
 	g_assert_cmpuint(tab->runtime_status, ==, SAKURA_TERMINAL_EXITED);
+	g_assert_true(tab->resume_on_start);
 	sakura_session_snapshot_free(roundtrip);
 	g_assert_false(sakura_core_workspace_can_remove_task(
 		workspace, sakura_core_workspace_find_task(workspace, "task-a")));

@@ -1179,6 +1179,7 @@ sakura_core_workspace_from_snapshot(const SakuraSessionSnapshot *snapshot,
 			terminal->kind = record->kind;
 			terminal->codex_session_id = g_strdup(record->codex_session_id);
 			terminal->codex_session_name = g_strdup(record->codex_session_name);
+			terminal->resume_on_start = record->resume_on_start;
 			terminal->codex_model = g_strdup(record->codex_model);
 			terminal->codex_reasoning_effort = g_strdup(
 				record->codex_reasoning_effort);
@@ -1299,6 +1300,7 @@ sakura_core_workspace_sync_snapshot(const SakuraCoreWorkspace *workspace,
 		tab->title = g_strdup(model_terminal->title);
 		tab->kind = model_terminal->kind;
 		tab->runtime_status = model_terminal->status;
+		tab->resume_on_start = model_terminal->resume_on_start;
 		tab->status = model_terminal->status == SAKURA_TERMINAL_ERROR
 		            ? SAKURA_TAB_STATUS_ERROR : SAKURA_TAB_STATUS_IDLE;
 		tab->codex_session_id = g_strdup(model_terminal->codex_session_id);

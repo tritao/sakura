@@ -159,6 +159,12 @@ Codex terminals resume from their persistent session IDs; shell terminals
 restart because their PTYs were owned by the retired process. If replacement
 cannot be completed safely, Sakura continues with the running agent.
 
+Codex terminals that were running when their workspace agent stopped are
+automatically resumed from their persistent session IDs when the agent starts
+again. A normal Codex exit clears this restart intent. Restoration is
+idempotent, and UI attachment is limited to two concurrent terminals to keep
+startup responsive.
+
 C<sakura-ctl codex apply --group-name=NAME --manifest=PATH> applies a YAML
 session list idempotently. Existing healthy Codex pages with matching group,
 title, canonical working directory, model, and reasoning effort are reused.

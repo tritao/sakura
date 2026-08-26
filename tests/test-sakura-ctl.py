@@ -121,7 +121,7 @@ def main():
                 args.ctl, "codex", "apply", *target, "--group-name", "Tony",
                 "--manifest", str(manifest), "--print", "json",
             )
-            assert json.loads(recovered.stdout)["page_id"]
+            assert json.loads(recovered.stdout)["status"] == "reused"
             assert json.loads(reused.stdout)["status"] == "reused"
             saved.read(workspace, encoding="utf-8")
             assert saved["Session"].getint("page_count") == 2, dict(saved["Session"])
@@ -136,6 +136,27 @@ def main():
             assert all(item["codex_reasoning_effort"] == "xhigh"
                        for item in terminals)
             assert all(item["codex_session_id"] for item in terminals)
+            assert all(item.getboolean("resume_on_start") for item in terminals)
+
+            run(
+                args.ctl, "codex", *target, "--group-name", "Tony",
+                "--title", "Exited normally", "--working-directory", "/tmp",
+                "--resume", "74f4716f-68e5-4b88-90db-f91f0c451715",
+                "--model", "exit-immediately", "--reasoning", "xhigh",
+            )
+            deadline = time.monotonic() + 2
+            while time.monotonic() < deadline:
+                saved.read(workspace, encoding="utf-8")
+                exited = [saved[f"Terminal{index}"] for index in range(
+                    saved["Session"].getint("terminal_count"))
+                    if saved[f"Terminal{index}"]["codex_model"] ==
+                    "exit-immediately"]
+                if exited and not exited[0].getboolean("resume_on_start"):
+                    break
+                time.sleep(0.02)
+            assert len(exited) == 1
+            assert exited[0].getint("runtime_status") == 2
+            assert not exited[0].getboolean("resume_on_start")
 
             failed_env = os.environ.copy()
             failed_env["SAKURA_CTL_READY_TIMEOUT_MS"] = "300"
@@ -147,8 +168,8 @@ def main():
             assert failed.returncode != 0
             assert "timed out waiting" in failed.stderr
             saved.read(workspace, encoding="utf-8")
-            assert saved["Session"].getint("page_count") == 2
-            assert saved["Session"].getint("terminal_count") == 2
+            assert saved["Session"].getint("page_count") == 3
+            assert saved["Session"].getint("terminal_count") == 3
             deadline = time.monotonic() + 2
             while (not arguments_log.exists() or
                    len(arguments_log.read_text(encoding="utf-8").splitlines()) < 2
@@ -156,11 +177,13 @@ def main():
                 time.sleep(0.02)
             launches = [json.loads(line) for line in
                         arguments_log.read_text(encoding="utf-8").splitlines()]
-            assert len(launches) == 4
-            for launch in launches[:3]:
+            assert len(launches) == 6
+            for launch in launches[:4]:
                 assert launch[launch.index("--model") + 1] == "gpt-5.6-luna"
                 assert "model_reasoning_effort=xhigh" in launch
-            assert launches[3][launches[3].index("--model") + 1] == "no-session"
+            assert all("resume" in launch for launch in launches[2:4])
+            assert launches[4][launches[4].index("--model") + 1] == "exit-immediately"
+            assert launches[5][launches[5].index("--model") + 1] == "no-session"
         finally:
             stop_agent(agent)
 

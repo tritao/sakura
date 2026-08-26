@@ -2245,7 +2245,7 @@ sakura_agent_start_terminal_async(
 	if (app->agent_terminal_start_pool == NULL) {
 		app->agent_terminal_start_stopping = FALSE;
 		app->agent_terminal_start_pool = g_thread_pool_new(
-			sakura_agent_terminal_start_worker, NULL, 4, FALSE, error);
+			sakura_agent_terminal_start_worker, NULL, 2, FALSE, error);
 		if (app->agent_terminal_start_pool == NULL)
 			return FALSE;
 	}

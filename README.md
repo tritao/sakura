@@ -120,6 +120,12 @@ available. If Codex is installed later, enable it with:
 scripts/sakura-codex-session-hook --install
 ```
 
+Codex terminals that were still running when their agent stopped are resumed
+automatically when that workspace agent starts again. Restart intent is stored
+separately from runtime status, cleared when Codex exits normally, and processed
+idempotently before the UI attaches. Startup attachment/recovery is limited to
+two concurrent terminals to avoid a CPU and I/O spike.
+
 If Codex asks you to review the new or changed hook, approve it with `/hooks`.
 
 Start or resume Codex tabs from the terminal popup's **Codex** menu. Sakura
