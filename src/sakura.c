@@ -912,6 +912,13 @@ sakura_focus_out_cb (GtkWidget *widget, GdkEvent *event, void *data)
 static void
 sakura_show_event_cb (GtkWidget *widget, gpointer data)
 {
+	/* Startup has already requested the final maximized/fullscreen state. A
+	 * gtk_window_resize() from sakura_set_size() here races that request and
+	 * maps one small frame before the window manager applies the larger state. */
+	if (sakura.session_restoring) {
+		sakura_update_geometry_hints();
+		return;
+	}
 	/* Set size when the window is first shown */
 	sakura_set_size();
 }
