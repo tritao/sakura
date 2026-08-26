@@ -1323,12 +1323,16 @@ sakura_agent_create_terminal_with_kind(SakuraAgent *agent,
 	create.core->codex_reasoning_effort = g_strdup(request->reasoning_effort);
 	create.core->tracking_token = codex ? g_strdup(tracking_token) : NULL;
 	create.core->page_id = g_strdup(request->page_id);
-	for (guint index = 0; agent->workspace->terminals != NULL &&
-	                     index < agent->workspace->terminals->len; index++) {
-		SakuraCoreTerminal *terminal = g_ptr_array_index(
-			agent->workspace->terminals, index);
-		if (terminal != NULL && terminal->order >= create.core->order)
-			create.core->order = terminal->order + 1;
+	if (request->has_order) {
+		create.core->order = request->order;
+	} else {
+		for (guint index = 0; agent->workspace->terminals != NULL &&
+		                     index < agent->workspace->terminals->len; index++) {
+			SakuraCoreTerminal *terminal = g_ptr_array_index(
+				agent->workspace->terminals, index);
+			if (terminal != NULL && terminal->order >= create.core->order)
+				create.core->order = terminal->order + 1;
+		}
 	}
 	if (!sakura_core_workspace_add_terminal(agent->workspace, create.core)) {
 		sakura_agent_error(error, "could not register terminal");
@@ -1612,7 +1616,7 @@ sakura_agent_restart_terminal(SakuraAgent *agent,
 	if (logical_terminal != NULL) {
 		g_ptr_array_find(agent->workspace->terminals, logical_terminal,
 		                 &logical_index);
-		logical_order = logical_terminal->order;
+		logical_order = request->has_order ? request->order : logical_terminal->order;
 		restart_page_id = g_strdup(logical_terminal->page_id);
 		if (restart_page_id != NULL && restart_page_id[0] != '\0')
 			restart_request.page_id = restart_page_id;
@@ -1639,6 +1643,8 @@ sakura_agent_restart_terminal(SakuraAgent *agent,
 		restart_request.reasoning_effort = reasoning_effort;
 		restart_request.tracking_token = tracking_token;
 	}
+	else if (request->has_order)
+		logical_order = request->order;
 
 	/* Restart is an idempotent replacement operation. This matters both after
 	 * an agent process restart and when a caller retries a request after losing

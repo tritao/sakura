@@ -113,6 +113,8 @@ typedef struct {
 	gboolean execute_on_existing_tabs;
 	gboolean suppress_current_cwd_fallback;
 	gboolean defer_process_start;
+	guint order;
+	gboolean has_order;
 	SakuraPage *target_page;
 	SakuraLayoutNode *target_layout;
 	gdouble target_ratio;
@@ -527,6 +529,8 @@ struct sakura_tab {
 	gboolean agent_terminal_lost;
 	gboolean runtime_deferred;
 	gboolean runtime_start_pending;
+	guint order;
+	gboolean has_order;
 #ifdef HAVE_WEBKITGTK
 	GtkWidget *browser;
 	GtkWidget *browser_back;
@@ -1011,6 +1015,7 @@ gboolean sakura_agent_start_terminal_async(
 	const gchar *task_id, const gchar *cwd, guint cols, guint rows,
 	SakuraTabKind kind, const gchar *resume_session_id,
 	const gchar *reasoning_effort, const gchar *tracking_token,
+	guint order, gboolean has_order,
 	SakuraAgentTerminalStartCallback callback, gpointer data,
 	GError **error);
 void sakura_agent_terminal_start_result_free(
@@ -1074,6 +1079,7 @@ gboolean sakura_agent_restart_terminal(
 	const gchar *task_id, const gchar *cwd, guint cols, guint rows,
 	SakuraTabKind kind, const gchar *resume_session_id,
 	const gchar *reasoning_effort, const gchar *tracking_token,
+	guint order, gboolean has_order,
 	GError **error);
 gboolean sakura_agent_attach_terminal(
 	SakuraApp *app, const gchar *terminal_id, guint cols, guint rows,

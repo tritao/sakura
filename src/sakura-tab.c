@@ -843,6 +843,7 @@ sakura_tab_start_agent_terminal(SakuraTab *tab, const gchar *cwd)
 			&sakura, tab->terminal_id, page_id, group_id, task_id, cwd, cols, rows,
 			tab->kind, tab->codex_session_id, tab->codex_reasoning_effort,
 			tab->codex_tracking_token,
+			tab->order, tab->has_order,
 			sakura_tab_agent_start_async_done, NULL, &error)) {
 		sakura_tab_set_agent_start_pending(tab, TRUE);
 		if (sakura.session_restoring)
@@ -877,7 +878,8 @@ sakura_tab_start_agent_terminal(SakuraTab *tab, const gchar *cwd)
 		if (!sakura_agent_restart_terminal(
 				&sakura, tab->terminal_id, page_id, group_id, task_id, cwd,
 				cols, rows, tab->kind, tab->codex_session_id,
-				tab->codex_reasoning_effort, tab->codex_tracking_token, &error)) {
+				tab->codex_reasoning_effort, tab->codex_tracking_token,
+				tab->order, tab->has_order, &error)) {
 			g_clear_error(&error);
 			g_free(replay_data);
 			return FALSE;
@@ -1067,6 +1069,7 @@ sakura_tab_restart_agent_terminal(SakuraTab *tab)
 	                                   tab->kind, tab->codex_session_id,
 	                                   tab->codex_reasoning_effort,
 	                                   tab->codex_tracking_token,
+	                                   tab->order, tab->has_order,
 	                                   &error)) {
 		g_warning("Could not restart agent terminal %s: %s", tab->terminal_id,
 		          error != NULL ? error->message : "unknown error");
@@ -1255,6 +1258,8 @@ sakura_tab_add_with_options (const gchar *restore_cwd,
 	sk_tab->tool = restore_kind == SAKURA_TAB_TOOL ? restore_tool : SAKURA_TOOL_NONE;
 	sk_tab->hold = hold_option;
 	sk_tab->runtime_deferred = config->defer_process_start;
+	sk_tab->order = config->order;
+	sk_tab->has_order = config->has_order;
 	sk_tab->tool_target = restore_kind == SAKURA_TAB_TOOL
 	                   ? g_strdup(restore_tool_target) : NULL;
 	/* A restored Codex tab has no persisted status yet. Start from a known

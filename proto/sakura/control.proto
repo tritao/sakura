@@ -228,6 +228,8 @@ message CreateTerminalRequest {
   uint32 rows = 5;
   string terminal_id = 6;
   string page_id = 7;
+  uint32 order = 8;
+  bool has_order = 9;
 }
 
 message CreateCodexRequest {
@@ -241,6 +243,8 @@ message CreateCodexRequest {
   string reasoning_effort = 8;
   string resume_session_id = 9;
   string tracking_token = 10;
+  uint32 order = 11;
+  bool has_order = 12;
 }
 
 message TerminalInput {
@@ -282,6 +286,8 @@ message RestartTerminalRequest {
   string resume_session_id = 9;
   string reasoning_effort = 10;
   string tracking_token = 11;
+  uint32 order = 12;
+  bool has_order = 13;
 }
 
 message SubscribeEventsRequest {
