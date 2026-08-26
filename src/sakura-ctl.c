@@ -217,7 +217,18 @@ static gchar *
 wait_for_codex_session_id(SakuraControlClientConnection *connection,
                           const gchar *terminal_id, GError **error)
 {
-	gint64 deadline = g_get_monotonic_time() + 10 * G_TIME_SPAN_SECOND;
+	const gchar *timeout_override = g_getenv("SAKURA_CTL_READY_TIMEOUT_MS");
+	guint64 timeout_ms = 30000;
+	gint64 deadline;
+
+	if (timeout_override != NULL && timeout_override[0] != '\0') {
+		gchar *end = NULL;
+		guint64 parsed = g_ascii_strtoull(timeout_override, &end, 10);
+
+		if (end != timeout_override && end != NULL && *end == '\0' && parsed > 0)
+			timeout_ms = parsed;
+	}
+	deadline = g_get_monotonic_time() + (gint64)timeout_ms * 1000;
 
 	do {
 		SakuraSessionSnapshot *snapshot = NULL;
@@ -294,9 +305,29 @@ find_manifest_match(SakuraSessionSnapshot *snapshot, const gchar *group_id,
 			                             : NULL;
 			if (tab != NULL && tab->kind == SAKURA_TAB_CODEX &&
 			    g_strcmp0(tab->page_id, page->id) == 0 &&
-			    g_strcmp0(actual_cwd, wanted_cwd) == 0)
+			    g_strcmp0(actual_cwd, wanted_cwd) == 0 &&
+			    tab->runtime_status == SAKURA_TERMINAL_RUNNING &&
+			    tab->codex_session_id != NULL &&
+			    tab->codex_session_id[0] != '\0' &&
+			    g_strcmp0(tab->codex_model, entry->model) == 0 &&
+			    g_strcmp0(tab->codex_reasoning_effort, entry->reasoning) == 0)
 				return tab;
 		}
+	}
+	return NULL;
+}
+
+static SakuraSessionPageRecord *
+find_manifest_page(SakuraSessionSnapshot *snapshot, const gchar *group_id,
+	               const SakuraCtlManifestEntry *entry)
+{
+	for (guint index = 0; snapshot != NULL && snapshot->pages != NULL &&
+	                     index < snapshot->pages->len; index++) {
+		SakuraSessionPageRecord *page = g_ptr_array_index(snapshot->pages, index);
+
+		if (page != NULL && g_strcmp0(page->group_id, group_id) == 0 &&
+		    g_strcmp0(page->title, entry->title) == 0)
+			return page;
 	}
 	return NULL;
 }
@@ -316,6 +347,7 @@ apply_manifest(SakuraControlClientConnection *connection,
 		SakuraCtlManifestEntry *entry = g_ptr_array_index(entries, i);
 		SakuraSessionSnapshot *snapshot = NULL;
 		SakuraSessionTabRecord *match;
+		SakuraSessionPageRecord *stale_page;
 		GPtrArray *args;
 		g_autofree gchar *stdout_text = NULL;
 		g_autofree gchar *stderr_text = NULL;
@@ -334,6 +366,12 @@ apply_manifest(SakuraControlClientConnection *connection,
 				g_print("reused\t%s\t%s\n", entry->title, match->terminal_id);
 			sakura_session_snapshot_free(snapshot);
 			continue;
+		}
+		stale_page = find_manifest_page(snapshot, group_id, entry);
+		if (stale_page != NULL &&
+		    !sakura_control_client_delete_page(connection, stale_page->id, error)) {
+			sakura_session_snapshot_free(snapshot);
+			return FALSE;
 		}
 		sakura_session_snapshot_free(snapshot);
 		args = g_ptr_array_new_with_free_func(g_free);
@@ -442,7 +480,7 @@ main(int argc, char **argv)
 	gchar *cwd = NULL, *group_id = NULL, *group_name = NULL, *task_id = NULL;
 	gchar *model = NULL, *reasoning = NULL, *resume = NULL, *title = NULL;
 	gchar *session_name = NULL, *prompt_file = NULL, *print_format = NULL;
-	gchar *manifest = NULL;
+	gchar *manifest = NULL, *delete_page_id = NULL;
 	gchar **arguments = NULL;
 	gint columns = 80, rows = 24;
 	GOptionContext *context = NULL;
@@ -456,6 +494,7 @@ main(int argc, char **argv)
 	SakuraSessionGroupRecord *resolved_group = NULL;
 	const gchar *command;
 	gboolean codex, success, apply = FALSE, create_group_if_missing = FALSE;
+	gboolean created_resource = FALSE;
 	int result = EXIT_FAILURE;
 	GOptionEntry entries[] = {
 		{ "workspace", 'w', 0, G_OPTION_ARG_STRING, &workspace,
@@ -494,6 +533,8 @@ main(int argc, char **argv)
 		  "Output format: id or json", "FORMAT" },
 		{ "manifest", 0, 0, G_OPTION_ARG_FILENAME, &manifest,
 		  "Session manifest for 'codex apply'", "PATH" },
+		{ "page", 0, 0, G_OPTION_ARG_STRING, &delete_page_id,
+		  "Page ID for 'delete-page'", "ID" },
 		{ G_OPTION_REMAINING, 0, 0, G_OPTION_ARG_STRING_ARRAY, &arguments,
 		  NULL, "COMMAND" },
 		{ NULL }
@@ -503,7 +544,11 @@ main(int argc, char **argv)
 
 	context = g_option_context_new("- control a running Sakura workspace");
 	g_option_context_set_summary(context,
-		"Commands:\n  list    List running workspaces\n  groups  List groups in a workspace\n  new     Open a shell page\n  codex   Open a Codex page");
+		"Commands:\n  list         List running workspaces\n"
+		"  groups       List groups in a workspace\n"
+		"  new          Open a shell page\n"
+		"  codex        Open a Codex page\n"
+		"  delete-page  Remove a page and its terminals");
 	g_option_context_add_main_entries(context, entries, NULL);
 	if (!g_option_context_parse(context, &argc, &argv, &error))
 		goto out;
@@ -513,14 +558,14 @@ main(int argc, char **argv)
 	     (strcmp(arguments[0], "codex") != 0 ||
 	      strcmp(arguments[1], "apply") != 0))) {
 		g_set_error_literal(&error, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT,
-		                    "exactly one command is required: list, groups, new, or codex");
+		                    "exactly one command is required: list, groups, new, codex, or delete-page");
 		goto out;
 	}
 	command = arguments[0];
 	apply = g_strv_length(arguments) == 2;
 	if (strcmp(command, "list") != 0 && strcmp(command, "groups") != 0 &&
 	    strcmp(command, "new") != 0 &&
-	    strcmp(command, "codex") != 0) {
+	    strcmp(command, "codex") != 0 && strcmp(command, "delete-page") != 0) {
 		g_set_error(&error, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT,
 		            "unknown command: %s", command);
 		goto out;
@@ -583,6 +628,18 @@ main(int argc, char **argv)
 				g_print("%s\t%s\t%s\n", group->id, group->title,
 				        group->directory != NULL ? group->directory : "-");
 		}
+		result = EXIT_SUCCESS;
+		goto out;
+	}
+	if (strcmp(command, "delete-page") == 0) {
+		if (delete_page_id == NULL || delete_page_id[0] == '\0') {
+			g_set_error_literal(&error, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT,
+			                    "delete-page requires --page ID");
+			goto out;
+		}
+		if (!sakura_control_client_delete_page(connection, delete_page_id, &error))
+			goto out;
+		g_print("%s\n", delete_page_id);
 		result = EXIT_SUCCESS;
 		goto out;
 	}
@@ -674,8 +731,17 @@ main(int argc, char **argv)
 	}
 	if (!success)
 		goto out;
+	created_resource = TRUE;
 	if (title != NULL && !rename_page(connection, page_id, title, &error))
 		goto out;
+	if (codex) {
+		codex_session_id = resume != NULL && resume[0] != '\0'
+		                 ? g_strdup(resume)
+		                 : wait_for_codex_session_id(connection, terminal_id,
+		                                                   &error);
+		if (codex_session_id == NULL)
+			goto out;
+	}
 	if (prompt_file != NULL) {
 		g_autofree gchar *prompt = NULL;
 		gsize prompt_length = 0;
@@ -694,16 +760,19 @@ main(int argc, char **argv)
 			goto out;
 	}
 	if (session_name != NULL) {
+		GError *name_error = NULL;
+
 		if (!codex) {
 			g_set_error_literal(&error, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT,
 			                    "--session-name is only valid with codex");
 			goto out;
 		}
-		codex_session_id = wait_for_codex_session_id(connection, terminal_id,
-		                                               &error);
-		if (codex_session_id == NULL ||
-		    !set_codex_session_name(codex_session_id, session_name, &error))
-			goto out;
+		if (!set_codex_session_name(codex_session_id, session_name, &name_error)) {
+			g_printerr("sakura-ctl: warning: session was created but could not "
+			           "be named: %s\n", name_error != NULL
+			           ? name_error->message : "unknown error");
+			g_clear_error(&name_error);
+		}
 	}
 	if (print_format == NULL || strcmp(print_format, "id") == 0)
 		g_print("%s\n", terminal_id);
@@ -720,6 +789,18 @@ main(int argc, char **argv)
 	}
 	result = EXIT_SUCCESS;
 out:
+	if (result != EXIT_SUCCESS && created_resource && connection != NULL &&
+	    page_id != NULL) {
+		GError *rollback_error = NULL;
+
+		if (!sakura_control_client_delete_page(connection, page_id,
+		                                      &rollback_error)) {
+			g_printerr("sakura-ctl: warning: could not roll back page %s: %s\n",
+			           page_id, rollback_error != NULL
+			           ? rollback_error->message : "unknown error");
+			g_clear_error(&rollback_error);
+		}
+	}
 	if (error != NULL) {
 		g_printerr("sakura-ctl: %s\n", error->message);
 		g_clear_error(&error);
@@ -736,6 +817,7 @@ out:
 	g_free(reasoning);
 	g_free(resume); g_free(title); g_free(session_name); g_free(prompt_file);
 	g_free(print_format); g_free(manifest);
+	g_free(delete_page_id);
 	if (context != NULL)
 		g_option_context_free(context);
 	return result;

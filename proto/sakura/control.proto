@@ -46,6 +46,7 @@ message Terminal {
   string page_id = 13;
   uint32 order = 14;
   string codex_model = 15;
+  string codex_session_name = 16;
 }
 
 message Page {

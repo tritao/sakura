@@ -382,11 +382,12 @@ sakura_session_layout_valid(const SakuraSessionSnapshot *snapshot,
 		if (!has_task && parent_is_task)
 			goto invalid;
 	}
-	/* Agent snapshots intentionally persist semantic pages without desktop
-	 * tabs/layouts. Legacy terminal-only sessions also arrive here with no
-	 * pages/layouts, so validate relationships above and accept both forms. */
+	/* Agent snapshots intentionally persist semantic pages and terminals
+	 * without GTK pane layouts. Legacy terminal-only sessions also arrive here
+	 * without layouts, so validate relationships above and accept both forms. */
 	if (snapshot->layouts->len == 0 &&
-	    (snapshot->pages->len == 0 || snapshot->tabs->len == 0)) {
+	    (external_workspace || snapshot->pages->len == 0 ||
+	     snapshot->tabs->len == 0)) {
 		g_hash_table_destroy(pages);
 		g_hash_table_destroy(layouts);
 		g_hash_table_destroy(terminals);
@@ -783,6 +784,12 @@ sakura_session_snapshot_load_into(GKeyFile *key_file,
 		                                         "codex_model", NULL);
 		tab->codex_reasoning_effort = g_key_file_get_string(key_file, section,
 		                                                    "codex_reasoning_effort", NULL);
+		tab->codex_tracking_token = g_key_file_get_string(key_file, section,
+		                                                "codex_tracking_token", NULL);
+		tab->runtime_status = g_key_file_has_key(key_file, section,
+		                                          "runtime_status", NULL)
+		                    ? g_key_file_get_integer(key_file, section,
+		                                             "runtime_status", NULL) : 0;
 		if (g_key_file_has_key(key_file, section, "colorset", NULL)) {
 			gint colorset = g_key_file_get_integer(key_file, section, "colorset", NULL);
 			if (colorset >= 0 && colorset < NUM_COLORSETS)
@@ -1014,6 +1021,11 @@ sakura_session_snapshot_save(const SakuraSessionSnapshot *snapshot,
 		if (tab->codex_reasoning_effort != NULL && tab->codex_reasoning_effort[0] != '\0')
 			g_key_file_set_string(key_file, section, "codex_reasoning_effort",
 			                      tab->codex_reasoning_effort);
+		if (tab->codex_tracking_token != NULL && tab->codex_tracking_token[0] != '\0')
+			g_key_file_set_string(key_file, section, "codex_tracking_token",
+			                      tab->codex_tracking_token);
+		g_key_file_set_integer(key_file, section, "runtime_status",
+		                       tab->runtime_status);
 		if (tab->colorset >= 0 && tab->colorset < NUM_COLORSETS)
 			g_key_file_set_integer(key_file, section, "colorset", tab->colorset);
 		g_key_file_set_boolean(key_file, section, "title_set_by_user", tab->title_set_by_user);

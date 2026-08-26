@@ -184,6 +184,7 @@ sakura_core_terminal_free(SakuraCoreTerminal *terminal)
 	g_free(terminal->cwd);
 	g_free(terminal->title);
 	g_free(terminal->codex_session_id);
+	g_free(terminal->codex_session_name);
 	g_free(terminal->codex_model);
 	g_free(terminal->codex_reasoning_effort);
 	g_free(terminal->tracking_token);
@@ -1156,6 +1157,38 @@ sakura_core_workspace_from_snapshot(const SakuraSessionSnapshot *snapshot,
 			sakura_core_workspace_add_snapshot_page(
 				workspace, g_ptr_array_index(snapshot->pages, index));
 	}
+	if (snapshot->tabs != NULL) {
+		for (guint index = 0; index < snapshot->tabs->len; index++) {
+			SakuraSessionTabRecord *record = g_ptr_array_index(snapshot->tabs, index);
+			SakuraCoreTask *task;
+			SakuraCoreGroup *group;
+			SakuraCoreTerminal *terminal;
+
+			if (record == NULL || record->terminal_id == NULL)
+				continue;
+			task = sakura_core_workspace_find_task(workspace, record->parent_id);
+			group = task != NULL ? task->group
+			                     : sakura_core_workspace_find_group(
+				                     workspace, record->parent_id);
+			if (group == NULL)
+				group = workspace->root_group;
+			terminal = sakura_core_terminal_new(
+				record->terminal_id, record->cwd, group, task, 80, 24);
+			terminal->title = g_strdup(record->title);
+			terminal->status = SAKURA_TERMINAL_EXITED;
+			terminal->kind = record->kind;
+			terminal->codex_session_id = g_strdup(record->codex_session_id);
+			terminal->codex_session_name = g_strdup(record->codex_session_name);
+			terminal->codex_model = g_strdup(record->codex_model);
+			terminal->codex_reasoning_effort = g_strdup(
+				record->codex_reasoning_effort);
+			terminal->tracking_token = g_strdup(record->codex_tracking_token);
+			terminal->page_id = g_strdup(record->page_id);
+			terminal->order = record->order;
+			if (!sakura_core_workspace_add_terminal(workspace, terminal))
+				sakura_core_terminal_free(terminal);
+		}
+	}
 	workspace->active_group = sakura_core_workspace_find_group(
 		workspace, snapshot->active_group_id);
 	if (workspace->active_group == NULL)
@@ -1174,11 +1207,13 @@ sakura_core_workspace_sync_snapshot(const SakuraCoreWorkspace *workspace,
 	GPtrArray *tasks;
 
 	if (workspace == NULL || snapshot == NULL || snapshot->groups == NULL ||
-	    snapshot->tasks == NULL || snapshot->pages == NULL)
+	    snapshot->tasks == NULL || snapshot->pages == NULL ||
+	    snapshot->tabs == NULL)
 		return FALSE;
 	g_ptr_array_set_size(snapshot->groups, 0);
 	g_ptr_array_set_size(snapshot->tasks, 0);
 	g_ptr_array_set_size(snapshot->pages, 0);
+	g_ptr_array_set_size(snapshot->tabs, 0);
 	groups = sakura_core_workspace_ordered_groups(workspace);
 	for (guint index = 0; index < groups->len; index++) {
 		SakuraCoreGroup *model_group = g_ptr_array_index(groups, index);
@@ -1242,6 +1277,38 @@ sakura_core_workspace_sync_snapshot(const SakuraCoreWorkspace *workspace,
 		page->root_layout_id = g_strdup(model_page->root_layout_id);
 		page->active_terminal_id = g_strdup(model_page->active_terminal_id);
 		g_ptr_array_add(snapshot->pages, page);
+	}
+	for (guint index = 0; workspace->terminals != NULL &&
+	                     index < workspace->terminals->len; index++) {
+		SakuraCoreTerminal *model_terminal = g_ptr_array_index(
+			workspace->terminals, index);
+		SakuraSessionTabRecord *tab;
+		SakuraCoreGroup *group;
+
+		if (model_terminal == NULL || model_terminal->id == NULL)
+			continue;
+		tab = g_new0(SakuraSessionTabRecord, 1);
+		group = model_terminal->group != NULL ? model_terminal->group
+		                                        : workspace->root_group;
+		tab->terminal_id = g_strdup(model_terminal->id);
+		tab->page_id = g_strdup(model_terminal->page_id);
+		tab->parent_id = g_strdup(model_terminal->task != NULL
+		                          ? model_terminal->task->id
+		                          : group != NULL ? group->id : "root");
+		tab->cwd = g_strdup(model_terminal->cwd);
+		tab->title = g_strdup(model_terminal->title);
+		tab->kind = model_terminal->kind;
+		tab->runtime_status = model_terminal->status;
+		tab->status = model_terminal->status == SAKURA_TERMINAL_ERROR
+		            ? SAKURA_TAB_STATUS_ERROR : SAKURA_TAB_STATUS_IDLE;
+		tab->codex_session_id = g_strdup(model_terminal->codex_session_id);
+		tab->codex_session_name = g_strdup(model_terminal->codex_session_name);
+		tab->codex_model = g_strdup(model_terminal->codex_model);
+		tab->codex_reasoning_effort = g_strdup(
+			model_terminal->codex_reasoning_effort);
+		tab->codex_tracking_token = g_strdup(model_terminal->tracking_token);
+		tab->order = model_terminal->order;
+		g_ptr_array_add(snapshot->tabs, tab);
 	}
 	g_free(snapshot->active_group_id);
 	snapshot->active_group_id = g_strdup(

@@ -110,6 +110,7 @@ typedef struct {
 	SakuraTabKind kind;
 	gboolean title_set_by_user;
 	SakuraTabStatus status;
+	guint runtime_status;
 	gboolean attention;
 	gint64 attention_timestamp;
 } SakuraSessionTabRecord;
@@ -216,6 +217,7 @@ struct sakura_core_terminal {
 	SakuraCoreTerminalStatus status;
 	SakuraTabKind kind;
 	gchar *codex_session_id;
+	gchar *codex_session_name;
 	gchar *codex_model;
 	gchar *codex_reasoning_effort;
 	gchar *tracking_token;

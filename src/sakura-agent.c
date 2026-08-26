@@ -348,6 +348,7 @@ sakura_agent_persist_workspace(SakuraAgent *agent, GError **error)
 	g_clear_pointer(&snapshot->selected_task_id, g_free);
 	key_file = g_key_file_new();
 	sakura_session_snapshot_save(snapshot, key_file);
+	g_key_file_set_boolean(key_file, "Session", "external_workspace", TRUE);
 	g_key_file_set_uint64(key_file, "Workspace", "revision",
 	                     agent->workspace_revision);
 	data = g_key_file_to_data(key_file, &data_length, error);
@@ -406,6 +407,40 @@ persist_error:
 	g_key_file_free(key_file);
 	sakura_session_snapshot_free(snapshot);
 	return saved;
+}
+
+
+static gboolean
+sakura_agent_refresh_codex_tracking(SakuraAgent *agent)
+{
+	gboolean changed = FALSE;
+
+	if (agent == NULL || agent->tracking_dir == NULL ||
+	    agent->workspace == NULL || agent->workspace->terminals == NULL)
+		return FALSE;
+	for (guint index = 0; index < agent->workspace->terminals->len; index++) {
+		SakuraCoreTerminal *terminal = g_ptr_array_index(
+			agent->workspace->terminals, index);
+		g_autofree gchar *path = NULL;
+		g_autoptr(GKeyFile) key_file = NULL;
+		g_autofree gchar *session_id = NULL;
+
+		if (terminal == NULL || terminal->kind != SAKURA_TAB_CODEX ||
+		    terminal->tracking_token == NULL || terminal->tracking_token[0] == '\0')
+			continue;
+		path = g_build_filename(agent->tracking_dir, terminal->tracking_token, NULL);
+		key_file = g_key_file_new();
+		if (!g_key_file_load_from_file(key_file, path, G_KEY_FILE_NONE, NULL))
+			continue;
+		session_id = g_key_file_get_string(key_file, "tracking", "session_id", NULL);
+		if (session_id == NULL || session_id[0] == '\0' ||
+		    g_strcmp0(session_id, terminal->codex_session_id) == 0)
+			continue;
+		g_free(terminal->codex_session_id);
+		terminal->codex_session_id = g_steal_pointer(&session_id);
+		changed = TRUE;
+	}
+	return changed;
 }
 
 
@@ -1021,6 +1056,32 @@ sakura_agent_delete_page(SakuraAgent *agent,
 		            "page %s was not found", request->page_id);
 		return FALSE;
 	}
+	/* Page deletion is the transactional cleanup primitive used by control
+	 * clients. Retire every runtime and logical terminal owned by the page
+	 * before removing its metadata record. */
+	for (gint index = agent->workspace->terminals != NULL
+	                ? (gint)agent->workspace->terminals->len - 1 : -1;
+	     index >= 0; index--) {
+		SakuraCoreTerminal *core = g_ptr_array_index(
+			agent->workspace->terminals, index);
+
+		if (core == NULL || g_strcmp0(core->page_id, page->id) != 0)
+			continue;
+		for (guint runtime_index = 0; runtime_index < agent->terminals->len;
+		     runtime_index++) {
+			SakuraAgentTerminal *runtime = g_ptr_array_index(
+				agent->terminals, runtime_index);
+
+			if (runtime != NULL && g_strcmp0(runtime->id, core->id) == 0) {
+				sakura_agent_terminal_stop(runtime);
+				runtime->core = NULL;
+				break;
+			}
+		}
+		if (!sakura_core_workspace_remove_terminal(agent->workspace, core))
+			return sakura_agent_error(error,
+			                          "could not remove page terminal");
+	}
 	if (!sakura_core_workspace_remove_page(agent->workspace, page))
 		return sakura_agent_error(error, "could not delete page");
 	return TRUE;
@@ -1209,7 +1270,7 @@ sakura_agent_create_terminal_with_kind(SakuraAgent *agent,
 	const gchar *cwd;
 	const gchar *shell;
 	const gchar *codex_binary;
-	const gchar *child_argv[12] = { NULL };
+	const gchar *child_argv[14] = { NULL };
 	guint child_argc = 0;
 	gchar *reasoning_config = NULL;
 	gchar *owned_cwd = NULL;
@@ -1262,6 +1323,7 @@ sakura_agent_create_terminal_with_kind(SakuraAgent *agent,
 		if (codex_binary == NULL || codex_binary[0] == '\0')
 			codex_binary = "codex";
 		child_argv[child_argc++] = codex_binary;
+		child_argv[child_argc++] = "--yolo";
 		child_argv[child_argc++] = "--enable";
 		child_argv[child_argc++] = "hooks";
 		if (request->model != NULL && request->model[0] != '\0') {
@@ -2475,6 +2537,13 @@ sakura_agent_connection_thread(gpointer data)
 				g_clear_pointer(&initial_event, g_byte_array_unref);
 			subscribed = TRUE;
 		} else if (decoded.kind == SAKURA_CONTROL_REQUEST_GET_SNAPSHOT) {
+			if (sakura_agent_refresh_codex_tracking(request->agent)) {
+				request->agent->workspace_revision++;
+				request->agent->sequence++;
+				if (!sakura_agent_persist_workspace(request->agent, &error))
+					goto request_done;
+				sakura_agent_broadcast_event(request->agent);
+			}
 			sakura_control_encode_snapshot_response_with_revision(request_id,
 		                                       request->agent->sequence,
 		                                       request->agent->workspace_revision,
@@ -2540,6 +2609,7 @@ sakura_agent_connection_thread(gpointer data)
 				sakura_agent_broadcast_event(request->agent);
 		}
 		}
+	request_done:
 		if (response->len == 0) {
 			const gchar *message = error != NULL ? error->message : "invalid request";
 			const gchar *response_error_code =

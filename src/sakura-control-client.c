@@ -303,8 +303,9 @@ sakura_control_client_require_accepted(const SakuraControlResponse *response,
 {
 	if (response != NULL && response->accepted)
 		return TRUE;
-	g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_INVALID_DATA,
-	                    "Sakura agent rejected the request");
+	g_set_error(error, G_IO_ERROR, G_IO_ERROR_INVALID_DATA, "%s",
+	            response != NULL && response->error_message != NULL
+	            ? response->error_message : "Sakura agent rejected the request");
 	return FALSE;
 }
 
@@ -520,6 +521,32 @@ sakura_control_client_attach_terminal_after_offset(
 out:
 	if (!success && attachment != NULL)
 		sakura_control_terminal_attachment_clear(attachment);
+	sakura_control_response_clear(&response);
+	g_byte_array_unref(request);
+	g_free(request_id);
+	return success;
+}
+
+
+gboolean
+sakura_control_client_delete_page(
+	SakuraControlClientConnection *connection, const gchar *page_id,
+	GError **error)
+{
+	GByteArray *request = g_byte_array_new();
+	SakuraControlResponse response = { 0 };
+	gchar *request_id = g_uuid_string_random();
+	gboolean success;
+
+	success = sakura_control_encode_delete_page_request(
+		request_id, page_id, request) &&
+		sakura_control_client_call(connection, request_id, request, &response,
+		                           error);
+	if (success && !response.has_snapshot) {
+		g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_INVALID_DATA,
+		                    "Sakura agent did not return the updated workspace");
+		success = FALSE;
+	}
 	sakura_control_response_clear(&response);
 	g_byte_array_unref(request);
 	g_free(request_id);

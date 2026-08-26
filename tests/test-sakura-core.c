@@ -95,8 +95,11 @@ test_workspace_restore_snapshot(void)
 	SakuraSessionTaskRecord *task = g_new0(SakuraSessionTaskRecord, 1);
 	SakuraSessionTaskRecord *child = g_new0(SakuraSessionTaskRecord, 1);
 	SakuraSessionPageRecord *page = g_new0(SakuraSessionPageRecord, 1);
+	SakuraSessionTabRecord *tab = g_new0(SakuraSessionTabRecord, 1);
 	SakuraCoreWorkspace *workspace;
 	SakuraCorePage *restored_page;
+	SakuraCoreTerminal *restored_terminal;
+	SakuraSessionSnapshot *roundtrip;
 	GError *error = NULL;
 
 	snapshot->root_directory = g_strdup("/tmp/project");
@@ -124,6 +127,19 @@ test_workspace_restore_snapshot(void)
 	page->title = g_strdup("Build terminal");
 	page->active_terminal_id = g_strdup("terminal-a");
 	g_ptr_array_add(snapshot->pages, page);
+	tab->terminal_id = g_strdup("terminal-a");
+	tab->page_id = g_strdup("page-a");
+	tab->parent_id = g_strdup("task-a");
+	tab->cwd = g_strdup("/tmp/project");
+	tab->kind = SAKURA_TAB_CODEX;
+	tab->codex_session_id = g_strdup("session-a");
+	tab->codex_session_name = g_strdup("Agent session");
+	tab->codex_model = g_strdup("gpt-5.6-luna");
+	tab->codex_reasoning_effort = g_strdup("xhigh");
+	tab->codex_tracking_token = g_strdup("tracking-a");
+	tab->runtime_status = SAKURA_TERMINAL_RUNNING;
+	tab->order = 4;
+	g_ptr_array_add(snapshot->tabs, tab);
 
 	workspace = sakura_core_workspace_from_snapshot(snapshot, &error);
 	g_assert_no_error(error);
@@ -140,6 +156,25 @@ test_workspace_restore_snapshot(void)
 	g_assert_true(restored_page->task ==
 	              sakura_core_workspace_find_task(workspace, "task-a"));
 	g_assert_cmpstr(restored_page->active_terminal_id, ==, "terminal-a");
+	restored_terminal = sakura_core_workspace_find_terminal(workspace,
+	                                                       "terminal-a");
+	g_assert_nonnull(restored_terminal);
+	g_assert_cmpint(restored_terminal->status, ==, SAKURA_TERMINAL_EXITED);
+	g_assert_cmpstr(restored_terminal->codex_session_id, ==, "session-a");
+	g_assert_cmpstr(restored_terminal->codex_session_name, ==, "Agent session");
+	g_assert_cmpstr(restored_terminal->codex_model, ==, "gpt-5.6-luna");
+	g_assert_cmpstr(restored_terminal->codex_reasoning_effort, ==, "xhigh");
+	g_assert_cmpstr(restored_terminal->tracking_token, ==, "tracking-a");
+	roundtrip = sakura_session_snapshot_new();
+	g_assert_true(sakura_core_workspace_sync_snapshot(workspace, roundtrip));
+	g_assert_cmpuint(roundtrip->tabs->len, ==, 1);
+	tab = g_ptr_array_index(roundtrip->tabs, 0);
+	g_assert_cmpstr(tab->terminal_id, ==, "terminal-a");
+	g_assert_cmpstr(tab->page_id, ==, "page-a");
+	g_assert_cmpstr(tab->parent_id, ==, "task-a");
+	g_assert_cmpstr(tab->codex_session_name, ==, "Agent session");
+	g_assert_cmpuint(tab->runtime_status, ==, SAKURA_TERMINAL_EXITED);
+	sakura_session_snapshot_free(roundtrip);
 	g_assert_false(sakura_core_workspace_can_remove_task(
 		workspace, sakura_core_workspace_find_task(workspace, "task-a")));
 	g_assert_false(sakura_core_workspace_can_remove_group(

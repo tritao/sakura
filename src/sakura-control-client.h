@@ -165,6 +165,9 @@ gboolean sakura_control_client_terminal_resize(
 gboolean sakura_control_client_detach_terminal(
 	SakuraControlClientConnection *connection, const gchar *terminal_id,
 	GError **error);
+gboolean sakura_control_client_delete_page(
+	SakuraControlClientConnection *connection, const gchar *page_id,
+	GError **error);
 gboolean sakura_control_client_read_event(
 	SakuraControlClientConnection *connection, SakuraControlClientEvent *event,
 	GCancellable *cancellable, GError **error);

@@ -153,8 +153,11 @@ configuration for that session. C<--print=json>
 returns stable workspace, group, page, terminal, and Codex session IDs.
 
 C<sakura-ctl codex apply --group-name=NAME --manifest=PATH> applies a YAML
-session list idempotently. Existing Codex pages with the same group, title, and
-canonical working directory are reused instead of duplicated.
+session list idempotently. Existing healthy Codex pages with matching group,
+title, canonical working directory, model, and reasoning effort are reused.
+Stale matches are replaced. Creation waits for Codex readiness before sending
+the initial prompt and rolls the page back if startup fails. Use
+C<sakura-ctl delete-page --page=ID> to remove a page and its terminals.
 
 =head1 GTK+ OPTIONS
 

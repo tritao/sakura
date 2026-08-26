@@ -79,8 +79,10 @@ sakura-ctl codex apply --group-name Tony --create-group \
   --manifest ~/dev/OpenTony-shared/sessions/manifest.yml --print json
 ```
 
-The manifest uses a `sessions` list. A page is reused when its group, locked
-title, and canonical working directory match, preventing duplicate sessions:
+The manifest uses a `sessions` list. A page is reused only when its group,
+title, canonical working directory, model, reasoning effort, running state,
+and Codex session identity match. An incomplete or stale matching page is
+replaced instead of duplicated:
 
 ```yaml
 sessions:
@@ -94,6 +96,10 @@ sessions:
 
 `model` and `reasoning` are independent per-session Codex overrides. Omitting
 either keeps the corresponding value from the user's Codex configuration.
+Creation waits for Codex readiness before sending the initial prompt. If
+startup fails before readiness, the new page and terminal are rolled back.
+Use `sakura-ctl delete-page --page ID` to explicitly remove a page and all of
+its terminals.
 
 Run `sakura-ctl --help` for terminal-size and direct-socket options.
 

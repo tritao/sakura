@@ -21,6 +21,15 @@ def run(*args):
     return result
 
 
+def stop_agent(process):
+    process.terminate()
+    try:
+        process.wait(timeout=3)
+    except subprocess.TimeoutExpired:
+        process.kill()
+        process.wait()
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--agent", required=True)
@@ -32,6 +41,7 @@ def main():
         root = Path(temp)
         socket = root / "agent.sock"
         workspace = root / "workspace.ini"
+        session = root / "desktop.session"
         prompt = root / "prompt.md"
         manifest = root / "manifest.yml"
         arguments_log = root / "codex-arguments.jsonl"
@@ -50,7 +60,8 @@ def main():
         env["SAKURA_FAKE_CODEX_ARGUMENTS_LOG"] = str(arguments_log)
         agent = subprocess.Popen([
             args.agent, "--socket", str(socket), "--workspace-file",
-            str(workspace), "--workspace-id", "ctl-integration",
+            str(workspace), "--session", str(session),
+            "--workspace-id", "ctl-integration",
         ], env=env)
         try:
             deadline = time.monotonic() + 5
@@ -84,10 +95,60 @@ def main():
             assert json.loads(second.stdout)["status"] == "reused"
             saved = configparser.ConfigParser()
             saved.read(workspace, encoding="utf-8")
-            assert saved["Session"].getint("page_count") == 2
+            assert saved["Session"].getint("page_count") == 2, dict(saved["Session"])
+            assert saved["Session"].getint("terminal_count") == 2, dict(saved["Session"])
+
+            stop_agent(agent)
+            socket.unlink(missing_ok=True)
+            agent = subprocess.Popen([
+                args.agent, "--socket", str(socket), "--workspace-file",
+                str(workspace), "--session", str(session),
+                "--workspace-id", "ctl-integration",
+            ], env=env)
+            deadline = time.monotonic() + 5
+            while not socket.exists() and time.monotonic() < deadline:
+                time.sleep(0.02)
+            assert socket.exists(), "restarted agent socket did not appear"
+            restored = configparser.ConfigParser()
+            restored.read(workspace, encoding="utf-8")
+            assert restored["Session"].getint("page_count") == 2, dict(restored["Session"])
+            assert restored["Session"].getint("terminal_count") == 2, dict(restored["Session"])
+            recovered = run(
+                args.ctl, "codex", "apply", *target, "--group-name", "Tony",
+                "--manifest", str(manifest), "--print", "json",
+            )
+            reused = run(
+                args.ctl, "codex", "apply", *target, "--group-name", "Tony",
+                "--manifest", str(manifest), "--print", "json",
+            )
+            assert json.loads(recovered.stdout)["page_id"]
+            assert json.loads(reused.stdout)["status"] == "reused"
+            saved.read(workspace, encoding="utf-8")
+            assert saved["Session"].getint("page_count") == 2, dict(saved["Session"])
+            assert saved["Session"].getint("terminal_count") == 2, dict(saved["Session"])
             page = saved["Page0"]
             assert page["title"] == "Tony · Camera"
             assert page.getboolean("title_set_by_user")
+            terminals = [saved[f"Terminal{index}"] for index in range(2)]
+            assert all(item["kind"] == "codex" for item in terminals)
+            assert all(item["codex_model"] == "gpt-5.6-luna"
+                       for item in terminals)
+            assert all(item["codex_reasoning_effort"] == "xhigh"
+                       for item in terminals)
+            assert all(item["codex_session_id"] for item in terminals)
+
+            failed_env = os.environ.copy()
+            failed_env["SAKURA_CTL_READY_TIMEOUT_MS"] = "300"
+            failed = subprocess.run([
+                args.ctl, "codex", *target, "--group-name", "Tony",
+                "--title", "Rolled back", "--working-directory", "/tmp",
+                "--model", "no-session", "--reasoning", "xhigh",
+            ], env=failed_env, text=True, capture_output=True)
+            assert failed.returncode != 0
+            assert "timed out waiting" in failed.stderr
+            saved.read(workspace, encoding="utf-8")
+            assert saved["Session"].getint("page_count") == 2
+            assert saved["Session"].getint("terminal_count") == 2
             deadline = time.monotonic() + 2
             while (not arguments_log.exists() or
                    len(arguments_log.read_text(encoding="utf-8").splitlines()) < 2
@@ -95,17 +156,13 @@ def main():
                 time.sleep(0.02)
             launches = [json.loads(line) for line in
                         arguments_log.read_text(encoding="utf-8").splitlines()]
-            assert len(launches) == 2
-            for launch in launches:
+            assert len(launches) == 4
+            for launch in launches[:3]:
                 assert launch[launch.index("--model") + 1] == "gpt-5.6-luna"
                 assert "model_reasoning_effort=xhigh" in launch
+            assert launches[3][launches[3].index("--model") + 1] == "no-session"
         finally:
-            agent.terminate()
-            try:
-                agent.wait(timeout=3)
-            except subprocess.TimeoutExpired:
-                agent.kill()
-                agent.wait()
+            stop_agent(agent)
 
 
 if __name__ == "__main__":
