@@ -180,6 +180,23 @@ workspace, checks CWD/title/selection/Codex metadata, validates session
 backups, and verifies that a failed restore does not overwrite the original
 session file.
 
+For repeatable responsiveness measurements, build the optimized profiling
+preset and run the isolated Codex-like workload:
+
+```bash
+cmake --preset opt
+cmake --build --preset opt
+python3 tests/profile-codex-workload.py --binary build-opt/src/sakura
+```
+
+The workload keeps 24 restored Codex sessions active while repeatedly
+switching visible sidebar rows with real X11 pointer events. Its JSON report
+includes click-to-active and selection-to-focus p50/p95/p99/max latency,
+missed or incorrect switches, CPU, memory, I/O, and context-switch metrics.
+The command fails if switch failures exceed 1%, focus-sample coverage falls
+below 98%, active p95 exceeds 50 ms, or focus p95 exceeds 25 ms. Use
+`--interaction-interval 0` for throughput-only profiling.
+
 Tracked Codex tabs show their current state in the terminal sidebar: working,
 needs approval, ready to review, interrupted, or error. Working tabs show an
 animated spinner; completed, interrupted, and error states use stable status
