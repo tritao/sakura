@@ -1675,6 +1675,10 @@ sakura_agent_restart_terminal(SakuraApp *app, const gchar *terminal_id,
 	                            const gchar *page_id, const gchar *group_id,
 	                            const gchar *task_id,
 	                            const gchar *cwd, guint cols, guint rows,
+	                            SakuraTabKind kind,
+	                            const gchar *resume_session_id,
+	                            const gchar *reasoning_effort,
+	                            const gchar *tracking_token,
 	                            GError **error)
 {
 	GByteArray *request;
@@ -1687,8 +1691,9 @@ sakura_agent_restart_terminal(SakuraApp *app, const gchar *terminal_id,
 		return FALSE;
 	request_id = g_uuid_string_random();
 	request = g_byte_array_new();
-	if (!sakura_control_encode_restart_terminal_request_with_page(
+	if (!sakura_control_encode_restart_terminal_request_with_spec(
 			request_id, terminal_id, page_id, group_id, task_id, cwd, cols, rows,
+			kind, resume_session_id, reasoning_effort, tracking_token,
 			request)) {
 		g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT,
 		                    "could not encode restart terminal request");
@@ -1809,6 +1814,10 @@ typedef struct {
 	gchar *cwd;
 	guint cols;
 	guint rows;
+	SakuraTabKind kind;
+	gchar *resume_session_id;
+	gchar *reasoning_effort;
+	gchar *tracking_token;
 	SakuraAgentTerminalStartCallback callback;
 	gpointer callback_data;
 } SakuraAgentTerminalStartJob;
@@ -1843,6 +1852,9 @@ sakura_agent_terminal_start_job_free(SakuraAgentTerminalStartJob *job)
 	g_free(job->group_id);
 	g_free(job->task_id);
 	g_free(job->cwd);
+	g_free(job->resume_session_id);
+	g_free(job->reasoning_effort);
+	g_free(job->tracking_token);
 	g_free(job);
 }
 
@@ -1912,12 +1924,14 @@ sakura_agent_terminal_start_worker(gpointer data, gpointer user_data)
 		&result->attached_status, &error);
 	if (!result->attached) {
 		g_clear_error(&error);
-		if (!sakura_agent_create_terminal(
+		if (!sakura_agent_restart_terminal(
 				job->app, job->terminal_id, job->page_id, job->group_id,
-				job->task_id,
-				job->cwd, job->cols, job->rows,
-				&result->created_terminal_id, &error))
+				job->task_id, job->cwd, job->cols, job->rows, job->kind,
+				job->resume_session_id, job->reasoning_effort,
+				job->tracking_token, &error))
 			result->error = g_steal_pointer(&error);
+		else
+			result->created_terminal_id = g_strdup(job->terminal_id);
 	}
 	g_clear_error(&error);
 
@@ -1944,6 +1958,8 @@ sakura_agent_start_terminal_async(
 	SakuraApp *app, const gchar *terminal_id, const gchar *page_id,
 	const gchar *group_id,
 	const gchar *task_id, const gchar *cwd, guint cols, guint rows,
+	SakuraTabKind kind, const gchar *resume_session_id,
+	const gchar *reasoning_effort, const gchar *tracking_token,
 	SakuraAgentTerminalStartCallback callback, gpointer data, GError **error)
 {
 	SakuraAgentTerminalStartJob *job;
@@ -1975,6 +1991,10 @@ sakura_agent_start_terminal_async(
 	job->cwd = g_strdup(cwd);
 	job->cols = cols;
 	job->rows = rows;
+	job->kind = kind;
+	job->resume_session_id = g_strdup(resume_session_id);
+	job->reasoning_effort = g_strdup(reasoning_effort);
+	job->tracking_token = g_strdup(tracking_token);
 	job->callback = callback;
 	job->callback_data = data;
 	if (!g_thread_pool_push(app->agent_terminal_start_pool, job, error)) {

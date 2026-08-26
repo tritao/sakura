@@ -26,6 +26,23 @@
       "cacheVariables": {
         "SAKURA_ENABLE_SANITIZERS": "ON"
       }
+    },
+    {
+      "name": "opt",
+      "displayName": "Optimized profiling build",
+      "description": "Optimized build with debug symbols and frame pointers for profiling",
+      "generator": "Unix Makefiles",
+      "binaryDir": "${sourceDir}/build-opt",
+      "environment": {
+        "PATH": "${sourceDir}/.deps/install/bin:$penv{PATH}",
+        "PKG_CONFIG_PATH": "${sourceDir}/.deps/install/lib/pkgconfig:$penv{PKG_CONFIG_PATH}"
+      },
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "RelWithDebInfo",
+        "CMAKE_C_FLAGS_RELWITHDEBINFO": "-O2 -g -DNDEBUG -fno-omit-frame-pointer",
+        "SAKURA_PROTOBUF_PREFIX": "${sourceDir}/.deps/install",
+        "BUILD_TESTING": "OFF"
+      }
     }
   ],
   "buildPresets": [
@@ -36,6 +53,11 @@
     {
       "name": "asan",
       "configurePreset": "asan"
+    },
+    {
+      "name": "opt",
+      "configurePreset": "opt",
+      "jobs": 0
     }
   ],
   "testPresets": [

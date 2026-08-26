@@ -193,6 +193,8 @@ struct sakura_app {
 	GtkWidget *sidebar;
 	GtkWidget *sidebar_title;
 	GtkWidget *sidebar_tree;
+	GtkTreeViewColumn *sidebar_status_column;
+	GtkCellRenderer *sidebar_spinner_renderer;
 	GtkTreeStore *sidebar_model;
 	GtkTreeSelection *sidebar_selection;
 	SakuraSidebarNode *sidebar_root;
@@ -294,6 +296,7 @@ struct sakura_app {
 	bool session_new_window;
 	guint session_save_source_id;
 	guint codex_tracking_source_id;
+	GFileMonitor *codex_tracking_monitor;
 	guint cwd_tracking_source_id;
 	guint sidebar_spinner_source_id;
 	guint sidebar_spinner_pulse;
@@ -735,6 +738,7 @@ void sakura_resume_codex_cb(GtkWidget *widget, void *data);
 void sakura_attach_codex_cb(GtkWidget *widget, void *data);
 void sakura_refresh_codex_name_cb(GtkWidget *widget, void *data);
 void sakura_rename_codex_session_cb(GtkWidget *widget, void *data);
+GtkWidget *sakura_codex_rename_menu_item_new(SakuraTab *tab);
 void sakura_install_codex_hook_cb(GtkWidget *widget, void *data);
 void sakura_close_tab_cb(GtkWidget *widget, void *data);
 void sakura_sidebar_init(gboolean restore_session);
@@ -760,6 +764,8 @@ SakuraSidebarNode *sakura_sidebar_creation_parent_for_context(
                                       SakuraSidebarNode *context);
 gboolean sakura_sidebar_move_page_to_group(SakuraPage *page,
                                             SakuraSidebarNode *group);
+gboolean sakura_sidebar_reorder_page_relative(
+    SakuraPage *source, SakuraPage *target, GtkTreeViewDropPosition position);
 gboolean sakura_sidebar_can_reorder_node_to_group(SakuraSidebarNode *source,
                                                     SakuraSidebarNode *target);
 void sakura_sidebar_sync_projection_links(void);
@@ -813,6 +819,10 @@ gboolean sakura_codex_session_id_is_uuid(const gchar *value);
 gboolean sakura_codex_reasoning_effort_is_valid(const gchar *value);
 const gchar *sakura_codex_reasoning_effort_label(const gchar *value);
 gboolean sakura_codex_tracking_poll_cb(gpointer data);
+void sakura_codex_tracking_changed_cb(GFileMonitor *monitor, GFile *file,
+                                      GFile *other_file,
+                                      GFileMonitorEvent event_type,
+                                      gpointer data);
 gboolean sakura_codex_interrupt_matches_event(const SakuraTab *tab,
                                                const gchar *event_name,
                                                const gchar *turn_id);
@@ -999,6 +1009,8 @@ gboolean sakura_agent_start_terminal_async(
 	SakuraApp *app, const gchar *terminal_id, const gchar *page_id,
 	const gchar *group_id,
 	const gchar *task_id, const gchar *cwd, guint cols, guint rows,
+	SakuraTabKind kind, const gchar *resume_session_id,
+	const gchar *reasoning_effort, const gchar *tracking_token,
 	SakuraAgentTerminalStartCallback callback, gpointer data,
 	GError **error);
 void sakura_agent_terminal_start_result_free(
@@ -1060,6 +1072,8 @@ gboolean sakura_agent_restart_terminal(
 	SakuraApp *app, const gchar *terminal_id, const gchar *page_id,
 	const gchar *group_id,
 	const gchar *task_id, const gchar *cwd, guint cols, guint rows,
+	SakuraTabKind kind, const gchar *resume_session_id,
+	const gchar *reasoning_effort, const gchar *tracking_token,
 	GError **error);
 gboolean sakura_agent_attach_terminal(
 	SakuraApp *app, const gchar *terminal_id, guint cols, guint rows,

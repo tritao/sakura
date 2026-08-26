@@ -1807,6 +1807,30 @@ sakura_rename_codex_session_cb (GtkWidget *widget, void *data)
 }
 
 
+GtkWidget *
+sakura_codex_rename_menu_item_new(SakuraTab *tab)
+{
+	GtkWidget *item;
+	gchar *terminal_id;
+	gboolean identified;
+
+	if (tab == NULL || tab->kind != SAKURA_TAB_CODEX)
+		return NULL;
+	identified = tab->codex_session_id != NULL &&
+	             tab->codex_session_id[0] != '\0';
+	item = gtk_menu_item_new_with_label(
+		identified ? _("Rename Codex session...")
+		           : _("Detecting Codex session..."));
+	gtk_widget_set_sensitive(item, identified);
+	terminal_id = g_strdup(tab->terminal_id);
+	g_object_set_data_full(G_OBJECT(item), "sakura-codex-terminal-id",
+	                       terminal_id, g_free);
+	g_signal_connect(item, "activate",
+	                 G_CALLBACK(sakura_rename_codex_session_cb), terminal_id);
+	return item;
+}
+
+
 void
 sakura_attach_codex_cb (GtkWidget *widget, void *data)
 {
@@ -2059,11 +2083,12 @@ sakura_codex_tracking_poll_cb(gpointer data)
 	gboolean changed = FALSE;
 
 	(void)data;
+	sakura.codex_tracking_source_id = 0;
 	if (sakura.codex_tracking_dir == NULL)
-		return G_SOURCE_CONTINUE;
+		return G_SOURCE_REMOVE;
 	dir = g_dir_open(sakura.codex_tracking_dir, 0, NULL);
 	if (dir == NULL)
-		return G_SOURCE_CONTINUE;
+		return G_SOURCE_REMOVE;
 
 	while ((filename = g_dir_read_name(dir)) != NULL) {
 		gchar *path, *contents, *session_id = NULL, *state = NULL;
@@ -2110,9 +2135,9 @@ sakura_codex_tracking_poll_cb(gpointer data)
 			continue;
 		}
 
-		if (sakura.workspace->tabs != NULL) {
-			for (page = 0; page < sakura.workspace->tabs->len; page++) {
-				SakuraTab *tab = sakura_tab_at_page((gint)page);
+		if (sakura.workspace->panes != NULL) {
+			for (page = 0; page < sakura.workspace->panes->len; page++) {
+				SakuraTab *tab = g_ptr_array_index(sakura.workspace->panes, page);
 				if (tab == NULL || tab->codex_tracking_token == NULL ||
 				    g_strcmp0(tab->codex_tracking_token, filename) != 0)
 					continue;
@@ -2181,7 +2206,28 @@ sakura_codex_tracking_poll_cb(gpointer data)
 	g_dir_close(dir);
 	if (changed)
 		sakura_session_mark_dirty();
-	return G_SOURCE_CONTINUE;
+	return G_SOURCE_REMOVE;
+}
+
+
+void
+sakura_codex_tracking_changed_cb(GFileMonitor *monitor, GFile *file,
+	                              GFile *other_file,
+	                              GFileMonitorEvent event_type, gpointer data)
+{
+	(void)monitor;
+	(void)file;
+	(void)other_file;
+	(void)data;
+	if (sakura.session_shutting_down ||
+	    (event_type != G_FILE_MONITOR_EVENT_CREATED &&
+	     event_type != G_FILE_MONITOR_EVENT_CHANGED &&
+	     event_type != G_FILE_MONITOR_EVENT_CHANGES_DONE_HINT &&
+	     event_type != G_FILE_MONITOR_EVENT_MOVED_IN))
+		return;
+	if (sakura.codex_tracking_source_id == 0)
+		sakura.codex_tracking_source_id = g_timeout_add(
+			25, sakura_codex_tracking_poll_cb, NULL);
 }
 
 

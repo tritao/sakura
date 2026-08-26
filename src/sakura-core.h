@@ -102,6 +102,7 @@ typedef struct {
 	gchar *codex_session_id;
 	gchar *codex_session_name;
 	gchar *codex_reasoning_effort;
+	gchar *codex_tracking_token;
 	gint colorset;
 	SakuraTabKind kind;
 	gboolean title_set_by_user;
@@ -210,6 +211,10 @@ struct sakura_core_terminal {
 	guint cols;
 	guint rows;
 	SakuraCoreTerminalStatus status;
+	SakuraTabKind kind;
+	gchar *codex_session_id;
+	gchar *codex_reasoning_effort;
+	gchar *tracking_token;
 };
 
 struct sakura_core_workspace {

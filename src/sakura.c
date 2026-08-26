@@ -2673,9 +2673,18 @@ sakura_init()
 		sakura_session_prepare_bash_integration(&sakura);
 		if (!option_new_window)
 			sakura_session_load_file(&sakura, !option_new_session && !option_new_window);
-		sakura.codex_tracking_source_id = g_timeout_add(500,
-		                                                 sakura_codex_tracking_poll_cb,
-		                                                 NULL);
+		{
+			GFile *tracking_directory = g_file_new_for_path(
+				sakura.codex_tracking_dir);
+			sakura.codex_tracking_monitor = g_file_monitor_directory(
+				tracking_directory, G_FILE_MONITOR_NONE, NULL, NULL);
+			g_object_unref(tracking_directory);
+			if (sakura.codex_tracking_monitor != NULL)
+				g_signal_connect(sakura.codex_tracking_monitor, "changed",
+				                 G_CALLBACK(sakura_codex_tracking_changed_cb), NULL);
+			sakura.codex_tracking_source_id = g_timeout_add(
+				100, sakura_codex_tracking_poll_cb, NULL);
+		}
 	}
 
 	/*** Sakura window initialization ***/
@@ -3360,6 +3369,7 @@ sakura_destroy()
 		g_source_remove(sakura.codex_tracking_source_id);
 		sakura.codex_tracking_source_id = 0;
 	}
+	g_clear_object(&sakura.codex_tracking_monitor);
 	if (sakura.cwd_tracking_source_id != 0) {
 		g_source_remove(sakura.cwd_tracking_source_id);
 		sakura.cwd_tracking_source_id = 0;

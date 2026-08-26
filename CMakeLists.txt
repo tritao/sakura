@@ -336,6 +336,12 @@ IF (Python3_Interpreter_FOUND)
 		        --binary $<TARGET_FILE:sakura>
 		DEPENDS sakura
 		USES_TERMINAL)
+	ADD_CUSTOM_TARGET (profile-codex-workload
+		COMMAND ${Python3_EXECUTABLE}
+		        ${CMAKE_SOURCE_DIR}/tests/profile-codex-workload.py
+		        --binary $<TARGET_FILE:sakura> --profile mixed
+		DEPENDS sakura
+		USES_TERMINAL)
 
 	FIND_PROGRAM (XVFB_EXECUTABLE Xvfb)
 	FIND_PROGRAM (XVFB_RUN_EXECUTABLE xvfb-run)

@@ -841,6 +841,8 @@ sakura_tab_start_agent_terminal(SakuraTab *tab, const gchar *cwd)
 	if ((sakura.session_restoring || tab->runtime_start_pending) &&
 	    sakura_agent_start_terminal_async(
 			&sakura, tab->terminal_id, page_id, group_id, task_id, cwd, cols, rows,
+			tab->kind, tab->codex_session_id, tab->codex_reasoning_effort,
+			tab->codex_tracking_token,
 			sakura_tab_agent_start_async_done, NULL, &error)) {
 		sakura_tab_set_agent_start_pending(tab, TRUE);
 		if (sakura.session_restoring)
@@ -1060,6 +1062,9 @@ sakura_tab_restart_agent_terminal(SakuraTab *tab)
 	tab->agent_terminal_lost = TRUE;
 	if (!sakura_agent_restart_terminal(&sakura, tab->terminal_id, page_id,
 	                                   group_id, task_id, cwd, cols, rows,
+	                                   tab->kind, tab->codex_session_id,
+	                                   tab->codex_reasoning_effort,
+	                                   tab->codex_tracking_token,
 	                                   &error)) {
 		g_warning("Could not restart agent terminal %s: %s", tab->terminal_id,
 		          error != NULL ? error->message : "unknown error");
@@ -3092,13 +3097,7 @@ sakura_tab_button_button_press_cb(GtkWidget *widget, GdkEventButton *event,
 		gtk_menu_shell_append(GTK_MENU_SHELL(menu), gtk_separator_menu_item_new());
 	}
 	if (tab->kind == SAKURA_TAB_CODEX) {
-		item = gtk_menu_item_new_with_label(_("Rename Codex session..."));
-		gtk_widget_set_sensitive(item, tab->codex_session_id != NULL &&
-		                               tab->codex_session_id[0] != '\0');
-		g_signal_connect_data(item, "activate",
-		                      G_CALLBACK(sakura_rename_codex_session_cb),
-		                      g_strdup(tab->terminal_id),
-		                      sakura_tab_string_data_free, 0);
+		item = sakura_codex_rename_menu_item_new(tab);
 	} else {
 		item = gtk_menu_item_new_with_label(_("Rename terminal..."));
 		g_signal_connect_data(item, "activate",

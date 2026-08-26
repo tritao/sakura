@@ -49,6 +49,7 @@ sakura_session_tab_record_free(gpointer data)
 	g_free(record->codex_session_id);
 	g_free(record->codex_session_name);
 	g_free(record->codex_reasoning_effort);
+	g_free(record->codex_tracking_token);
 	g_free(record);
 }
 

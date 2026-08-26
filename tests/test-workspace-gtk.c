@@ -96,6 +96,34 @@ test_codex_helper_resolution(void)
 
 
 static void
+test_codex_rename_menu_tracks_identification(void)
+{
+	SakuraTab *tab;
+	GtkWidget *item;
+
+	setup_workspace();
+	tab = sakura_page_at_page(1)->active_tab;
+	tab->kind = SAKURA_TAB_CODEX;
+	g_clear_pointer(&tab->codex_session_id, g_free);
+
+	item = sakura_codex_rename_menu_item_new(tab);
+	g_assert_nonnull(item);
+	g_assert_cmpstr(gtk_menu_item_get_label(GTK_MENU_ITEM(item)), ==,
+	                "Detecting Codex session...");
+	g_assert_false(gtk_widget_get_sensitive(item));
+	gtk_widget_destroy(item);
+
+	tab->codex_session_id = g_strdup("01234567-89ab-cdef-0123-456789abcdef");
+	item = sakura_codex_rename_menu_item_new(tab);
+	g_assert_cmpstr(gtk_menu_item_get_label(GTK_MENU_ITEM(item)), ==,
+	                "Rename Codex session...");
+	g_assert_true(gtk_widget_get_sensitive(item));
+	gtk_widget_destroy(item);
+	teardown_workspace();
+}
+
+
+static void
 test_codex_tracking_write(const gchar *directory, const gchar *token,
                           const gchar *event_name, const gchar *state)
 {
@@ -1463,6 +1491,33 @@ test_sidebar_selection_priority(void)
 	while (g_main_context_pending(NULL))
 		g_main_context_iteration(NULL, FALSE);
 	g_assert_true(sakura_sidebar_selected_node() == page_c->sidebar_node);
+	teardown_workspace();
+}
+
+
+static void
+test_sidebar_reorders_sessions_relative_to_siblings(void)
+{
+	SakuraPage *page_a, *page_b, *page_c;
+
+	setup_workspace();
+	setup_sidebar_fixture();
+	page_a = sakura_page_at_page(0);
+	page_b = sakura_page_at_page(1);
+	page_c = sakura_page_at_page(2);
+
+	g_assert_true(sakura_sidebar_reorder_page_relative(
+		page_a, page_c, GTK_TREE_VIEW_DROP_AFTER));
+	g_assert_true(sakura_page_at_page(0) == page_b);
+	g_assert_true(sakura_page_at_page(1) == page_c);
+	g_assert_true(sakura_page_at_page(2) == page_a);
+
+	g_assert_true(sakura_sidebar_reorder_page_relative(
+		page_a, page_b, GTK_TREE_VIEW_DROP_BEFORE));
+	g_assert_true(sakura_page_at_page(0) == page_a);
+	g_assert_true(sakura_page_at_page(1) == page_b);
+	g_assert_true(sakura_page_at_page(2) == page_c);
+	assert_workspace_consistent();
 	teardown_workspace();
 }
 
@@ -3433,6 +3488,8 @@ main(int argc, char **argv)
 	                test_codex_interrupt_event_matching);
 	g_test_add_func("/workspace/codex-helper-resolution",
 	                test_codex_helper_resolution);
+	g_test_add_func("/workspace/codex-rename-menu-tracks-identification",
+	                test_codex_rename_menu_tracks_identification);
 	g_test_add_func("/workspace/restored-attention-survives-codex-session-start",
 	                test_restored_attention_survives_codex_session_start);
 	g_test_add_func("/workspace/terminal-bell-does-not-create-codex-ready-state",
@@ -3458,6 +3515,8 @@ main(int argc, char **argv)
 	                test_workspace_clears_selection_for_empty_scope);
 	g_test_add_func("/workspace/sidebar-selection-priority",
 	                test_sidebar_selection_priority);
+	g_test_add_func("/workspace/sidebar-reorders-sessions-relative-to-siblings",
+	                test_sidebar_reorders_sessions_relative_to_siblings);
 	g_test_add_func("/workspace/sidebar-selection-survives-rebuild",
 	                test_sidebar_selection_survives_projection_rebuild);
 	g_test_add_func("/workspace/sidebar-primary-click-overrides-pending-selection",

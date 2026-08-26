@@ -39,6 +39,10 @@ message Terminal {
   uint32 cols = 6;
   uint32 rows = 7;
   uint32 status = 8;
+  uint32 kind = 9;
+  string codex_session_id = 10;
+  string codex_reasoning_effort = 11;
+  string tracking_token = 12;
 }
 
 message Page {
@@ -234,6 +238,7 @@ message CreateCodexRequest {
   string page_id = 7;
   string reasoning_effort = 8;
   string resume_session_id = 9;
+  string tracking_token = 10;
 }
 
 message TerminalInput {
@@ -271,6 +276,10 @@ message RestartTerminalRequest {
   uint32 cols = 5;
   uint32 rows = 6;
   string page_id = 7;
+  uint32 kind = 8;
+  string resume_session_id = 9;
+  string reasoning_effort = 10;
+  string tracking_token = 11;
 }
 
 message SubscribeEventsRequest {
