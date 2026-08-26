@@ -175,6 +175,11 @@ TARGET_LINK_LIBRARIES (sakura-agent PRIVATE
 	PkgConfig::PROTOBUF_C)
 ADD_DEPENDENCIES (sakura sakura-agent sakura-proto-generated)
 ADD_DEPENDENCIES (sakura-agent sakura-proto-generated)
+
+ADD_EXECUTABLE (sakura-ctl src/sakura-ctl.c)
+TARGET_INCLUDE_DIRECTORIES (sakura-ctl PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+TARGET_COMPILE_OPTIONS (sakura-ctl PRIVATE ${SAKURA_WARNING_FLAGS})
+TARGET_LINK_LIBRARIES (sakura-ctl PRIVATE sakura-control-client PkgConfig::GLIB)
 TARGET_COMPILE_DEFINITIONS (sakura PRIVATE
 	SAKURA_AGENT_BUILD_PATH="${CMAKE_BINARY_DIR}/src/sakura-agent")
 
@@ -204,7 +209,7 @@ IF (SAKURA_ENABLE_SANITIZERS)
 	SET (SAKURA_SANITIZER_COMPILE_FLAGS
 		-fsanitize=address,undefined -fno-omit-frame-pointer)
 	SET (SAKURA_SANITIZER_LINK_FLAGS -fsanitize=address,undefined)
-	FOREACH (target sakura sakura-control-client sakura-core sakura-agent)
+	FOREACH (target sakura sakura-control-client sakura-core sakura-agent sakura-ctl)
 		TARGET_COMPILE_OPTIONS (${target} PRIVATE ${SAKURA_SANITIZER_COMPILE_FLAGS})
 	ENDFOREACH ()
 	TARGET_LINK_OPTIONS (sakura PRIVATE ${SAKURA_SANITIZER_LINK_FLAGS})
@@ -378,7 +383,7 @@ ENDIF (Python3_Interpreter_FOUND)
 
 ADD_SUBDIRECTORY (po)
 
-INSTALL (TARGETS sakura sakura-agent RUNTIME DESTINATION bin)
+INSTALL (TARGETS sakura sakura-agent sakura-ctl RUNTIME DESTINATION bin)
 INSTALL (TARGETS sakura-control-client sakura-core
 	EXPORT SakuraTargets
 	ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
