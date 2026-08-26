@@ -518,6 +518,7 @@ void            sakura_add_tab_with_options (const gchar *, struct sakura_sideba
                                              const gchar *, gboolean, SakuraTabKind,
                                              SakuraToolKind, const gchar *, const gchar *,
                                              const gchar *, const gchar *, const gchar *,
+	                                         const gchar *,
                                              gint);
 gboolean        sakura_close_tab (gint); /* Save config, del tab and destroy sakura */
 void            sakura_destroy ();
@@ -1595,7 +1596,7 @@ sakura_split_current_cb (GtkWidget *widget, void *data)
 	sakura_workspace_begin_mutation();
 	sakura_tab_add_with_options(NULL, NULL, NULL, FALSE,
 	                            SAKURA_TAB_SHELL, SAKURA_TOOL_NONE,
-	                            NULL, NULL, NULL, NULL, NULL, -1, &config);
+	                            NULL, NULL, NULL, NULL, NULL, NULL, -1, &config);
 	sakura_workspace_end_mutation();
 }
 
@@ -1618,7 +1619,7 @@ sakura_layout_preset_add_pane(SakuraPage *page, SakuraLayoutNode *target,
 	config.split_direction = direction;
 	sakura_tab_add_with_options(NULL, NULL, NULL, FALSE,
 	                            SAKURA_TAB_SHELL, SAKURA_TOOL_NONE,
-	                            NULL, NULL, NULL, NULL, NULL, -1, &config);
+	                            NULL, NULL, NULL, NULL, NULL, NULL, -1, &config);
 	if (page->panes->len != old_len + 1)
 		return FALSE;
 	new_tab = g_ptr_array_index(page->panes, old_len);
@@ -3856,7 +3857,8 @@ void
 sakura_add_tab (void)
 {
 	sakura_add_tab_with_options(NULL, NULL, NULL, FALSE, SAKURA_TAB_SHELL,
-                            SAKURA_TOOL_NONE, NULL, NULL, NULL, NULL, NULL, -1);
+	                            SAKURA_TOOL_NONE, NULL, NULL, NULL, NULL, NULL,
+	                            NULL, -1);
 }
 
 
@@ -3871,6 +3873,7 @@ sakura_add_tab_with_options (const gchar *restore_cwd,
                               SakuraToolKind restore_tool,
                               const gchar *restore_codex_session_id,
                               const gchar *restore_codex_session_name,
+                              const gchar *restore_codex_model,
                               const gchar *restore_codex_reasoning_effort,
                               const gchar *restore_tool_target,
                               const gchar *restore_terminal_id,
@@ -3893,6 +3896,7 @@ sakura_add_tab_with_options (const gchar *restore_cwd,
 	sakura_tab_add_with_options(restore_cwd, restore_parent, restore_title,
 	                            restore_title_set, restore_kind, restore_tool,
 	                            restore_codex_session_id, restore_codex_session_name,
+	                            restore_codex_model,
 	                            restore_codex_reasoning_effort,
 	                            restore_tool_target, restore_terminal_id, restore_colorset,
 	                            &launch_config);
@@ -3923,7 +3927,8 @@ sakura_new_tab_for_group (SakuraSidebarNode *group)
 	sakura_session_accept_changes();
 	sakura_tab_add_with_options(NULL, group, NULL, FALSE,
 	                            SAKURA_TAB_SHELL, SAKURA_TOOL_NONE,
-	                            NULL, NULL, NULL, NULL, NULL, -1, &launch_config);
+	                            NULL, NULL, NULL, NULL, NULL, NULL, -1,
+	                            &launch_config);
 	sakura_workspace_end_mutation();
 }
 
@@ -3961,7 +3966,8 @@ sakura_new_tab_for_task (SakuraTask *task)
 	sakura_session_accept_changes();
 	sakura_tab_add_with_options(NULL, parent, NULL, FALSE,
 	                            SAKURA_TAB_SHELL, SAKURA_TOOL_NONE,
-	                            NULL, NULL, NULL, NULL, NULL, -1, &launch_config);
+	                            NULL, NULL, NULL, NULL, NULL, NULL, -1,
+	                            &launch_config);
 	if (task->sidebar_node == NULL && sakura.workspace->active_page != NULL &&
 	    sakura.workspace->active_page != previous_page)
 		sakura_task_attach_page(task, sakura.workspace->active_page);

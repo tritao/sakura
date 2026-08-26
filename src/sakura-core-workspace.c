@@ -184,6 +184,7 @@ sakura_core_terminal_free(SakuraCoreTerminal *terminal)
 	g_free(terminal->cwd);
 	g_free(terminal->title);
 	g_free(terminal->codex_session_id);
+	g_free(terminal->codex_model);
 	g_free(terminal->codex_reasoning_effort);
 	g_free(terminal->tracking_token);
 	g_free(terminal->page_id);

@@ -126,7 +126,7 @@ sakura_startup_restore_workspace_cb(gpointer data)
 		sakura_add_tab_with_options(NULL, NULL, NULL, FALSE,
 		                            SAKURA_TAB_CODEX, SAKURA_TOOL_NONE,
 		                            sakura.startup.options.codex_session,
-		                            NULL, NULL, NULL, NULL, -1);
+		                            NULL, NULL, NULL, NULL, NULL, -1);
 		sakura_startup_restore_complete(TRUE, NULL);
 		return G_SOURCE_REMOVE;
 	}

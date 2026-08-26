@@ -1770,6 +1770,7 @@ sakura_agent_restart_terminal(SakuraApp *app, const gchar *terminal_id,
 	                            const gchar *cwd, guint cols, guint rows,
 	                            SakuraTabKind kind,
 	                            const gchar *resume_session_id,
+	                            const gchar *model,
 	                            const gchar *reasoning_effort,
 	                            const gchar *tracking_token,
 	                            guint order, gboolean has_order,
@@ -1785,9 +1786,9 @@ sakura_agent_restart_terminal(SakuraApp *app, const gchar *terminal_id,
 		return FALSE;
 	request_id = g_uuid_string_random();
 	request = g_byte_array_new();
-	if (!sakura_control_encode_restart_terminal_request_with_order(
+	if (!sakura_control_encode_restart_terminal_request_with_model_and_order(
 			request_id, terminal_id, page_id, group_id, task_id, cwd, cols, rows,
-			kind, resume_session_id, reasoning_effort, tracking_token,
+			kind, resume_session_id, model, reasoning_effort, tracking_token,
 			order, has_order, request)) {
 		g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT,
 		                    "could not encode restart terminal request");
@@ -1910,6 +1911,7 @@ typedef struct {
 	guint rows;
 	SakuraTabKind kind;
 	gchar *resume_session_id;
+	gchar *model;
 	gchar *reasoning_effort;
 	gchar *tracking_token;
 	guint order;
@@ -1949,6 +1951,7 @@ sakura_agent_terminal_start_job_free(SakuraAgentTerminalStartJob *job)
 	g_free(job->task_id);
 	g_free(job->cwd);
 	g_free(job->resume_session_id);
+	g_free(job->model);
 	g_free(job->reasoning_effort);
 	g_free(job->tracking_token);
 	g_free(job);
@@ -2023,7 +2026,7 @@ sakura_agent_terminal_start_worker(gpointer data, gpointer user_data)
 		if (!sakura_agent_restart_terminal(
 				job->app, job->terminal_id, job->page_id, job->group_id,
 				job->task_id, job->cwd, job->cols, job->rows, job->kind,
-				job->resume_session_id, job->reasoning_effort,
+				job->resume_session_id, job->model, job->reasoning_effort,
 				job->tracking_token, job->order, job->has_order, &error))
 			result->error = g_steal_pointer(&error);
 		else
@@ -2055,6 +2058,7 @@ sakura_agent_start_terminal_async(
 	const gchar *group_id,
 	const gchar *task_id, const gchar *cwd, guint cols, guint rows,
 	SakuraTabKind kind, const gchar *resume_session_id,
+	const gchar *model,
 	const gchar *reasoning_effort, const gchar *tracking_token,
 	guint order, gboolean has_order,
 	SakuraAgentTerminalStartCallback callback, gpointer data, GError **error)
@@ -2090,6 +2094,7 @@ sakura_agent_start_terminal_async(
 	job->rows = rows;
 	job->kind = kind;
 	job->resume_session_id = g_strdup(resume_session_id);
+	job->model = g_strdup(model);
 	job->reasoning_effort = g_strdup(reasoning_effort);
 	job->tracking_token = g_strdup(tracking_token);
 	job->order = order;

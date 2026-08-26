@@ -34,17 +34,20 @@ def main():
         workspace = root / "workspace.ini"
         prompt = root / "prompt.md"
         manifest = root / "manifest.yml"
+        arguments_log = root / "codex-arguments.jsonl"
         prompt.write_text("Inspect the camera worktree.\n", encoding="utf-8")
         manifest.write_text(
             "sessions:\n"
             "  - title: \"Tony · Manifest\"\n"
             "    working_directory: /tmp\n"
             f"    prompt_file: {prompt}\n"
-            "    reasoning: high\n",
+            "    model: gpt-5.6-luna\n"
+            "    reasoning: xhigh\n",
             encoding="utf-8",
         )
         env = os.environ.copy()
         env["SAKURA_CODEX_BINARY"] = str(Path(args.fake_codex).resolve())
+        env["SAKURA_FAKE_CODEX_ARGUMENTS_LOG"] = str(arguments_log)
         agent = subprocess.Popen([
             args.agent, "--socket", str(socket), "--workspace-file",
             str(workspace), "--workspace-id", "ctl-integration",
@@ -59,7 +62,8 @@ def main():
                 args.ctl, "codex", *target, "--group-name", "Tony",
                 "--create-group", "--title", "Tony · Camera",
                 "--working-directory", "/tmp", "--prompt-file", str(prompt),
-                "--reasoning", "high", "--print", "json",
+                "--model", "gpt-5.6-luna", "--reasoning", "xhigh",
+                "--print", "json",
             )
             result = json.loads(created.stdout)
             assert result["workspace_id"] == "ctl-integration"
@@ -84,6 +88,17 @@ def main():
             page = saved["Page0"]
             assert page["title"] == "Tony · Camera"
             assert page.getboolean("title_set_by_user")
+            deadline = time.monotonic() + 2
+            while (not arguments_log.exists() or
+                   len(arguments_log.read_text(encoding="utf-8").splitlines()) < 2
+                   ) and time.monotonic() < deadline:
+                time.sleep(0.02)
+            launches = [json.loads(line) for line in
+                        arguments_log.read_text(encoding="utf-8").splitlines()]
+            assert len(launches) == 2
+            for launch in launches:
+                assert launch[launch.index("--model") + 1] == "gpt-5.6-luna"
+                assert "model_reasoning_effort=xhigh" in launch
         finally:
             agent.terminate()
             try:

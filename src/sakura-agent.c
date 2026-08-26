@@ -80,7 +80,8 @@ typedef struct {
 	 SAKURA_CONTROL_CAPABILITY_STRUCTURED_ERRORS | \
 	 SAKURA_CONTROL_CAPABILITY_TERMINAL_OUTPUT_OFFSETS | \
 	 SAKURA_CONTROL_CAPABILITY_CODEX | \
-	 SAKURA_CONTROL_CAPABILITY_FILESYSTEM)
+	 SAKURA_CONTROL_CAPABILITY_FILESYSTEM | \
+	 SAKURA_CONTROL_CAPABILITY_CODEX_MODEL)
 
 struct _SakuraAgent {
 	GMainLoop *loop;
@@ -1263,6 +1264,10 @@ sakura_agent_create_terminal_with_kind(SakuraAgent *agent,
 		child_argv[child_argc++] = codex_binary;
 		child_argv[child_argc++] = "--enable";
 		child_argv[child_argc++] = "hooks";
+		if (request->model != NULL && request->model[0] != '\0') {
+			child_argv[child_argc++] = "--model";
+			child_argv[child_argc++] = request->model;
+		}
 		if (request->reasoning_effort != NULL &&
 		    request->reasoning_effort[0] != '\0') {
 			reasoning_config = g_strdup_printf("model_reasoning_effort=%s",
@@ -1321,6 +1326,7 @@ sakura_agent_create_terminal_with_kind(SakuraAgent *agent,
 	create.core->status = SAKURA_TERMINAL_RUNNING;
 	create.core->kind = codex ? SAKURA_TAB_CODEX : SAKURA_TAB_SHELL;
 	create.core->codex_session_id = g_strdup(request->resume_session_id);
+	create.core->codex_model = g_strdup(request->model);
 	create.core->codex_reasoning_effort = g_strdup(request->reasoning_effort);
 	create.core->tracking_token = codex ? g_strdup(tracking_token) : NULL;
 	create.core->page_id = g_strdup(request->page_id);
@@ -1598,6 +1604,7 @@ sakura_agent_restart_terminal(SakuraAgent *agent,
 	SakuraCoreTerminal *logical_terminal;
 	SakuraControlRequest restart_request;
 	gchar *resume_session_id = NULL;
+	gchar *model = NULL;
 	gchar *reasoning_effort = NULL;
 	gchar *tracking_token = NULL;
 	gchar *restart_cwd = NULL;
@@ -1634,6 +1641,9 @@ sakura_agent_restart_terminal(SakuraAgent *agent,
 		resume_session_id = g_strdup(
 			request->resume_session_id != NULL && request->resume_session_id[0] != '\0'
 			? request->resume_session_id : logical_terminal->codex_session_id);
+		model = g_strdup(
+			request->model != NULL && request->model[0] != '\0'
+			? request->model : logical_terminal->codex_model);
 		reasoning_effort = g_strdup(
 			request->reasoning_effort != NULL && request->reasoning_effort[0] != '\0'
 			? request->reasoning_effort : logical_terminal->codex_reasoning_effort);
@@ -1641,6 +1651,7 @@ sakura_agent_restart_terminal(SakuraAgent *agent,
 			request->tracking_token != NULL && request->tracking_token[0] != '\0'
 			? request->tracking_token : logical_terminal->tracking_token);
 		restart_request.resume_session_id = resume_session_id;
+		restart_request.model = model;
 		restart_request.reasoning_effort = reasoning_effort;
 		restart_request.tracking_token = tracking_token;
 	}
@@ -1681,6 +1692,7 @@ sakura_agent_restart_terminal(SakuraAgent *agent,
 	    !sakura_core_workspace_remove_terminal(agent->workspace,
 	                                           logical_terminal)) {
 		g_free(resume_session_id);
+		g_free(model);
 		g_free(reasoning_effort);
 		g_free(tracking_token);
 		g_free(restart_cwd);
@@ -1704,6 +1716,7 @@ sakura_agent_restart_terminal(SakuraAgent *agent,
 			replacement->order = logical_order;
 	}
 	g_free(resume_session_id);
+	g_free(model);
 	g_free(reasoning_effort);
 	g_free(tracking_token);
 	g_free(restart_cwd);

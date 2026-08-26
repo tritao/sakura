@@ -147,7 +147,9 @@ workspaces are running, use C<sakura-ctl list> and select one with
 C<--workspace=ID> or C<--session-file=PATH>. C<sakura-ctl groups> lists group
 IDs, names, and directories. C<--group-name=NAME> resolves a unique group and
 C<--create-group> creates it when missing. Codex pages accept C<--title>,
-C<--session-name>, C<--prompt-file>, and C<--reasoning>; C<--print=json>
+C<--session-name>, C<--prompt-file>, C<--model>, and C<--reasoning>;
+C<--model> and C<--reasoning> independently override the user's Codex
+configuration for that session. C<--print=json>
 returns stable workspace, group, page, terminal, and Codex session IDs.
 
 C<sakura-ctl codex apply --group-name=NAME --manifest=PATH> applies a YAML

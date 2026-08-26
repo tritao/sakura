@@ -92,6 +92,7 @@ sakura_control_request_clear(SakuraControlRequest *request)
 	g_clear_pointer(&request->page_id, g_free);
 	g_clear_pointer(&request->terminal_id, g_free);
 	g_clear_pointer(&request->cwd, g_free);
+	g_clear_pointer(&request->model, g_free);
 	g_clear_pointer(&request->reasoning_effort, g_free);
 	g_clear_pointer(&request->resume_session_id, g_free);
 	g_clear_pointer(&request->tracking_token, g_free);
@@ -877,6 +878,19 @@ sakura_control_encode_create_codex_request(
 	guint cols, guint rows, const gchar *reasoning_effort,
 	const gchar *resume_session_id, GByteArray *payload)
 {
+	return sakura_control_encode_create_codex_request_with_model(
+		request_id, terminal_id, page_id, group_id, task_id, cwd, cols, rows,
+		NULL, reasoning_effort, resume_session_id, payload);
+}
+
+gboolean
+sakura_control_encode_create_codex_request_with_model(
+	const gchar *request_id, const gchar *terminal_id, const gchar *page_id,
+	const gchar *group_id, const gchar *task_id, const gchar *cwd,
+	guint cols, guint rows, const gchar *model,
+	const gchar *reasoning_effort, const gchar *resume_session_id,
+	GByteArray *payload)
+{
 	Sakura__Control__V1__CreateCodexRequest create_codex =
 		SAKURA__CONTROL__V1__CREATE_CODEX_REQUEST__INIT;
 	Sakura__Control__V1__Request request =
@@ -891,6 +905,7 @@ sakura_control_encode_create_codex_request(
 	create_codex.cwd = (gchar *)sakura_control_string(cwd);
 	create_codex.cols = cols;
 	create_codex.rows = rows;
+	create_codex.model = (gchar *)sakura_control_string(model);
 	create_codex.reasoning_effort =
 		(gchar *)sakura_control_string(reasoning_effort);
 	create_codex.resume_session_id =
@@ -1094,6 +1109,21 @@ sakura_control_encode_restart_terminal_request_with_order(
 	                                               gboolean has_order,
 	                                               GByteArray *payload)
 {
+	return sakura_control_encode_restart_terminal_request_with_model_and_order(
+		request_id, terminal_id, page_id, group_id, task_id, cwd, cols, rows,
+		kind, resume_session_id, NULL, reasoning_effort, tracking_token, order,
+		has_order, payload);
+}
+
+gboolean
+sakura_control_encode_restart_terminal_request_with_model_and_order(
+	const gchar *request_id, const gchar *terminal_id, const gchar *page_id,
+	const gchar *group_id, const gchar *task_id, const gchar *cwd,
+	guint cols, guint rows, SakuraTabKind kind, const gchar *resume_session_id,
+	const gchar *model, const gchar *reasoning_effort,
+	const gchar *tracking_token, guint order, gboolean has_order,
+	GByteArray *payload)
+{
 	Sakura__Control__V1__RestartTerminalRequest restart =
 		SAKURA__CONTROL__V1__RESTART_TERMINAL_REQUEST__INIT;
 	Sakura__Control__V1__Request request =
@@ -1111,6 +1141,7 @@ sakura_control_encode_restart_terminal_request_with_order(
 	restart.rows = rows;
 	restart.kind = kind;
 	restart.resume_session_id = (gchar *)sakura_control_string(resume_session_id);
+	restart.model = (gchar *)sakura_control_string(model);
 	restart.reasoning_effort = (gchar *)sakura_control_string(reasoning_effort);
 	restart.tracking_token = (gchar *)sakura_control_string(tracking_token);
 	restart.order = order;
@@ -1393,6 +1424,7 @@ sakura_control_decode_request(const guint8 *payload,
 			request->rows = decoded->create_codex->rows;
 			request->reasoning_effort = g_strdup(
 				decoded->create_codex->reasoning_effort);
+			request->model = g_strdup(decoded->create_codex->model);
 			request->resume_session_id = g_strdup(
 				decoded->create_codex->resume_session_id);
 			request->tracking_token = g_strdup(
@@ -1463,6 +1495,7 @@ sakura_control_decode_request(const guint8 *payload,
 				decoded->restart_terminal->resume_session_id);
 			request->reasoning_effort = g_strdup(
 				decoded->restart_terminal->reasoning_effort);
+			request->model = g_strdup(decoded->restart_terminal->model);
 			request->tracking_token = g_strdup(
 				decoded->restart_terminal->tracking_token);
 			request->order = decoded->restart_terminal->order;
@@ -1542,6 +1575,8 @@ sakura_control_fill_terminal(Sakura__Control__V1__Terminal *message,
 		terminal->codex_session_id);
 	message->codex_reasoning_effort = (gchar *)sakura_control_string(
 		terminal->codex_reasoning_effort);
+	message->codex_model = (gchar *)sakura_control_string(
+		terminal->codex_model);
 	message->tracking_token = (gchar *)sakura_control_string(
 		terminal->tracking_token);
 	message->page_id = (gchar *)sakura_control_string(terminal->page_id);
@@ -2266,6 +2301,7 @@ sakura_control_decode_workspace_snapshot(
 		tab->codex_session_id = g_strdup(wire_terminal->codex_session_id);
 		tab->codex_reasoning_effort =
 			g_strdup(wire_terminal->codex_reasoning_effort);
+		tab->codex_model = g_strdup(wire_terminal->codex_model);
 		tab->codex_tracking_token = g_strdup(wire_terminal->tracking_token);
 		tab->page_id = g_strdup(wire_terminal->page_id);
 		tab->order = wire_terminal->order;

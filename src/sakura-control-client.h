@@ -17,6 +17,7 @@
 #define SAKURA_CONTROL_CAPABILITY_TERMINAL_OUTPUT_OFFSETS G_GUINT64_CONSTANT(256)
 #define SAKURA_CONTROL_CAPABILITY_CODEX G_GUINT64_CONSTANT(512)
 #define SAKURA_CONTROL_CAPABILITY_FILESYSTEM G_GUINT64_CONSTANT(1024)
+#define SAKURA_CONTROL_CAPABILITY_CODEX_MODEL G_GUINT64_CONSTANT(2048)
 #define SAKURA_CONTROL_CONNECT_TIMEOUT_SECONDS 2
 #define SAKURA_CONTROL_HANDSHAKE_TIMEOUT_SECONDS 2
 #define SAKURA_CONTROL_REQUEST_TIMEOUT_SECONDS 5
@@ -141,6 +142,12 @@ gboolean sakura_control_client_create_codex_terminal(
 	const gchar *cwd, guint cols, guint rows, const gchar *reasoning_effort,
 	const gchar *resume_session_id, gchar **created_terminal_id,
 	GError **error);
+gboolean sakura_control_client_create_codex_terminal_with_model(
+	SakuraControlClientConnection *connection, const gchar *terminal_id,
+	const gchar *page_id, const gchar *group_id, const gchar *task_id,
+	const gchar *cwd, guint cols, guint rows, const gchar *model,
+	const gchar *reasoning_effort, const gchar *resume_session_id,
+	gchar **created_terminal_id, GError **error);
 gboolean sakura_control_client_attach_terminal(
 	SakuraControlClientConnection *connection, const gchar *terminal_id,
 	guint cols, guint rows, SakuraControlTerminalAttachment *attachment,

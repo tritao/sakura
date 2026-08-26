@@ -582,6 +582,7 @@ struct sakura_tab {
 	gchar *tool_target;
 	gchar *codex_session_id;
 	gchar *codex_session_name;
+	gchar *codex_model;
 	gchar *codex_reasoning_effort;
 	gchar *codex_resume_cwd;
 	gchar *codex_turn_id;
@@ -851,6 +852,7 @@ void sakura_tab_add_with_options(const gchar *restore_cwd,
                                  SakuraToolKind restore_tool,
                                  const gchar *restore_codex_session_id,
                                  const gchar *restore_codex_session_name,
+                                 const gchar *restore_codex_model,
                                  const gchar *restore_codex_reasoning_effort,
                                  const gchar *restore_tool_target,
                                  const gchar *restore_terminal_id,
@@ -898,6 +900,7 @@ void sakura_add_tab_with_options(const gchar *restore_cwd,
                                  SakuraToolKind restore_tool,
                                  const gchar *restore_codex_session,
                                  const gchar *restore_codex_name,
+                                 const gchar *restore_codex_model,
                                  const gchar *restore_codex_reasoning_effort,
                                  const gchar *restore_tool_target,
                                  const gchar *restore_terminal_id,
@@ -1054,6 +1057,7 @@ gboolean sakura_agent_start_terminal_async(
 	const gchar *group_id,
 	const gchar *task_id, const gchar *cwd, guint cols, guint rows,
 	SakuraTabKind kind, const gchar *resume_session_id,
+	const gchar *model,
 	const gchar *reasoning_effort, const gchar *tracking_token,
 	guint order, gboolean has_order,
 	SakuraAgentTerminalStartCallback callback, gpointer data,
@@ -1118,6 +1122,7 @@ gboolean sakura_agent_restart_terminal(
 	const gchar *group_id,
 	const gchar *task_id, const gchar *cwd, guint cols, guint rows,
 	SakuraTabKind kind, const gchar *resume_session_id,
+	const gchar *model,
 	const gchar *reasoning_effort, const gchar *tracking_token,
 	guint order, gboolean has_order,
 	GError **error);

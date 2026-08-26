@@ -98,6 +98,7 @@ test_session_snapshot_round_trip(void)
 	tab->tool_id = g_strdup("gitui");
 	tab->codex_session_id = g_strdup("session-1");
 	tab->codex_session_name = g_strdup("Planning");
+	tab->codex_model = g_strdup("gpt-5.6-luna");
 	tab->codex_reasoning_effort = g_strdup("high");
 	tab->colorset = 4;
 	tab->kind = SAKURA_TAB_TOOL;
@@ -156,6 +157,7 @@ test_session_snapshot_round_trip(void)
 		g_assert_cmpstr(loaded_tab->tool_id, ==, "gitui");
 		g_assert_cmpstr(loaded_tab->codex_session_id, ==, "session-1");
 		g_assert_cmpstr(loaded_tab->codex_session_name, ==, "Planning");
+		g_assert_cmpstr(loaded_tab->codex_model, ==, "gpt-5.6-luna");
 		g_assert_cmpstr(loaded_tab->codex_reasoning_effort, ==, "high");
 		g_assert_cmpint(loaded_tab->colorset, ==, 4);
 		g_assert_true(loaded_tab->title_set_by_user);

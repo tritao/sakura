@@ -88,8 +88,12 @@ sessions:
     session_name: "OpenTony · Camera Reversing"
     working_directory: /home/joao/dev/OpenTony-camera
     prompt_file: /home/joao/dev/OpenTony-shared/sessions/camera.md
-    reasoning: high
+    model: gpt-5.6-luna
+    reasoning: xhigh
 ```
+
+`model` and `reasoning` are independent per-session Codex overrides. Omitting
+either keeps the corresponding value from the user's Codex configuration.
 
 Run `sakura-ctl --help` for terminal-size and direct-socket options.
 

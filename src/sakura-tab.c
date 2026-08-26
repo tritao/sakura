@@ -341,7 +341,7 @@ sakura_tab_spawn_codex(SakuraTab *tab, const gchar *cwd, gchar **env)
 	gchar **codex_env = g_get_environ();
 	gchar *reasoning_config = NULL;
 	const gchar *launch_cwd = cwd;
-	gchar *argv[14] = { (gchar *)"codex", (gchar *)"--yolo",
+	gchar *argv[16] = { (gchar *)"codex", (gchar *)"--yolo",
 	                    (gchar *)"--enable", (gchar *)"hooks",
 	                    NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL };
 	guint next_arg = 4;
@@ -384,6 +384,10 @@ sakura_tab_spawn_codex(SakuraTab *tab, const gchar *cwd, gchar **env)
 		launch_cwd = tab->codex_resume_cwd;
 		argv[next_arg++] = (gchar *)"--cd";
 		argv[next_arg++] = tab->codex_resume_cwd;
+	}
+	if (tab->codex_model != NULL && tab->codex_model[0] != '\0') {
+		argv[next_arg++] = (gchar *)"--model";
+		argv[next_arg++] = tab->codex_model;
 	}
 	if (sakura_codex_reasoning_effort_is_valid(tab->codex_reasoning_effort)) {
 		reasoning_config = g_strdup_printf("model_reasoning_effort=%s",
@@ -848,7 +852,8 @@ sakura_tab_start_agent_terminal(SakuraTab *tab, const gchar *cwd)
 	if ((sakura.session_restoring || tab->runtime_start_pending) &&
 	    sakura_agent_start_terminal_async(
 			&sakura, tab->terminal_id, page_id, group_id, task_id, cwd, cols, rows,
-			tab->kind, tab->codex_session_id, tab->codex_reasoning_effort,
+			tab->kind, tab->codex_session_id, tab->codex_model,
+			tab->codex_reasoning_effort,
 			tab->codex_tracking_token,
 			tab->order, tab->has_order,
 			sakura_tab_agent_start_async_done, NULL, &error)) {
@@ -885,7 +890,8 @@ sakura_tab_start_agent_terminal(SakuraTab *tab, const gchar *cwd)
 		if (!sakura_agent_restart_terminal(
 				&sakura, tab->terminal_id, page_id, group_id, task_id, cwd,
 				cols, rows, tab->kind, tab->codex_session_id,
-				tab->codex_reasoning_effort, tab->codex_tracking_token,
+				tab->codex_model, tab->codex_reasoning_effort,
+				tab->codex_tracking_token,
 				tab->order, tab->has_order, &error)) {
 			g_clear_error(&error);
 			g_free(replay_data);
@@ -1121,6 +1127,7 @@ sakura_tab_restart_agent_terminal(SakuraTab *tab)
 	if (!sakura_agent_restart_terminal(&sakura, tab->terminal_id, page_id,
 	                                   group_id, task_id, cwd, cols, rows,
 	                                   tab->kind, tab->codex_session_id,
+	                                   tab->codex_model,
 	                                   tab->codex_reasoning_effort,
 	                                   tab->codex_tracking_token,
 	                                   tab->order, tab->has_order,
@@ -1251,6 +1258,7 @@ sakura_tab_add_with_options (const gchar *restore_cwd,
                               SakuraToolKind restore_tool,
                               const gchar *restore_codex_session_id,
                               const gchar *restore_codex_session_name,
+                              const gchar *restore_codex_model,
                               const gchar *restore_codex_reasoning_effort,
                               const gchar *restore_tool_target,
                               const gchar *restore_terminal_id,
@@ -1323,6 +1331,7 @@ sakura_tab_add_with_options (const gchar *restore_cwd,
 	               ? SAKURA_TAB_STATUS_IDLE : SAKURA_TAB_STATUS_NONE;
 	sk_tab->codex_session_id = g_strdup(restore_codex_session_id);
 	sk_tab->codex_session_name = g_strdup(restore_codex_session_name);
+	sk_tab->codex_model = g_strdup(restore_codex_model);
 	sk_tab->codex_reasoning_effort = sakura_codex_reasoning_effort_is_valid(
 		restore_codex_reasoning_effort) ? g_strdup(restore_codex_reasoning_effort) : NULL;
 	if (sk_tab->codex_session_name == NULL &&
@@ -2852,6 +2861,7 @@ sakura_tab_free(SakuraTab *tab)
 	g_free(tab->tool_target);
 	g_free(tab->codex_session_id);
 	g_free(tab->codex_session_name);
+	g_free(tab->codex_model);
 	g_free(tab->codex_reasoning_effort);
 	g_free(tab->codex_resume_cwd);
 	g_free(tab->codex_turn_id);

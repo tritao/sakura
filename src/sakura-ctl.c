@@ -11,6 +11,7 @@ typedef struct {
 	gchar *session_name;
 	gchar *working_directory;
 	gchar *prompt_file;
+	gchar *model;
 	gchar *reasoning;
 } SakuraCtlManifestEntry;
 
@@ -23,6 +24,7 @@ manifest_entry_free(SakuraCtlManifestEntry *entry)
 	g_free(entry->session_name);
 	g_free(entry->working_directory);
 	g_free(entry->prompt_file);
+	g_free(entry->model);
 	g_free(entry->reasoning);
 	g_free(entry);
 }
@@ -84,6 +86,8 @@ parse_manifest(const gchar *path, GError **error)
 		else if (strcmp(key, "prompt_file") == 0 ||
 		         strcmp(key, "prompt-file") == 0)
 			current->prompt_file = g_steal_pointer(&value);
+		else if (strcmp(key, "model") == 0)
+			current->model = g_steal_pointer(&value);
 		else if (strcmp(key, "reasoning") == 0)
 			current->reasoning = g_steal_pointer(&value);
 	}
@@ -347,6 +351,10 @@ apply_manifest(SakuraControlClientConnection *connection,
 			g_ptr_array_add(args, g_strdup("--reasoning"));
 			g_ptr_array_add(args, g_strdup(entry->reasoning));
 		}
+		if (entry->model != NULL && entry->model[0] != '\0') {
+			g_ptr_array_add(args, g_strdup("--model"));
+			g_ptr_array_add(args, g_strdup(entry->model));
+		}
 		if (entry->prompt_file != NULL && entry->prompt_file[0] != '\0') {
 			g_ptr_array_add(args, g_strdup("--prompt-file"));
 			g_ptr_array_add(args, g_strdup(entry->prompt_file));
@@ -432,7 +440,7 @@ main(int argc, char **argv)
 {
 	gchar *workspace = NULL, *session = NULL, *socket_path = NULL;
 	gchar *cwd = NULL, *group_id = NULL, *group_name = NULL, *task_id = NULL;
-	gchar *reasoning = NULL, *resume = NULL, *title = NULL;
+	gchar *model = NULL, *reasoning = NULL, *resume = NULL, *title = NULL;
 	gchar *session_name = NULL, *prompt_file = NULL, *print_format = NULL;
 	gchar *manifest = NULL;
 	gchar **arguments = NULL;
@@ -472,6 +480,8 @@ main(int argc, char **argv)
 		  "Initial terminal height", "COUNT" },
 		{ "reasoning", 0, 0, G_OPTION_ARG_STRING, &reasoning,
 		  "Codex reasoning effort", "EFFORT" },
+		{ "model", 'm', 0, G_OPTION_ARG_STRING, &model,
+		  "Codex model override", "MODEL" },
 		{ "resume", 0, 0, G_OPTION_ARG_STRING, &resume,
 		  "Resume a Codex session by ID", "SESSION" },
 		{ "title", 0, 0, G_OPTION_ARG_STRING, &title,
@@ -552,7 +562,8 @@ main(int argc, char **argv)
 		endpoint->socket_path, endpoint->workspace_id, "sakura-ctl",
 		SAKURA_CONTROL_CAPABILITY_WORKSPACE |
 		SAKURA_CONTROL_CAPABILITY_TERMINALS |
-		(codex ? SAKURA_CONTROL_CAPABILITY_CODEX : 0), &error);
+		(codex ? SAKURA_CONTROL_CAPABILITY_CODEX : 0) |
+		(model != NULL ? SAKURA_CONTROL_CAPABILITY_CODEX_MODEL : 0), &error);
 	if (connection == NULL)
 		goto out;
 	if (strcmp(command, "groups") == 0) {
@@ -585,10 +596,10 @@ main(int argc, char **argv)
 		                    "--create-group requires --group-name");
 		goto out;
 	}
-	if (!codex && (reasoning != NULL || resume != NULL || prompt_file != NULL ||
+	if (!codex && (model != NULL || reasoning != NULL || resume != NULL || prompt_file != NULL ||
 	               session_name != NULL)) {
 		g_set_error_literal(&error, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT,
-		                    "--reasoning, --resume, --prompt-file, and --session-name are only valid with codex");
+		                    "--model, --reasoning, --resume, --prompt-file, and --session-name are only valid with codex");
 		goto out;
 	}
 	if (apply && (manifest == NULL || manifest[0] == '\0')) {
@@ -652,9 +663,10 @@ main(int argc, char **argv)
 	}
 	page_id = g_uuid_string_random();
 	if (codex) {
-		success = sakura_control_client_create_codex_terminal(
+		success = sakura_control_client_create_codex_terminal_with_model(
 			connection, NULL, page_id, group_id, task_id, launch_cwd,
-			(guint)columns, (guint)rows, reasoning, resume, &terminal_id, &error);
+			(guint)columns, (guint)rows, model, reasoning, resume, &terminal_id,
+			&error);
 	} else {
 		success = sakura_control_client_create_terminal_with_page(
 			connection, NULL, page_id, group_id, task_id, launch_cwd,
@@ -720,7 +732,8 @@ out:
 	sakura_session_snapshot_free(snapshot);
 	g_strfreev(arguments);
 	g_free(workspace); g_free(session); g_free(socket_path); g_free(cwd);
-	g_free(group_id); g_free(group_name); g_free(task_id); g_free(reasoning);
+	g_free(group_id); g_free(group_name); g_free(task_id); g_free(model);
+	g_free(reasoning);
 	g_free(resume); g_free(title); g_free(session_name); g_free(prompt_file);
 	g_free(print_format); g_free(manifest);
 	if (context != NULL)

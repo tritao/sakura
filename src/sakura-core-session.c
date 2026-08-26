@@ -779,6 +779,8 @@ sakura_session_snapshot_load_into(GKeyFile *key_file,
 	                                                "codex_session_id", NULL);
 		tab->codex_session_name = g_key_file_get_string(key_file, section,
 		                                                  "codex_session_name", NULL);
+		tab->codex_model = g_key_file_get_string(key_file, section,
+		                                         "codex_model", NULL);
 		tab->codex_reasoning_effort = g_key_file_get_string(key_file, section,
 		                                                    "codex_reasoning_effort", NULL);
 		if (g_key_file_has_key(key_file, section, "colorset", NULL)) {
@@ -1007,6 +1009,8 @@ sakura_session_snapshot_save(const SakuraSessionSnapshot *snapshot,
 			g_key_file_set_string(key_file, section, "codex_session_id", tab->codex_session_id);
 		if (tab->codex_session_name != NULL && tab->codex_session_name[0] != '\0')
 			g_key_file_set_string(key_file, section, "codex_session_name", tab->codex_session_name);
+		if (tab->codex_model != NULL && tab->codex_model[0] != '\0')
+			g_key_file_set_string(key_file, section, "codex_model", tab->codex_model);
 		if (tab->codex_reasoning_effort != NULL && tab->codex_reasoning_effort[0] != '\0')
 			g_key_file_set_string(key_file, section, "codex_reasoning_effort",
 			                      tab->codex_reasoning_effort);

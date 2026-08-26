@@ -2222,7 +2222,7 @@ sakura_new_codex_in_scope_cb (GtkWidget *widget, void *data)
 		parent = sakura.sidebar_root;
 	sakura_session_accept_changes();
 	sakura_add_tab_with_options(cwd, parent, NULL, FALSE, SAKURA_TAB_CODEX,
-	                            SAKURA_TOOL_NONE, NULL, NULL, reasoning_effort,
+	                            SAKURA_TOOL_NONE, NULL, NULL, NULL, reasoning_effort,
 	                            NULL, NULL, -1);
 	sakura_workspace_end_mutation();
 	g_free(cwd);
@@ -4843,6 +4843,7 @@ sakura_workspace_restore_layout_subtree(SakuraPage *page,
 		                            sakura_tool_from_id(second_tab_record->tool_id),
 		                            second_tab_record->codex_session_id,
 		                            second_tab_record->codex_session_name,
+		                            second_tab_record->codex_model,
 		                            second_tab_record->codex_reasoning_effort,
 		                            second_tab_record->tool_target,
 		                            second_tab_record->terminal_id,
@@ -4922,6 +4923,7 @@ sakura_workspace_restore_layout_snapshot(SakuraSessionSnapshot *snapshot)
 		                            sakura_tool_from_id(tab_record->tool_id),
 		                            tab_record->codex_session_id,
 		                            tab_record->codex_session_name,
+		                            tab_record->codex_model,
 		                            tab_record->codex_reasoning_effort,
 		                            tab_record->tool_target,
 		                            tab_record->terminal_id,
@@ -5077,6 +5079,7 @@ sakura_workspace_restore_snapshot (SakuraSessionSnapshot *snapshot)
 		                            title_set, tab_kind, tool_kind,
 		                            tab_kind == SAKURA_TAB_CODEX ? record->codex_session_id : NULL,
 		                            tab_kind == SAKURA_TAB_CODEX ? record->codex_session_name : NULL,
+		                            tab_kind == SAKURA_TAB_CODEX ? record->codex_model : NULL,
 		                            tab_kind == SAKURA_TAB_CODEX ? record->codex_reasoning_effort : NULL,
 		                            tab_kind == SAKURA_TAB_TOOL ? record->tool_target : NULL,
 		                            sakura_terminal_id_is_valid(record->terminal_id)
@@ -5213,6 +5216,7 @@ sakura_workspace_restore_layout_page(SakuraWorkspaceRestoreJob *job,
 	                            sakura_tool_from_id(tab_record->tool_id),
 	                            tab_record->codex_session_id,
 	                            tab_record->codex_session_name,
+	                            tab_record->codex_model,
 	                            tab_record->codex_reasoning_effort,
 	                            tab_record->tool_target,
 	                            tab_record->terminal_id,
@@ -5291,6 +5295,8 @@ sakura_workspace_restore_tab_record(SakuraWorkspaceRestoreJob *job,
 	                            ? record->codex_session_id : NULL,
 	                            tab_kind == SAKURA_TAB_CODEX
 	                            ? record->codex_session_name : NULL,
+	                            tab_kind == SAKURA_TAB_CODEX
+	                            ? record->codex_model : NULL,
 	                            tab_kind == SAKURA_TAB_CODEX
 	                            ? record->codex_reasoning_effort : NULL,
 	                            tab_kind == SAKURA_TAB_TOOL

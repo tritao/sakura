@@ -623,9 +623,9 @@ test_mutation_request_roundtrip(void)
 	sakura_control_request_clear(&request);
 	g_byte_array_set_size(encoded, 0);
 
-	g_assert_true(sakura_control_encode_create_codex_request(
+	g_assert_true(sakura_control_encode_create_codex_request_with_model(
 		"create-codex", "codex-1", "page-1", "group-1", "task-1",
-		"/tmp", 120, 50, "high", "resume-1", encoded));
+		"/tmp", 120, 50, "gpt-5.6-luna", "high", "resume-1", encoded));
 	g_assert_true(sakura_control_decode_request(encoded->data, encoded->len,
 	                                           &request, &error));
 	g_assert_no_error(error);
@@ -635,6 +635,7 @@ test_mutation_request_roundtrip(void)
 	g_assert_cmpstr(request.group_id, ==, "group-1");
 	g_assert_cmpstr(request.task_id, ==, "task-1");
 	g_assert_cmpstr(request.cwd, ==, "/tmp");
+	g_assert_cmpstr(request.model, ==, "gpt-5.6-luna");
 	g_assert_cmpstr(request.reasoning_effort, ==, "high");
 	g_assert_cmpstr(request.resume_session_id, ==, "resume-1");
 	g_assert_cmpuint(request.cols, ==, 120);
@@ -642,9 +643,10 @@ test_mutation_request_roundtrip(void)
 	sakura_control_request_clear(&request);
 	g_byte_array_set_size(encoded, 0);
 
-	g_assert_true(sakura_control_encode_restart_terminal_request_with_order(
+	g_assert_true(sakura_control_encode_restart_terminal_request_with_model_and_order(
 		"restart-terminal", "terminal-1", "page-1", "group-1", "task-1",
-		"/tmp", 120, 50, SAKURA_TAB_CODEX, "resume-restart", "high",
+		"/tmp", 120, 50, SAKURA_TAB_CODEX, "resume-restart",
+		"gpt-5.6-luna", "high",
 		"tracking-restart", 9, TRUE, encoded));
 	g_assert_true(sakura_control_decode_request(encoded->data, encoded->len,
 	                                           &request, &error));
@@ -660,6 +662,7 @@ test_mutation_request_roundtrip(void)
 	g_assert_cmpuint(request.rows, ==, 50);
 	g_assert_cmpuint(request.terminal_kind, ==, SAKURA_TAB_CODEX);
 	g_assert_cmpstr(request.resume_session_id, ==, "resume-restart");
+	g_assert_cmpstr(request.model, ==, "gpt-5.6-luna");
 	g_assert_cmpstr(request.reasoning_effort, ==, "high");
 	g_assert_cmpstr(request.tracking_token, ==, "tracking-restart");
 	g_assert_true(request.has_order);

@@ -61,6 +61,7 @@ typedef struct {
 	gchar *page_id;
 	gchar *terminal_id;
 	gchar *cwd;
+	gchar *model;
 	gchar *reasoning_effort;
 	gchar *resume_session_id;
 	gchar *tracking_token;
@@ -241,6 +242,11 @@ gboolean sakura_control_encode_create_codex_request(
 	const gchar *group_id, const gchar *task_id, const gchar *cwd,
 	guint cols, guint rows, const gchar *reasoning_effort,
 	const gchar *resume_session_id, GByteArray *payload);
+gboolean sakura_control_encode_create_codex_request_with_model(
+	const gchar *request_id, const gchar *terminal_id, const gchar *page_id,
+	const gchar *group_id, const gchar *task_id, const gchar *cwd,
+	guint cols, guint rows, const gchar *model, const gchar *reasoning_effort,
+	const gchar *resume_session_id, GByteArray *payload);
 gboolean sakura_control_encode_terminal_input_request(
 	const gchar *request_id, const gchar *terminal_id, const guint8 *data,
 	gsize data_length, GByteArray *payload);
@@ -277,6 +283,13 @@ gboolean sakura_control_encode_restart_terminal_request_with_order(
 	guint cols, guint rows, SakuraTabKind kind, const gchar *resume_session_id,
 	const gchar *reasoning_effort, const gchar *tracking_token,
 	guint order, gboolean has_order, GByteArray *payload);
+gboolean sakura_control_encode_restart_terminal_request_with_model_and_order(
+	const gchar *request_id, const gchar *terminal_id, const gchar *page_id,
+	const gchar *group_id, const gchar *task_id, const gchar *cwd,
+	guint cols, guint rows, SakuraTabKind kind, const gchar *resume_session_id,
+	const gchar *model, const gchar *reasoning_effort,
+	const gchar *tracking_token, guint order, gboolean has_order,
+	GByteArray *payload);
 gboolean sakura_control_encode_subscribe_events_request(
 	const gchar *request_id, guint64 after_sequence, GByteArray *payload);
 gboolean sakura_control_decode_request(const guint8 *payload,

@@ -101,6 +101,7 @@ typedef struct {
 	gchar *tool_target;
 	gchar *codex_session_id;
 	gchar *codex_session_name;
+	gchar *codex_model;
 	gchar *codex_reasoning_effort;
 	gchar *codex_tracking_token;
 	gchar *page_id;
@@ -215,6 +216,7 @@ struct sakura_core_terminal {
 	SakuraCoreTerminalStatus status;
 	SakuraTabKind kind;
 	gchar *codex_session_id;
+	gchar *codex_model;
 	gchar *codex_reasoning_effort;
 	gchar *tracking_token;
 	gchar *page_id;
