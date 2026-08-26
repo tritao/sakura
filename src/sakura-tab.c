@@ -2757,6 +2757,7 @@ sakura_tab_set_status(SakuraTab *tab, SakuraTabStatus status, gboolean attention
 {
 	gboolean event_attention = attention;
 	gboolean visible_attention = attention;
+	gint64 trace_started;
 
 	if (tab == NULL)
 		return;
@@ -2771,6 +2772,7 @@ sakura_tab_set_status(SakuraTab *tab, SakuraTabStatus status, gboolean attention
 
 	if (tab->status == status && tab->attention == visible_attention)
 		return;
+	trace_started = sakura_ui_latency_trace_begin();
 	if (event_attention && (tab->status != status || !tab->attention))
 		tab->attention_timestamp = g_get_real_time();
 
@@ -2793,6 +2795,7 @@ sakura_tab_set_status(SakuraTab *tab, SakuraTabStatus status, gboolean attention
 	if (visible_attention && sakura.main_window != NULL &&
 	    !gtk_window_is_active(GTK_WINDOW(sakura.main_window)) && sakura.urgent_bell)
 		gtk_window_set_urgency_hint(GTK_WINDOW(sakura.main_window), TRUE);
+	sakura_ui_latency_trace_end("codex-status-update", trace_started);
 }
 
 void

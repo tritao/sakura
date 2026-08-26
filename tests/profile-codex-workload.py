@@ -20,6 +20,9 @@ import time
 PROFILES = ("idle", "active", "mixed")
 LATENCY_PATTERN = re.compile(
     r"selection-focus-latency-us=(\d+) terminal=(profile-codex-\d+)")
+STALL_PATTERN = re.compile(
+    r"ui-main-loop-stall-us=(\d+) cause=([a-z-]+) cause-age-us=(-?\d+)")
+ACTIVITY_PATTERN = re.compile(r"ui-activity-us=(\d+) cause=([a-z-]+)")
 
 
 def require(command):
@@ -165,6 +168,16 @@ def percentile(values, percent):
     index = max(0, min(len(ordered) - 1,
                        int((percent / 100) * len(ordered) + 0.999999) - 1))
     return round(ordered[index] / 1000, 3)
+
+
+def duration_summary(values):
+    return {
+        "count": len(values),
+        "p50_ms": percentile(values, 50),
+        "p95_ms": percentile(values, 95),
+        "p99_ms": percentile(values, 99),
+        "max_ms": round(max(values) / 1000, 3) if values else None,
+    }
 
 
 def write_fixture(config_file, sessions):
@@ -363,6 +376,8 @@ def main():
     parser.add_argument("--max-focus-p95-ms", type=float, default=25.0)
     parser.add_argument("--max-switch-failure-percent", type=float, default=1.0)
     parser.add_argument("--min-focus-sample-percent", type=float, default=98.0)
+    parser.add_argument("--max-main-loop-stall-p95-ms", type=float, default=50.0)
+    parser.add_argument("--max-main-loop-stalls-over-50", type=int, default=3)
     parser.add_argument("--json", metavar="PATH", help="also write metrics as JSON")
     args = parser.parse_args()
     if (args.sessions < 1 or args.duration <= 0 or args.warmup < 0 or
@@ -475,10 +490,28 @@ def main():
             log.flush()
             with log_path.open(encoding="utf-8", errors="replace") as latency_log:
                 latency_log.seek(latency_log_offset)
-                latency_events = LATENCY_PATTERN.findall(latency_log.read())
+                trace_contents = latency_log.read()
+            latency_events = LATENCY_PATTERN.findall(trace_contents)
+            stall_events = STALL_PATTERN.findall(trace_contents)
+            activity_events = ACTIVITY_PATTERN.findall(trace_contents)
             if expected_interactions:
                 latency_events = latency_events[-len(expected_interactions):]
             latency_us = [int(value) for value, _ in latency_events]
+            stall_us = [int(value) for value, _, _ in stall_events]
+            stall_causes = {}
+            for value, cause, age in stall_events:
+                cause_rows = stall_causes.setdefault(
+                    cause, {"count": 0, "max_ms": 0.0,
+                            "max_cause_age_ms": 0.0})
+                cause_rows["count"] += 1
+                cause_rows["max_ms"] = max(cause_rows["max_ms"],
+                                             int(value) / 1000)
+                if int(age) >= 0:
+                    cause_rows["max_cause_age_ms"] = max(
+                        cause_rows["max_cause_age_ms"], int(age) / 1000)
+            activity_by_cause = {}
+            for value, cause in activity_events:
+                activity_by_cause.setdefault(cause, []).append(int(value))
             report.update({
                 "sidebar_switch_attempts": len(expected_interactions),
                 "sidebar_switch_samples": len(latency_us),
@@ -498,6 +531,19 @@ def main():
                 "sidebar_focus_latency_ms_p99": percentile(latency_us, 99),
                 "sidebar_focus_latency_ms_max": (
                     round(max(latency_us) / 1000, 3) if latency_us else None),
+                "main_loop_stalls_over_16ms": len(stall_us),
+                "main_loop_stalls_over_25ms": sum(value >= 25000 for value in stall_us),
+                "main_loop_stalls_over_50ms": sum(value >= 50000 for value in stall_us),
+                "main_loop_stall_ms_p50": percentile(stall_us, 50),
+                "main_loop_stall_ms_p95": percentile(stall_us, 95),
+                "main_loop_stall_ms_p99": percentile(stall_us, 99),
+                "main_loop_stall_ms_max": (
+                    round(max(stall_us) / 1000, 3) if stall_us else None),
+                "main_loop_stall_causes": stall_causes,
+                "ui_activity_durations": {
+                    cause: duration_summary(values)
+                    for cause, values in sorted(activity_by_cause.items())
+                },
             })
             failures = [
                 {"expected": expected, "actual": actual}
@@ -546,6 +592,17 @@ def main():
                 if focus_p95 is None or focus_p95 > args.max_focus_p95_ms:
                     errors.append(
                         f"focus p95 {focus_p95}ms exceeds {args.max_focus_p95_ms}ms")
+                stall_p95 = report["main_loop_stall_ms_p95"]
+                if (stall_p95 is not None and
+                        stall_p95 > args.max_main_loop_stall_p95_ms):
+                    errors.append(
+                        f"main-loop stall p95 {stall_p95}ms exceeds "
+                        f"{args.max_main_loop_stall_p95_ms}ms")
+                stalls_over_50 = report["main_loop_stalls_over_50ms"]
+                if stalls_over_50 > args.max_main_loop_stalls_over_50:
+                    errors.append(
+                        f"{stalls_over_50} main-loop stalls over 50ms exceeds "
+                        f"{args.max_main_loop_stalls_over_50}")
                 if errors:
                     raise RuntimeError("interaction benchmark failed: " + "; ".join(errors))
         finally:

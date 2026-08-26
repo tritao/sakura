@@ -222,6 +222,12 @@ struct sakura_app {
 	gchar *focus_tab_pending_terminal_id;
 	gint64 selection_intent_us;
 	gchar *selection_intent_terminal_id;
+	gboolean ui_latency_trace_enabled;
+	guint ui_latency_trace_source_id;
+	gint64 ui_latency_trace_last_tick_us;
+	gint64 ui_latency_trace_recent_activity_us;
+	gint64 ui_latency_trace_recent_duration_us;
+	const gchar *ui_latency_trace_recent_cause;
 	gboolean sidebar_focus_syncing;
 	gboolean sidebar_visible;
 	gint sidebar_width;
@@ -686,6 +692,10 @@ void sakura_focus_tab(SakuraTab *tab);
 void sakura_register_codex_icon(void);
 void sakura_set_size(void);
 void sakura_update_geometry_hints(void);
+void sakura_ui_latency_trace_start(void);
+void sakura_ui_latency_trace_stop(void);
+gint64 sakura_ui_latency_trace_begin(void);
+void sakura_ui_latency_trace_end(const gchar *cause, gint64 started_us);
 gboolean sakura_term_buttonpressed_cb(GtkWidget *widget, GdkEventButton *event,
                                       gpointer user_data);
 gboolean sakura_term_buttonreleased_cb(GtkWidget *widget, GdkEventButton *event,

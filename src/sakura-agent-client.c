@@ -647,9 +647,11 @@ sakura_agent_flush_terminal_events_cb(gpointer data)
 	SakuraApp *app = data;
 	GQueue events = G_QUEUE_INIT;
 	SakuraAgentTerminalEvent *pending = NULL;
+	gint64 trace_started;
 
 	if (app == NULL || !app->agent_event_mutex_initialized)
 		return G_SOURCE_REMOVE;
+	trace_started = sakura_ui_latency_trace_begin();
 	g_mutex_lock(&app->agent_event_mutex);
 	while (app->agent_terminal_event_queue != NULL &&
 	       !g_queue_is_empty(app->agent_terminal_event_queue))
@@ -685,6 +687,7 @@ sakura_agent_flush_terminal_events_cb(gpointer data)
 		sakura_agent_apply_terminal_event(pending);
 		sakura_agent_terminal_event_free(pending);
 	}
+	sakura_ui_latency_trace_end("terminal-output-flush", trace_started);
 	return G_SOURCE_REMOVE;
 }
 

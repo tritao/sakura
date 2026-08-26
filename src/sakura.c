@@ -3336,6 +3336,93 @@ sakura_destroy_cleanup(void)
 }
 
 
+static gboolean
+sakura_ui_latency_trace_tick(gpointer data)
+{
+	SakuraApp *app = data;
+	gint64 now, elapsed, cause_age;
+	const gchar *cause;
+
+	if (app == NULL || !app->ui_latency_trace_enabled ||
+	    app->session_shutting_down) {
+		if (app != NULL)
+			app->ui_latency_trace_source_id = 0;
+		return G_SOURCE_REMOVE;
+	}
+	now = g_get_monotonic_time();
+	elapsed = now - app->ui_latency_trace_last_tick_us;
+	app->ui_latency_trace_last_tick_us = now;
+	if (elapsed >= 16000) {
+		cause_age = app->ui_latency_trace_recent_activity_us != 0
+		          ? now - app->ui_latency_trace_recent_activity_us : -1;
+		cause = app->ui_latency_trace_recent_cause != NULL &&
+		        cause_age >= 0 && cause_age <= 250000 &&
+		        app->ui_latency_trace_recent_duration_us * 2 >= elapsed - 8000
+		      ? app->ui_latency_trace_recent_cause : "unknown";
+		g_message("ui-main-loop-stall-us=%" G_GINT64_FORMAT
+		          " cause=%s cause-age-us=%" G_GINT64_FORMAT,
+		          elapsed, cause, cause_age);
+	}
+	return G_SOURCE_CONTINUE;
+}
+
+
+void
+sakura_ui_latency_trace_start(void)
+{
+	if (g_getenv("SAKURA_LATENCY_TRACE") == NULL ||
+	    sakura.ui_latency_trace_source_id != 0)
+		return;
+	sakura.ui_latency_trace_enabled = TRUE;
+	sakura.ui_latency_trace_last_tick_us = g_get_monotonic_time();
+	sakura.ui_latency_trace_source_id = g_timeout_add_full(
+		G_PRIORITY_HIGH_IDLE, 8, sakura_ui_latency_trace_tick, &sakura, NULL);
+}
+
+
+void
+sakura_ui_latency_trace_stop(void)
+{
+	if (sakura.ui_latency_trace_source_id != 0) {
+		g_source_remove(sakura.ui_latency_trace_source_id);
+		sakura.ui_latency_trace_source_id = 0;
+	}
+	sakura.ui_latency_trace_enabled = FALSE;
+}
+
+
+gint64
+sakura_ui_latency_trace_begin(void)
+{
+	return sakura.ui_latency_trace_enabled ? g_get_monotonic_time() : 0;
+}
+
+
+void
+sakura_ui_latency_trace_end(const gchar *cause, gint64 started_us)
+{
+	gint64 now, duration, recent_age;
+
+	if (!sakura.ui_latency_trace_enabled || started_us == 0 || cause == NULL)
+		return;
+	now = g_get_monotonic_time();
+	duration = now - started_us;
+	recent_age = sakura.ui_latency_trace_recent_activity_us != 0
+	           ? now - sakura.ui_latency_trace_recent_activity_us : G_MAXINT64;
+	/* Preserve a recently completed expensive operation long enough for the
+	 * delayed heartbeat to observe it. Tiny follow-up callbacks must not steal
+	 * attribution from the work that actually blocked the main loop. */
+	if (recent_age > 250000 ||
+	    duration >= sakura.ui_latency_trace_recent_duration_us) {
+		sakura.ui_latency_trace_recent_activity_us = now;
+		sakura.ui_latency_trace_recent_duration_us = duration;
+		sakura.ui_latency_trace_recent_cause = cause;
+	}
+	g_message("ui-activity-us=%" G_GINT64_FORMAT " cause=%s",
+	          duration, cause);
+}
+
+
 void
 sakura_destroy()
 {
@@ -3356,6 +3443,7 @@ sakura_destroy()
 			sakura_session_flush();
 	}
 	sakura.session_shutting_down = TRUE;
+	sakura_ui_latency_trace_stop();
 	if (sakura.workspace->panes != NULL) {
 		for (guint index = 0; index < sakura.workspace->panes->len; index++)
 			sakura_tab_disconnect_exit_handler(g_ptr_array_index(sakura.workspace->panes, index));
@@ -3437,6 +3525,7 @@ sakura_update_geometry_hints(void)
 	gint char_width, char_height;
 	gboolean split;
 	guint index;
+	gint64 trace_started;
 
 	if (sakura.main_window == NULL || sakura.notebook == NULL)
 		return;
@@ -3447,6 +3536,7 @@ sakura_update_geometry_hints(void)
 		tab = sakura_tab_at_page(page_index);
 	if (tab == NULL || tab->vte == NULL)
 		return;
+	trace_started = sakura_ui_latency_trace_begin();
 
 	split = page != NULL && page->panes != NULL && page->panes->len > 1;
 	if (split) {
@@ -3464,6 +3554,7 @@ sakura_update_geometry_hints(void)
 				                            char_width * SAKURA_DEFAULT_MIN_WIDTH_CHARS,
 				                            char_height * SAKURA_DEFAULT_MIN_HEIGHT_CHARS);
 		}
+		sakura_ui_latency_trace_end("geometry-update", trace_started);
 		return;
 	}
 
@@ -3481,6 +3572,7 @@ sakura_update_geometry_hints(void)
 	                              &hints,
 	                              GDK_HINT_RESIZE_INC | GDK_HINT_MIN_SIZE |
 	                              GDK_HINT_BASE_SIZE);
+	sakura_ui_latency_trace_end("geometry-update", trace_started);
 }
 
 
@@ -4131,6 +4223,7 @@ sakura_run(int argc, char **argv)
 	/* Init stuff */
 	gtk_init(&nargc, &nargv); g_strfreev(nargv);
 	sakura_init();
+	sakura_ui_latency_trace_start();
 	{
 		SakuraStartupOptions startup_options = {
 			.codex_session = option_codex_session,

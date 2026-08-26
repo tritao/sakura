@@ -120,6 +120,7 @@ sakura_session_flush(void)
 {
 	SakuraSessionSnapshot *snapshot;
 	gboolean saved;
+	gint64 trace_started;
 
 	if (sakura.session_save_source_id != 0) {
 		g_source_remove(sakura.session_save_source_id);
@@ -132,6 +133,7 @@ sakura_session_flush(void)
 	    sakura.session_restore_failed ||
 	    sakura.sidebar_model == NULL)
 		return;
+	trace_started = sakura_ui_latency_trace_begin();
 
 	snapshot = sakura_workspace_model_snapshot_new(
 		sakura.workspace, sakura.sidebar_visible,
@@ -148,6 +150,7 @@ sakura_session_flush(void)
 	sakura_session_snapshot_free(snapshot);
 	if (saved)
 		sakura.session_dirty = FALSE;
+	sakura_ui_latency_trace_end("session-persistence", trace_started);
 }
 #endif
 

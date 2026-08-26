@@ -7174,9 +7174,11 @@ sakura_sidebar_rebuild_projection(void)
 	GList *group_link;
 	gboolean was_syncing;
 	guint index, remaining, pass;
+	gint64 trace_started;
 
 	if (sakura.sidebar_model == NULL)
 		return;
+	trace_started = sakura_ui_latency_trace_begin();
 	sakura_sidebar_ensure_expansion_state();
 	if (!sakura.sidebar_expansion_initialized && sakura.session_snapshot != NULL &&
 	    sakura.session_snapshot->sidebar_expansion_saved) {
@@ -7428,6 +7430,7 @@ sakura_sidebar_rebuild_projection(void)
 	}
 	sakura.sidebar_syncing = was_syncing;
 	g_free(selected_id);
+	sakura_ui_latency_trace_end("sidebar-projection", trace_started);
 }
 
 
