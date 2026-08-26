@@ -53,12 +53,45 @@ sakura-ctl new
 sakura-ctl new --working-directory ~/dev/project
 sakura-ctl codex --working-directory ~/dev/project --reasoning high
 sakura-ctl codex --resume SESSION_ID
+sakura-ctl groups
+sakura-ctl codex --group-name Tony --create-group \
+  --title "Tony · Camera" \
+  --session-name "OpenTony · Camera Reversing" \
+  --working-directory ~/dev/OpenTony-camera \
+  --prompt-file ~/dev/OpenTony-shared/sessions/camera.md \
+  --reasoning high --print json
 ```
 
 Use `sakura-ctl list` to show discoverable workspaces. If more than one is
 running, select one with `--workspace ID` (a unique ID prefix is accepted) or
-`--session-file PATH`. The command prints the created terminal ID on success.
-Run `sakura-ctl --help` for placement, terminal-size, and direct-socket options.
+`--session-file PATH`. `groups` prints group IDs, names, and directories;
+`--group-name` resolves a unique name and `--create-group` creates it when
+missing. `--title` creates a user-owned page title, while `--session-name`
+renames the underlying Codex conversation after its ID becomes available.
+`--prompt-file` submits the file as the initial request. The command prints the
+created terminal ID by default; use `--print json` for workspace, group, page,
+terminal, and Codex-session IDs.
+
+An idempotent batch can be applied with:
+
+```sh
+sakura-ctl codex apply --group-name Tony --create-group \
+  --manifest ~/dev/OpenTony-shared/sessions/manifest.yml --print json
+```
+
+The manifest uses a `sessions` list. A page is reused when its group, locked
+title, and canonical working directory match, preventing duplicate sessions:
+
+```yaml
+sessions:
+  - title: "Tony · Camera"
+    session_name: "OpenTony · Camera Reversing"
+    working_directory: /home/joao/dev/OpenTony-camera
+    prompt_file: /home/joao/dev/OpenTony-shared/sessions/camera.md
+    reasoning: high
+```
+
+Run `sakura-ctl --help` for terminal-size and direct-socket options.
 
 ### Codex sessions
 

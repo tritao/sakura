@@ -180,6 +180,8 @@ ADD_EXECUTABLE (sakura-ctl src/sakura-ctl.c)
 TARGET_INCLUDE_DIRECTORIES (sakura-ctl PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
 TARGET_COMPILE_OPTIONS (sakura-ctl PRIVATE ${SAKURA_WARNING_FLAGS})
 TARGET_LINK_LIBRARIES (sakura-ctl PRIVATE sakura-control-client PkgConfig::GLIB)
+TARGET_COMPILE_DEFINITIONS (sakura-ctl PRIVATE
+	SAKURA_CODEX_NAME_HELPER_BUILD_PATH="${CMAKE_CURRENT_SOURCE_DIR}/scripts/sakura-codex-session-name")
 TARGET_COMPILE_DEFINITIONS (sakura PRIVATE
 	SAKURA_AGENT_BUILD_PATH="${CMAKE_BINARY_DIR}/src/sakura-agent")
 
@@ -214,6 +216,7 @@ IF (SAKURA_ENABLE_SANITIZERS)
 	ENDFOREACH ()
 	TARGET_LINK_OPTIONS (sakura PRIVATE ${SAKURA_SANITIZER_LINK_FLAGS})
 	TARGET_LINK_OPTIONS (sakura-agent PRIVATE ${SAKURA_SANITIZER_LINK_FLAGS})
+	TARGET_LINK_OPTIONS (sakura-ctl PRIVATE ${SAKURA_SANITIZER_LINK_FLAGS})
 ENDIF ()
 
 IF (BUILD_TESTING)
@@ -254,6 +257,11 @@ IF (BUILD_TESTING)
 	TARGET_LINK_LIBRARIES (sakura-control-client-api-test PRIVATE
 		sakura-control-client)
 	ADD_TEST (NAME control-client-api COMMAND sakura-control-client-api-test)
+	ADD_TEST (NAME control-cli
+		COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tests/test-sakura-ctl.py
+		        --agent $<TARGET_FILE:sakura-agent>
+		        --ctl $<TARGET_FILE:sakura-ctl>
+		        --fake-codex ${CMAKE_SOURCE_DIR}/tests/fake-codex-cli.py)
 
 	ADD_EXECUTABLE (sakura-core-test)
 	TARGET_SOURCES (sakura-core-test PRIVATE

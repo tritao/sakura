@@ -144,7 +144,15 @@ C<sakura-ctl> creates pages in an already running Sakura workspace. Use
 C<sakura-ctl new> for a shell page, C<sakura-ctl codex> for a new Codex page,
 and C<sakura-ctl codex --resume SESSION> to resume a Codex session. If multiple
 workspaces are running, use C<sakura-ctl list> and select one with
-C<--workspace=ID> or C<--session-file=PATH>.
+C<--workspace=ID> or C<--session-file=PATH>. C<sakura-ctl groups> lists group
+IDs, names, and directories. C<--group-name=NAME> resolves a unique group and
+C<--create-group> creates it when missing. Codex pages accept C<--title>,
+C<--session-name>, C<--prompt-file>, and C<--reasoning>; C<--print=json>
+returns stable workspace, group, page, terminal, and Codex session IDs.
+
+C<sakura-ctl codex apply --group-name=NAME --manifest=PATH> applies a YAML
+session list idempotently. Existing Codex pages with the same group, title, and
+canonical working directory are reused instead of duplicated.
 
 =head1 GTK+ OPTIONS
 
