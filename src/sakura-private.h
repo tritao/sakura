@@ -319,6 +319,8 @@ struct sakura_app {
 	GMutex agent_event_mutex;
 	gboolean agent_event_mutex_initialized;
 	gboolean agent_event_stopping;
+	GQueue *agent_terminal_event_queue;
+	gboolean agent_terminal_event_flush_scheduled;
 	GThread *agent_command_thread;
 	SakuraControlClientConnection *agent_command_connection;
 	GCancellable *agent_command_cancellable;

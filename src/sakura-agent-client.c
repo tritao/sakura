@@ -137,6 +137,18 @@ typedef struct {
 	gboolean output;
 } SakuraAgentTerminalEvent;
 
+
+static void
+sakura_agent_terminal_event_free(SakuraAgentTerminalEvent *event)
+{
+	if (event == NULL)
+		return;
+	g_free(event->terminal_id);
+	g_free(event->data);
+	g_free(event->message);
+	g_free(event);
+}
+
 typedef enum {
 	SAKURA_AGENT_COMMAND_INPUT,
 	SAKURA_AGENT_COMMAND_RESIZE,
@@ -610,10 +622,9 @@ sakura_agent_apply_event_cb(gpointer data)
 }
 
 
-static gboolean
-sakura_agent_apply_terminal_event_cb(gpointer data)
+static void
+sakura_agent_apply_terminal_event(SakuraAgentTerminalEvent *event)
 {
-	SakuraAgentTerminalEvent *event = data;
 	SakuraTab *tab = NULL;
 
 	if (event->app != NULL && !event->app->session_shutting_down &&
@@ -627,11 +638,83 @@ sakura_agent_apply_terminal_event_cb(gpointer data)
 		else
 			sakura_tab_agent_status(tab, event->status, event->message);
 	}
-	g_free(event->terminal_id);
-	g_free(event->data);
-	g_free(event->message);
-	g_free(event);
+}
+
+
+static gboolean
+sakura_agent_flush_terminal_events_cb(gpointer data)
+{
+	SakuraApp *app = data;
+	GQueue events = G_QUEUE_INIT;
+	SakuraAgentTerminalEvent *pending = NULL;
+
+	if (app == NULL || !app->agent_event_mutex_initialized)
+		return G_SOURCE_REMOVE;
+	g_mutex_lock(&app->agent_event_mutex);
+	while (app->agent_terminal_event_queue != NULL &&
+	       !g_queue_is_empty(app->agent_terminal_event_queue))
+		g_queue_push_tail(&events,
+		                  g_queue_pop_head(app->agent_terminal_event_queue));
+	app->agent_terminal_event_flush_scheduled = FALSE;
+	g_mutex_unlock(&app->agent_event_mutex);
+
+	while (!g_queue_is_empty(&events)) {
+		SakuraAgentTerminalEvent *event = g_queue_pop_head(&events);
+
+		if (pending != NULL && event->output && pending->output &&
+		    g_strcmp0(pending->terminal_id, event->terminal_id) == 0 &&
+		    event->start_offset <= pending->end_offset) {
+			gsize skip = MIN(event->data_length,
+			                 (gsize)(pending->end_offset - event->start_offset));
+			pending->data = g_realloc(pending->data,
+			                          pending->data_length + event->data_length - skip);
+			memcpy(pending->data + pending->data_length,
+			       event->data + skip, event->data_length - skip);
+			pending->data_length += event->data_length - skip;
+			pending->end_offset = MAX(pending->end_offset, event->end_offset);
+			sakura_agent_terminal_event_free(event);
+			continue;
+		}
+		if (pending != NULL) {
+			sakura_agent_apply_terminal_event(pending);
+			sakura_agent_terminal_event_free(pending);
+		}
+		pending = event;
+	}
+	if (pending != NULL) {
+		sakura_agent_apply_terminal_event(pending);
+		sakura_agent_terminal_event_free(pending);
+	}
 	return G_SOURCE_REMOVE;
+}
+
+
+static void
+sakura_agent_queue_terminal_event(SakuraApp *app,
+	                              SakuraAgentTerminalEvent *event)
+{
+	gboolean schedule = FALSE;
+
+	if (app == NULL || event == NULL || !app->agent_event_mutex_initialized) {
+		sakura_agent_terminal_event_free(event);
+		return;
+	}
+	g_mutex_lock(&app->agent_event_mutex);
+	if (!app->agent_event_stopping) {
+		g_queue_push_tail(app->agent_terminal_event_queue, event);
+		if (!app->agent_terminal_event_flush_scheduled) {
+			app->agent_terminal_event_flush_scheduled = TRUE;
+			schedule = TRUE;
+		}
+		event = NULL;
+	}
+	g_mutex_unlock(&app->agent_event_mutex);
+	sakura_agent_terminal_event_free(event);
+	if (schedule)
+		/* One half-frame at 60 Hz bounds visible latency while giving bursty PTY
+		 * reads a chance to collapse into one VTE feed and one UI wakeup. */
+		g_timeout_add_full(G_PRIORITY_HIGH_IDLE, 8,
+		                   sakura_agent_flush_terminal_events_cb, app, NULL);
 }
 
 
@@ -744,9 +827,7 @@ sakura_agent_event_thread(gpointer data)
 					terminal_event->output = TRUE;
 					(void)terminal_sequence;
 					(void)final_chunk;
-					g_main_context_invoke(NULL,
-					                     sakura_agent_apply_terminal_event_cb,
-					                     terminal_event);
+					sakura_agent_queue_terminal_event(app, terminal_event);
 					g_clear_pointer(&payload, g_byte_array_unref);
 					continue;
 				}
@@ -758,9 +839,7 @@ sakura_agent_event_thread(gpointer data)
 					payload->data, payload->len, &terminal_sequence,
 					&terminal_event->terminal_id,
 					&terminal_event->status, &terminal_event->message, &error)) {
-					g_main_context_invoke(NULL,
-					                     sakura_agent_apply_terminal_event_cb,
-					                     terminal_event);
+					sakura_agent_queue_terminal_event(app, terminal_event);
 					g_clear_pointer(&payload, g_byte_array_unref);
 					continue;
 				}
@@ -812,6 +891,8 @@ sakura_agent_subscribe_start(SakuraApp *app)
 	g_mutex_init(&app->agent_event_mutex);
 	app->agent_event_mutex_initialized = TRUE;
 	app->agent_event_stopping = FALSE;
+	app->agent_terminal_event_queue = g_queue_new();
+	app->agent_terminal_event_flush_scheduled = FALSE;
 	app->agent_event_thread = g_thread_new("sakura-agent-events",
 	                                      sakura_agent_event_thread, app);
 }
@@ -875,7 +956,12 @@ sakura_agent_event_stop(SakuraApp *app)
 		sakura_control_client_unref(app->agent_event_connection);
 		app->agent_event_connection = NULL;
 	}
+	while (app->agent_terminal_event_queue != NULL &&
+	       !g_queue_is_empty(app->agent_terminal_event_queue))
+		sakura_agent_terminal_event_free(
+			g_queue_pop_head(app->agent_terminal_event_queue));
 	g_mutex_unlock(&app->agent_event_mutex);
+	g_clear_pointer(&app->agent_terminal_event_queue, g_queue_free);
 	g_mutex_clear(&app->agent_event_mutex);
 	app->agent_event_mutex_initialized = FALSE;
 }
