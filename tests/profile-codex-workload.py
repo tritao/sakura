@@ -113,7 +113,9 @@ def startup_probe(binary, root, config, base_env, sessions, index):
                                    STARTUP_MILESTONE_PATTERN.findall(contents)})
                 if converged_us is None and len(list(stats_dir.glob("*"))) >= sessions:
                     converged_us = time.monotonic_ns() // 1000
-                if "terminal-ready" in milestones and converged_us is not None:
+                if ("terminal-ready" in milestones and
+                        "workspace-ready" in milestones and
+                        converged_us is not None):
                     break
                 time.sleep(0.01)
             if "terminal-ready" not in milestones:
@@ -135,6 +137,8 @@ def startup_probe(binary, root, config, base_env, sessions, index):
                     milestones["terminal-ready"] - window_us),
                 "agent_to_workspace_ready_us": (
                     milestones["workspace-ready"] - milestones["agent-started"]),
+                "terminal_to_workspace_ready_us": (
+                    milestones["workspace-ready"] - milestones["terminal-ready"]),
                 "restore_step_total_us": sum(restore_step_us),
                 "restore_step_max_us": max(restore_step_us, default=0),
             }

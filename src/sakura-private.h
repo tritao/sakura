@@ -182,6 +182,7 @@ struct sakura_startup {
 	SakuraStartupPhase phase;
 	SakuraStartupOptions options;
 	bool preserve_failed_session;
+	bool selected_terminal_ready_traced;
 	guint pending_terminal_starts;
 	guint restore_source_id;
 	SakuraStartupFinishedCallback finished_callback;

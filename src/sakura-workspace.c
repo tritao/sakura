@@ -4717,13 +4717,33 @@ static gboolean
 sakura_workspace_restore_should_defer(const gchar *page_id,
                                        const gchar *terminal_id)
 {
+	const gchar *selected_page_id = NULL;
+
 	if (!sakura.session_restoring)
 		return FALSE;
-	if (sakura.session_snapshot != NULL &&
-	    sakura.session_snapshot->selected_page_id != NULL &&
-	    sakura.session_snapshot->selected_page_id[0] != '\0' &&
+	if (sakura.session_snapshot != NULL) {
+		selected_page_id = sakura.session_snapshot->selected_page_id;
+		/* Older layout snapshots did not always persist selected_page_id.
+		 * Their selected terminal is also the active terminal of its page, so
+		 * recover the page identity before deciding which whole layout to defer. */
+		if ((selected_page_id == NULL || selected_page_id[0] == '\0') &&
+		    sakura.session_snapshot->selected_terminal_id != NULL &&
+		    sakura.session_snapshot->pages != NULL) {
+			for (guint index = 0;
+			     index < sakura.session_snapshot->pages->len; index++) {
+				SakuraSessionPageRecord *record = g_ptr_array_index(
+					sakura.session_snapshot->pages, index);
+				if (g_strcmp0(record->active_terminal_id,
+				              sakura.session_snapshot->selected_terminal_id) == 0) {
+					selected_page_id = record->id;
+					break;
+				}
+			}
+		}
+	}
+	if (selected_page_id != NULL && selected_page_id[0] != '\0' &&
 	    page_id != NULL && page_id[0] != '\0')
-		return g_strcmp0(page_id, sakura.session_snapshot->selected_page_id) != 0;
+		return g_strcmp0(page_id, selected_page_id) != 0;
 	if (sakura.session_snapshot != NULL &&
 	    sakura.session_snapshot->selected_terminal_id != NULL &&
 	    sakura.session_snapshot->selected_terminal_id[0] != '\0' &&
@@ -5108,6 +5128,7 @@ typedef struct {
 	gpointer callback_data;
 	GHashTable *layout_records;
 	GHashTable *tab_records;
+	GArray *restore_order;
 	gboolean restore_layout;
 	gboolean failed;
 	gboolean previous_show_archived;
@@ -5130,13 +5151,15 @@ sakura_workspace_restore_job_free(SakuraWorkspaceRestoreJob *job)
 	}
 	g_clear_pointer(&job->layout_records, g_hash_table_destroy);
 	g_clear_pointer(&job->tab_records, g_hash_table_destroy);
+	g_clear_pointer(&job->restore_order, g_array_unref);
 	g_free(job);
 }
 
 
 static gboolean
 sakura_workspace_restore_layout_page(SakuraWorkspaceRestoreJob *job,
-                                      SakuraSessionPageRecord *page_record)
+                                      SakuraSessionPageRecord *page_record,
+                                      guint saved_index)
 {
 	SakuraSessionLayoutRecord *root;
 	SakuraSessionLayoutRecord *root_leaf;
@@ -5176,6 +5199,11 @@ sakura_workspace_restore_layout_page(SakuraWorkspaceRestoreJob *job,
 	tab = sakura_find_pane_by_terminal_id(tab_record->terminal_id);
 	if (tab == NULL || tab->page == NULL)
 		return FALSE;
+	/* The selected page is deliberately materialized first. Put every page at
+	 * its persisted notebook position as it arrives so that prioritization does
+	 * not become a visible or persisted reorder. */
+	gtk_notebook_reorder_child(GTK_NOTEBOOK(sakura.notebook),
+	                           tab->page->container, (gint)saved_index);
 	sakura_workspace_restore_tab_state(tab, tab_record);
 	g_free(tab->page->id);
 	tab->page->id = g_strdup(page_record->id);
@@ -5198,7 +5226,8 @@ sakura_workspace_restore_layout_page(SakuraWorkspaceRestoreJob *job,
 
 static gboolean
 sakura_workspace_restore_tab_record(SakuraWorkspaceRestoreJob *job,
-                                     SakuraSessionTabRecord *record)
+                                     SakuraSessionTabRecord *record,
+                                     guint saved_index)
 {
 	SakuraSidebarNode *parent;
 	SakuraTabKind tab_kind;
@@ -5250,8 +5279,12 @@ sakura_workspace_restore_tab_record(SakuraWorkspaceRestoreJob *job,
 	                            record->colorset, &config);
 	sakura_workspace_end_mutation();
 	restored_tab = sakura_find_pane_by_terminal_id(record->terminal_id);
-	if (restored_tab != NULL)
+	if (restored_tab != NULL) {
+		gtk_notebook_reorder_child(GTK_NOTEBOOK(sakura.notebook),
+		                           restored_tab->page->container,
+		                           (gint)saved_index);
 		sakura_workspace_restore_tab_state(restored_tab, record);
+	}
 	g_free(cwd);
 	if (restored_tab == NULL)
 		return FALSE;
@@ -5351,25 +5384,28 @@ sakura_workspace_restore_job_step(gpointer data)
 	SakuraSessionSnapshot *snapshot;
 	gboolean step_success;
 	gint64 trace_started;
+	guint restore_index;
 
 	if (job == NULL || sakura.session_shutting_down)
 		return G_SOURCE_REMOVE;
 	snapshot = job->snapshot;
 	trace_started = sakura_ui_latency_trace_begin();
 	if (job->restore_layout) {
-		if (job->index >= snapshot->pages->len) {
+		if (job->index >= job->restore_order->len) {
 			sakura_workspace_restore_job_finalize(job, TRUE);
 			return G_SOURCE_REMOVE;
 		}
+		restore_index = g_array_index(job->restore_order, guint, job->index);
 		step_success = sakura_workspace_restore_layout_page(job,
-			g_ptr_array_index(snapshot->pages, job->index));
+			g_ptr_array_index(snapshot->pages, restore_index), restore_index);
 	} else {
-		if (job->index >= snapshot->tabs->len) {
+		if (job->index >= job->restore_order->len) {
 			sakura_workspace_restore_job_finalize(job, TRUE);
 			return G_SOURCE_REMOVE;
 		}
+		restore_index = g_array_index(job->restore_order, guint, job->index);
 		step_success = sakura_workspace_restore_tab_record(job,
-			g_ptr_array_index(snapshot->tabs, job->index));
+			g_ptr_array_index(snapshot->tabs, restore_index), restore_index);
 	}
 	sakura_ui_latency_trace_end("workspace-restore-step", trace_started);
 	if (!step_success) {
@@ -5404,6 +5440,7 @@ sakura_workspace_restore_snapshot_async(
 	sakura.show_archived = TRUE;
 	job->layout_records = g_hash_table_new(g_str_hash, g_str_equal);
 	job->tab_records = g_hash_table_new(g_str_hash, g_str_equal);
+	job->restore_order = g_array_new(FALSE, FALSE, sizeof(guint));
 	if (snapshot->layouts != NULL) {
 		for (guint index = 0; index < snapshot->layouts->len; index++) {
 			SakuraSessionLayoutRecord *record =
@@ -5415,6 +5452,42 @@ sakura_workspace_restore_snapshot_async(
 		SakuraSessionTabRecord *record =
 			g_ptr_array_index(snapshot->tabs, index);
 		g_hash_table_insert(job->tab_records, record->terminal_id, record);
+	}
+	{
+		GPtrArray *records = job->restore_layout ? snapshot->pages : snapshot->tabs;
+		gint selected_index = -1;
+
+		for (guint index = 0; index < records->len; index++) {
+			if (job->restore_layout) {
+				SakuraSessionPageRecord *record = g_ptr_array_index(records, index);
+				if (g_strcmp0(record->id, snapshot->selected_page_id) == 0 ||
+				    ((snapshot->selected_page_id == NULL ||
+				      snapshot->selected_page_id[0] == '\0') &&
+				     g_strcmp0(record->active_terminal_id,
+				               snapshot->selected_terminal_id) == 0)) {
+					selected_index = (gint)index;
+					break;
+				}
+			} else {
+				SakuraSessionTabRecord *record = g_ptr_array_index(records, index);
+				if (g_strcmp0(record->terminal_id,
+				              snapshot->selected_terminal_id) == 0 ||
+				    (snapshot->selected_terminal_id == NULL &&
+				     snapshot->selected_terminal == (gint)index)) {
+					selected_index = (gint)index;
+					break;
+				}
+			}
+		}
+		if (selected_index >= 0) {
+			guint value = (guint)selected_index;
+			g_array_append_val(job->restore_order, value);
+		}
+		for (guint index = 0; index < records->len; index++) {
+			guint value = index;
+			if ((gint)index != selected_index)
+				g_array_append_val(job->restore_order, value);
+		}
 	}
 	sakura_workspace_restore_job = job;
 	job->source_id = g_idle_add(sakura_workspace_restore_job_step, job);

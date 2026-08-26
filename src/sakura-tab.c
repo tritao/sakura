@@ -1499,7 +1499,8 @@ sakura_tab_add_with_options (const gchar *restore_cwd,
 		/* Call set_current page after showing the widget: gtk ignores this
 		 * function in the window is not visible *sigh*. Gtk documentation
 		 * says this is for "historical" reasons. Me arse */
-		gtk_notebook_set_current_page(GTK_NOTEBOOK(sakura.notebook), index);
+		if (!(sakura.session_restoring && config->defer_process_start))
+			gtk_notebook_set_current_page(GTK_NOTEBOOK(sakura.notebook), index);
 		/* The switch-page callback is suppressed while the surrounding
 		 * workspace mutation is open. Reflect the page GTK actually selected
 		 * before the transaction is validated. */
