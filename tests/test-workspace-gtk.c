@@ -863,6 +863,8 @@ teardown_workspace(void)
 	sakura_sidebar_cancel_primary_click();
 	sakura_sidebar_spinner_stop();
 	sakura_focus_tab_cancel_pending();
+	g_clear_pointer(&sakura.selection_intent_terminal_id, g_free);
+	sakura.selection_intent_us = 0;
 	/* Fixture tests can start the asynchronous Codex name helper. Stop it
 	 * before the global Sakura record is reset so its callbacks do not retain
 	 * query/process state across the next fixture. */
@@ -1619,6 +1621,41 @@ test_programmatic_focus_does_not_queue_sidebar_selection(void)
 
 	g_assert_cmpuint(sakura.sidebar_selection_source_id, ==, 0);
 	g_assert_null(sakura.sidebar_pending_selection);
+	teardown_workspace();
+}
+
+
+static void
+test_new_selection_cancels_stale_focus(void)
+{
+	SakuraPage *page_a, *page_b;
+
+	setup_workspace();
+	page_a = sakura_page_at_page(0);
+	page_b = sakura_page_at_page(1);
+	/* The model fixture deliberately omits VTE instances. Its pane widgets are
+	 * sufficient to exercise ownership and idle-source cancellation. */
+	page_a->active_tab->vte = page_a->active_tab->hbox;
+	page_b->active_tab->vte = page_b->active_tab->hbox;
+
+	/* A focus request is deferred until GTK finishes the current event. A
+	 * newer selection that deliberately preserves keyboard focus must still
+	 * invalidate it, or the old terminal can steal focus afterward. */
+	sakura_focus_tab(page_a->active_tab);
+	g_assert_cmpuint(sakura.focus_tab_source_id, !=, 0);
+	g_assert_true(sakura.focus_tab_pending_vte == page_a->active_tab->vte);
+
+	sakura_select_tab(page_b->active_tab, FALSE);
+	g_assert_cmpuint(sakura.focus_tab_source_id, ==, 0);
+	g_assert_null(sakura.focus_tab_pending_vte);
+	g_assert_null(sakura.focus_tab_pending_terminal_id);
+	g_assert_true(sakura.workspace->active_tab == page_b->active_tab);
+
+	while (g_main_context_pending(NULL))
+		g_main_context_iteration(NULL, FALSE);
+	g_assert_true(sakura.workspace->active_tab == page_b->active_tab);
+	page_a->active_tab->vte = NULL;
+	page_b->active_tab->vte = NULL;
 	teardown_workspace();
 }
 
@@ -3523,6 +3560,8 @@ main(int argc, char **argv)
 	                test_sidebar_primary_click_overrides_pending_selection);
 	g_test_add_func("/workspace/programmatic-focus-does-not-queue-selection",
 	                test_programmatic_focus_does_not_queue_sidebar_selection);
+	g_test_add_func("/workspace/new-selection-cancels-stale-focus",
+	                test_new_selection_cancels_stale_focus);
 	g_test_add_func("/workspace/close-active-page-preserves-group",
 	                test_close_active_page_preserves_group_scope);
 	g_test_add_func("/workspace/select-terminal-switches-group-scope",

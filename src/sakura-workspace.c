@@ -1402,6 +1402,9 @@ sakura_select_pane (struct sakura_tab *sk_tab, gboolean focus)
 
 	if (sk_tab == NULL || sk_tab->hbox == NULL || sakura.notebook == NULL)
 		return;
+	/* Any newer selection invalidates an idle focus request, including callers
+	 * that intentionally select without moving keyboard focus. */
+	sakura_focus_tab_cancel_pending();
 
 	if (!sakura_pane_is_in_active_scope(sk_tab)) {
 		/* A page owned by a task has the task node as its immediate parent.
@@ -1866,12 +1869,27 @@ sakura_focus_tab_cb (gpointer data)
 	vte = sakura.focus_tab_pending_vte;
 	sakura.focus_tab_pending_vte = NULL;
 	if (!sakura.session_shutting_down && vte != NULL &&
+	    sakura.workspace != NULL && sakura.workspace->active_tab != NULL &&
+	    sakura.workspace->active_tab->vte == vte &&
+	    g_strcmp0(sakura.focus_tab_pending_terminal_id,
+	              sakura.workspace->active_tab->terminal_id) == 0 &&
 	    gtk_widget_get_visible(vte) && gtk_widget_get_realized(vte)) {
 		was_focus_syncing = sakura.sidebar_focus_syncing;
 		sakura.sidebar_focus_syncing = TRUE;
 		gtk_widget_grab_focus(vte);
 		sakura.sidebar_focus_syncing = was_focus_syncing;
+		if (sakura.selection_intent_us != 0 &&
+		    g_strcmp0(sakura.selection_intent_terminal_id,
+		              sakura.workspace->active_tab->terminal_id) == 0 &&
+		    g_getenv("SAKURA_LATENCY_TRACE") != NULL)
+			g_message("selection-focus-latency-us=%" G_GINT64_FORMAT
+			          " terminal=%s",
+			          g_get_monotonic_time() - sakura.selection_intent_us,
+			          sakura.workspace->active_tab->terminal_id);
 	}
+	g_clear_pointer(&sakura.focus_tab_pending_terminal_id, g_free);
+	g_clear_pointer(&sakura.selection_intent_terminal_id, g_free);
+	sakura.selection_intent_us = 0;
 	g_clear_object(&vte);
 	return G_SOURCE_REMOVE;
 }
@@ -1885,13 +1903,16 @@ sakura_focus_tab_cancel_pending(void)
 		sakura.focus_tab_source_id = 0;
 	}
 	g_clear_object(&sakura.focus_tab_pending_vte);
+	g_clear_pointer(&sakura.focus_tab_pending_terminal_id, g_free);
 }
 
 
 void
 sakura_focus_tab (struct sakura_tab *sk_tab)
 {
+#ifdef HAVE_WEBKITGTK
 	gboolean was_focus_syncing;
+#endif
 
 	if (sakura.session_shutting_down || sk_tab == NULL)
 		return;
@@ -1913,6 +1934,7 @@ sakura_focus_tab (struct sakura_tab *sk_tab)
 	 * selected terminal. Coalesce focus requests so an older selection cannot
 	 * steal focus after a newer one. */
 	sakura.focus_tab_pending_vte = g_object_ref(sk_tab->vte);
+	sakura.focus_tab_pending_terminal_id = g_strdup(sk_tab->terminal_id);
 	sakura.focus_tab_source_id = g_idle_add(sakura_focus_tab_cb, NULL);
 }
 void
@@ -1936,6 +1958,13 @@ sakura_sidebar_selection_changed_cb (GtkTreeSelection *selection, void *data)
 	node = sakura_sidebar_selected_node();
 	if (node == NULL)
 		return;
+	g_clear_pointer(&sakura.selection_intent_terminal_id, g_free);
+	sakura.selection_intent_us = g_get_monotonic_time();
+	if (node->type == SAKURA_SIDEBAR_TERMINAL && node->tab != NULL)
+		sakura.selection_intent_terminal_id = g_strdup(node->tab->terminal_id);
+	else if (node->page != NULL && node->page->active_tab != NULL)
+		sakura.selection_intent_terminal_id =
+			g_strdup(node->page->active_tab->terminal_id);
 	sakura_sidebar_remember_selection(node);
 	if (node->type == SAKURA_SIDEBAR_GROUP) {
 		sakura_workspace_begin_mutation();

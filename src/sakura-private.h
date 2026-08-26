@@ -219,6 +219,9 @@ struct sakura_app {
 	 * that writes a second sidebar selection. */
 	guint focus_tab_source_id;
 	GtkWidget *focus_tab_pending_vte;
+	gchar *focus_tab_pending_terminal_id;
+	gint64 selection_intent_us;
+	gchar *selection_intent_terminal_id;
 	gboolean sidebar_focus_syncing;
 	gboolean sidebar_visible;
 	gint sidebar_width;
