@@ -115,6 +115,7 @@ typedef struct {
 	gboolean defer_process_start;
 	guint order;
 	gboolean has_order;
+	const gchar *codex_tracking_token;
 	SakuraPage *target_page;
 	SakuraLayoutNode *target_layout;
 	gdouble target_ratio;

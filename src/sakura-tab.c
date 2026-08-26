@@ -1275,7 +1275,10 @@ sakura_tab_add_with_options (const gchar *restore_cwd,
 	    restore_codex_session_id != NULL &&
 	    !sakura_codex_session_id_is_uuid(restore_codex_session_id))
 		sk_tab->codex_session_name = g_strdup(restore_codex_session_id);
-	sk_tab->codex_tracking_token = g_strdup_printf("%d-%u", (int)getpid(),
+	sk_tab->codex_tracking_token = config->codex_tracking_token != NULL &&
+	                              config->codex_tracking_token[0] != '\0'
+	                            ? g_strdup(config->codex_tracking_token)
+	                            : g_strdup_printf("%d-%u", (int)getpid(),
 	                                              g_random_int());
 	sidebar_parent = restore_parent != NULL ? restore_parent :
 	                 sakura_sidebar_default_parent();
@@ -1459,7 +1462,8 @@ sakura_tab_add_with_options (const gchar *restore_cwd,
 		if (!config->defer_process_start) {
 			gboolean child_started;
 
-			if (restore_kind == SAKURA_TAB_SHELL && !config->login_shell &&
+			if ((restore_kind == SAKURA_TAB_SHELL ||
+			     restore_kind == SAKURA_TAB_CODEX) && !config->login_shell &&
 			    !hold_option && config->execute_command == NULL &&
 			    config->xterm_args == NULL)
 				child_started = sakura_tab_start_agent_terminal(sk_tab, cwd);
@@ -1508,7 +1512,8 @@ sakura_tab_add_with_options (const gchar *restore_cwd,
 		if (!config->defer_process_start) {
 			gboolean child_started;
 
-			if (restore_kind == SAKURA_TAB_SHELL && !config->login_shell &&
+			if ((restore_kind == SAKURA_TAB_SHELL ||
+			     restore_kind == SAKURA_TAB_CODEX) && !config->login_shell &&
 			    !hold_option && config->execute_command == NULL &&
 			    config->xterm_args == NULL)
 				child_started = sakura_tab_start_agent_terminal(sk_tab, cwd);

@@ -4781,6 +4781,7 @@ sakura_workspace_restore_layout_subtree(SakuraPage *page,
 		page->id, second_tab_record->terminal_id);
 	config.order = second_tab_record->order;
 	config.has_order = TRUE;
+	config.codex_tracking_token = second_tab_record->codex_tracking_token;
 	parent = sakura_sidebar_find_container_by_id(second_tab_record->parent_id);
 		sakura_tab_add_with_options(second_tab_record->cwd, parent,
 		                            second_tab_record->title,
@@ -4860,6 +4861,7 @@ sakura_workspace_restore_layout_snapshot(SakuraSessionSnapshot *snapshot)
 			page_record->id, tab_record->terminal_id);
 		config.order = tab_record->order;
 		config.has_order = TRUE;
+		config.codex_tracking_token = tab_record->codex_tracking_token;
 		sakura_tab_add_with_options(tab_record->cwd, parent,
 		                            tab_record->title,
 		                            tab_record->title_set_by_user,
@@ -5016,6 +5018,7 @@ sakura_workspace_restore_snapshot (SakuraSessionSnapshot *snapshot)
 			NULL, record->terminal_id);
 		config.order = record->order;
 		config.has_order = TRUE;
+		config.codex_tracking_token = record->codex_tracking_token;
 		sakura_workspace_begin_mutation();
 		sakura_tab_add_with_options(cwd, parent, title_set ? record->title : NULL,
 		                            title_set, tab_kind, tool_kind,
@@ -5127,6 +5130,7 @@ sakura_workspace_restore_layout_page(SakuraWorkspaceRestoreJob *job,
 		page_record->id, tab_record->terminal_id);
 	config.order = tab_record->order;
 	config.has_order = TRUE;
+	config.codex_tracking_token = tab_record->codex_tracking_token;
 	sakura_tab_add_with_options(tab_record->cwd, parent,
 	                            tab_record->title,
 	                            tab_record->title_set_by_user,
@@ -5198,6 +5202,7 @@ sakura_workspace_restore_tab_record(SakuraWorkspaceRestoreJob *job,
 		NULL, record->terminal_id);
 	config.order = record->order;
 	config.has_order = TRUE;
+	config.codex_tracking_token = record->codex_tracking_token;
 	sakura_workspace_begin_mutation();
 	sakura_tab_add_with_options(cwd, parent, title_set ? record->title : NULL,
 	                            title_set, tab_kind, tool_kind,
