@@ -754,9 +754,9 @@ sakura_tab_agent_start_async_done(SakuraAgentTerminalStartResult *result,
 	if (result == NULL || result->app == NULL ||
 	    result->app->session_shutting_down)
 		return;
-	sakura_startup_terminal_start_pending(result->app, FALSE);
 	tab = sakura_find_pane_by_terminal_id(result->requested_terminal_id);
 	if (tab == NULL) {
+		sakura_startup_terminal_start_pending(result->app, FALSE);
 		if (result->error == NULL) {
 			if (result->attached)
 				sakura_agent_detach_terminal(result->app,
@@ -780,12 +780,16 @@ sakura_tab_agent_start_async_done(SakuraAgentTerminalStartResult *result,
 			result->attached_cols, result->attached_rows,
 			result->attached_status, &error)) {
 		result->replay_data = NULL;
+		/* The terminal is ready only after its proxy PTY is installed and any
+		 * retained output has been replayed into VTE. */
+		sakura_startup_terminal_start_pending(result->app, FALSE);
 		sakura_sidebar_sync_page_to_agent(
 			tab->page, tab->page->task != NULL ? tab->page->task->group
 			                                  : tab->page->group,
 			tab->page->task);
 		return;
 	}
+	sakura_startup_terminal_start_pending(result->app, FALSE);
 	if (error != NULL)
 		g_warning("Could not attach restored terminal %s: %s",
 		          tab->terminal_id, error->message);

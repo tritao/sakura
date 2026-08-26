@@ -144,6 +144,16 @@ def startup_probe(binary, root, config, base_env, sessions, index):
                               "tab-terminal-configure", "tab-launch-prepare",
                               "tab-metadata-restore", "tab-dirty-schedule")
             }
+            terminal_ready_seen = False
+            geometry_after_terminal_ready = 0
+            for line in contents.splitlines():
+                milestone = STARTUP_MILESTONE_PATTERN.search(line)
+                if milestone is not None and milestone.group(2) == "terminal-ready":
+                    terminal_ready_seen = True
+                if (terminal_ready_seen and
+                        "cause=geometry-update" in line and
+                        ACTIVITY_PATTERN.search(line) is not None):
+                    geometry_after_terminal_ready += 1
             return {
                 "window_visible_us": window_us - launched_us,
                 "agent_started_us": milestones["agent-started"] - launched_us,
@@ -161,6 +171,8 @@ def startup_probe(binary, root, config, base_env, sessions, index):
                 "restore_step_max_us": max(restore_step_us, default=0),
                 "background_restore_step_max_us": max(
                     background_restore_us, default=0),
+                "geometry_updates_after_terminal_ready_count":
+                    geometry_after_terminal_ready,
                 "tab_chrome_create_max_us": max(
                     startup_causes["tab-chrome-create"], default=0),
                 "vte_materialize_max_us": max(
@@ -189,6 +201,15 @@ def startup_probe(binary, root, config, base_env, sessions, index):
 def startup_summary(probes):
     report = {"runs": len(probes), "cold": {}, "warm": {}}
     for key in probes[0] if probes else ():
+        if key.endswith("_count"):
+            report["cold"][key] = probes[0][key]
+            warm_values = [probe[key] for probe in probes[1:]]
+            if warm_values:
+                report["warm"][key] = {
+                    "count": len(warm_values),
+                    "max": max(warm_values),
+                }
+            continue
         report["cold"][key.removesuffix("_us") + "_ms"] = round(
             probes[0][key] / 1000, 3)
         warm_values = [probe[key] for probe in probes[1:]]
@@ -1197,6 +1218,9 @@ def main():
                     startup_errors.append("cold terminal readiness exceeds threshold")
                 if cold["codex_converged_ms"] > args.max_startup_convergence_ms:
                     startup_errors.append("cold Codex convergence exceeds threshold")
+                if cold["geometry_updates_after_terminal_ready_count"] != 0:
+                    startup_errors.append(
+                        "cold geometry changed after terminal readiness")
                 if (cold["background_restore_step_max_ms"] >
                         args.max_background_restore_step_ms):
                     startup_errors.append(
@@ -1209,6 +1233,9 @@ def main():
                         startup_errors.append("warm terminal readiness p95 exceeds threshold")
                     if warm["codex_converged_ms"]["p95_ms"] > args.max_startup_convergence_ms:
                         startup_errors.append("warm Codex convergence p95 exceeds threshold")
+                    if warm["geometry_updates_after_terminal_ready_count"]["max"] != 0:
+                        startup_errors.append(
+                            "warm geometry changed after terminal readiness")
                     if (warm["background_restore_step_max_ms"]["p95_ms"] >
                             args.max_background_restore_step_ms):
                         startup_errors.append(

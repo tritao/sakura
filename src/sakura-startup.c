@@ -33,9 +33,10 @@ sakura_startup_maybe_finish_loading(SakuraApp *app)
 {
 	gboolean was_visible;
 
-	if (app == NULL ||
-	    (app->startup.phase != SAKURA_STARTUP_RESTORING &&
-	     app->startup.phase != SAKURA_STARTUP_READY) ||
+	/* Keep the loading surface in place until both the selected terminal and
+	 * the workspace projection are final. Revealing during RESTORING lets the
+	 * last reconciliation paint a second layout a few milliseconds later. */
+	if (app == NULL || app->startup.phase != SAKURA_STARTUP_READY ||
 	    app->startup.pending_terminal_starts != 0 ||
 	    app->startup.selected_terminal_ready_traced)
 		return;
@@ -78,8 +79,6 @@ sakura_startup_finish(void)
 		sakura_session_mark_dirty();
 		sakura_session_flush();
 	}
-	if (!sakura.startup.options.fullscreen)
-		gtk_window_maximize(GTK_WINDOW(sakura.main_window));
 	sakura.first_run = FALSE;
 	sakura_sanitize_working_directory();
 	sakura.startup.phase = SAKURA_STARTUP_READY;
@@ -229,6 +228,11 @@ sakura_startup_begin(const SakuraStartupOptions *options,
 	sakura.startup.phase = SAKURA_STARTUP_SCHEDULED;
 	sakura.session_restoring = TRUE;
 	sakura_ui_latency_trace_milestone("window-show-requested");
+	/* Request the final top-level geometry while the loading surface still owns
+	 * the window. Maximizing after terminal-ready makes VTE visibly resize and
+	 * repaint, which looks like the restored session loaded twice. */
+	if (!sakura.startup.options.fullscreen)
+		gtk_window_maximize(GTK_WINDOW(sakura.main_window));
 	gtk_widget_show(sakura.main_window);
 	/* Let GTK paint the loading surface before starting agent/session work. */
 	sakura.startup.restore_source_id = g_timeout_add(

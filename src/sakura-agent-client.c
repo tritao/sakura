@@ -570,7 +570,11 @@ sakura_agent_apply_workspace_snapshot(SakuraApp *app,
 		scope_needs_default = TRUE;
 	}
 	sakura_sidebar_rebuild_projection();
-	sakura_workspace_mark_changed(SAKURA_WORKSPACE_CHANGE_STRUCTURE |
+	/* Agent snapshots merge hierarchy and metadata into already-existing GTK
+	 * pages. They do not change notebook geometry, so classifying this as a
+	 * structural mutation causes an unnecessary sakura_set_size() pass on the
+	 * visible terminal during startup reconciliation. */
+	sakura_workspace_mark_changed(SAKURA_WORKSPACE_CHANGE_PROJECTION |
 	                              SAKURA_WORKSPACE_CHANGE_METADATA);
 	sakura_workspace_end_mutation();
 	/* The desktop file stores presentation joins by stable ID. Refresh it after
