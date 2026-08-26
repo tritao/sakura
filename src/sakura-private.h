@@ -223,6 +223,7 @@ struct sakura_app {
 	gchar *focus_tab_pending_terminal_id;
 	gint64 selection_intent_us;
 	gchar *selection_intent_terminal_id;
+	gint64 last_user_interaction_us;
 	gboolean ui_latency_trace_enabled;
 	guint ui_latency_trace_source_id;
 	gint64 ui_latency_trace_last_tick_us;
@@ -543,6 +544,7 @@ struct sakura_tab {
 	GtkWidget *tab_button_spinner;
 	GtkWidget *tab_button_close;
 	GtkWidget *vte;      /* Reference to VTE terminal */
+	GtkWidget *terminal_overlay;
 	GtkWidget *runtime_placeholder;
 	GtkWidget *scrollbar;
 	VtePty *agent_pty;  /* VTE's local proxy for an agent-owned PTY */

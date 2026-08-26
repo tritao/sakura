@@ -122,10 +122,27 @@ def startup_probe(binary, root, config, base_env, sessions, index):
                 raise RuntimeError("startup probe did not reach terminal readiness")
             if converged_us is None:
                 raise RuntimeError("startup probe did not converge Codex workers")
-            restore_step_us = [
-                int(value) for value, cause in ACTIVITY_PATTERN.findall(contents)
-                if cause == "workspace-restore-step"
+            restore_activities = [
+                (int(value), cause)
+                for value, cause in ACTIVITY_PATTERN.findall(contents)
+                if cause in {"workspace-restore-selected",
+                             "workspace-restore-background"}
             ]
+            restore_step_us = [value for value, _ in restore_activities]
+            background_restore_us = [
+                value for value, cause in restore_activities
+                if cause == "workspace-restore-background"
+            ]
+            startup_causes = {
+                cause: [int(value) for value, found_cause in
+                        ACTIVITY_PATTERN.findall(contents)
+                        if found_cause == cause]
+                for cause in ("tab-chrome-create", "vte-materialize",
+                              "tab-model-insert", "tab-sidebar-insert",
+                              "tab-codex-name-sync", "tab-surface-show",
+                              "tab-terminal-configure", "tab-launch-prepare",
+                              "tab-metadata-restore", "tab-dirty-schedule")
+            }
             return {
                 "window_visible_us": window_us - launched_us,
                 "agent_started_us": milestones["agent-started"] - launched_us,
@@ -141,6 +158,28 @@ def startup_probe(binary, root, config, base_env, sessions, index):
                     milestones["workspace-ready"] - milestones["terminal-ready"]),
                 "restore_step_total_us": sum(restore_step_us),
                 "restore_step_max_us": max(restore_step_us, default=0),
+                "background_restore_step_max_us": max(
+                    background_restore_us, default=0),
+                "tab_chrome_create_max_us": max(
+                    startup_causes["tab-chrome-create"], default=0),
+                "vte_materialize_max_us": max(
+                    startup_causes["vte-materialize"], default=0),
+                "tab_model_insert_max_us": max(
+                    startup_causes["tab-model-insert"], default=0),
+                "tab_sidebar_insert_max_us": max(
+                    startup_causes["tab-sidebar-insert"], default=0),
+                "tab_codex_name_sync_max_us": max(
+                    startup_causes["tab-codex-name-sync"], default=0),
+                "tab_surface_show_max_us": max(
+                    startup_causes["tab-surface-show"], default=0),
+                "tab_terminal_configure_max_us": max(
+                    startup_causes["tab-terminal-configure"], default=0),
+                "tab_launch_prepare_max_us": max(
+                    startup_causes["tab-launch-prepare"], default=0),
+                "tab_metadata_restore_max_us": max(
+                    startup_causes["tab-metadata-restore"], default=0),
+                "tab_dirty_schedule_max_us": max(
+                    startup_causes["tab-dirty-schedule"], default=0),
             }
         finally:
             terminate_process_tree(app)
@@ -392,7 +431,8 @@ def process_tree(root_pid):
         try:
             fields = (entry / "stat").read_text().split()
             parents[int(entry.name)] = int(fields[3])
-        except (FileNotFoundError, PermissionError, ValueError, IndexError):
+        except (FileNotFoundError, ProcessLookupError, PermissionError,
+                ValueError, IndexError):
             pass
     result = {root_pid}
     changed = True
@@ -495,6 +535,8 @@ def main():
     parser.add_argument("--max-startup-window-ms", type=float, default=1000.0)
     parser.add_argument("--max-startup-terminal-ms", type=float, default=3000.0)
     parser.add_argument("--max-startup-convergence-ms", type=float, default=5000.0)
+    parser.add_argument("--max-background-restore-step-ms", type=float,
+                        default=25.0)
     parser.add_argument("--json", metavar="PATH", help="also write metrics as JSON")
     args = parser.parse_args()
     if (args.sessions < 1 or args.duration <= 0 or args.warmup < 0 or
@@ -797,6 +839,10 @@ def main():
                     startup_errors.append("cold terminal readiness exceeds threshold")
                 if cold["codex_converged_ms"] > args.max_startup_convergence_ms:
                     startup_errors.append("cold Codex convergence exceeds threshold")
+                if (cold["background_restore_step_max_ms"] >
+                        args.max_background_restore_step_ms):
+                    startup_errors.append(
+                        "cold background restore step exceeds threshold")
                 warm = startup_report["warm"]
                 if warm:
                     if warm["window_visible_ms"]["p95_ms"] > args.max_startup_window_ms:
@@ -805,6 +851,10 @@ def main():
                         startup_errors.append("warm terminal readiness p95 exceeds threshold")
                     if warm["codex_converged_ms"]["p95_ms"] > args.max_startup_convergence_ms:
                         startup_errors.append("warm Codex convergence p95 exceeds threshold")
+                    if (warm["background_restore_step_max_ms"]["p95_ms"] >
+                            args.max_background_restore_step_ms):
+                        startup_errors.append(
+                            "warm background restore step p95 exceeds threshold")
                 if startup_errors:
                     raise RuntimeError("startup benchmark failed: " + "; ".join(startup_errors))
         finally:

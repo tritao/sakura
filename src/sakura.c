@@ -594,6 +594,7 @@ sakura_key_press_cb (GtkWidget *widget, GdkEventKey *event, gpointer user_data)
 	struct sakura_tab *current_tab;
 
 	if (event->type != GDK_KEY_PRESS) return FALSE;
+	sakura.last_user_interaction_us = g_get_monotonic_time();
 	if (sakura_key_matches(event, sakura.split_right_accelerator,
 	                       sakura.split_right_key)) {
 		sakura_split_current_cb(NULL, GINT_TO_POINTER(SAKURA_SPLIT_RIGHT));
@@ -1012,6 +1013,8 @@ sakura_delete_event_cb (GtkWidget *widget, void *data)
 		for (i=0; i < npages; i++) {
 
 			sk_tab = sakura_tab_at_page(i);
+			if (sk_tab == NULL || sk_tab->vte == NULL)
+				continue;
 			pty = vte_terminal_get_pty(VTE_TERMINAL(sk_tab->vte));
 			if (pty == NULL)
 				continue;
@@ -1161,7 +1164,7 @@ sakura_color_dialog_cb (GtkWidget *widget, void *data)
 
 	sk_tab = sakura.workspace->active_tab != NULL ? sakura.workspace->active_tab :
 	         sakura_tab_at_page(gtk_notebook_get_current_page(GTK_NOTEBOOK(sakura.notebook)));
-	if (sk_tab == NULL)
+	if (sk_tab == NULL || sk_tab->vte == NULL)
 		return;
 
 	color_dialog = gtk_dialog_new_with_buttons(_("Select colors"), GTK_WINDOW(sakura.main_window),
@@ -1491,7 +1494,7 @@ sakura_audible_bell_cb (GtkWidget *widget, void *data)
 
 	sk_tab = sakura.workspace->active_tab != NULL ? sakura.workspace->active_tab :
 	         sakura_tab_at_page(gtk_notebook_get_current_page(GTK_NOTEBOOK(sakura.notebook)));
-	if (sk_tab == NULL)
+	if (sk_tab == NULL || sk_tab->vte == NULL)
 		return;
 
 	if (gtk_check_menu_item_get_active(GTK_CHECK_MENU_ITEM(widget))) {
@@ -1511,7 +1514,7 @@ sakura_blinking_cursor_cb (GtkWidget *widget, void *data)
 
 	sk_tab = sakura.workspace->active_tab != NULL ? sakura.workspace->active_tab :
 	         sakura_tab_at_page(gtk_notebook_get_current_page(GTK_NOTEBOOK(sakura.notebook)));
-	if (sk_tab == NULL)
+	if (sk_tab == NULL || sk_tab->vte == NULL)
 		return;
 
 	if (gtk_check_menu_item_get_active(GTK_CHECK_MENU_ITEM(widget))) {
@@ -1544,7 +1547,7 @@ sakura_set_cursor_cb (GtkWidget *widget, void *data)
 
 		for (i = sakura.workspace->panes != NULL ? (gint)sakura.workspace->panes->len - 1 : -1; i >= 0; i--) {
 			sk_tab = g_ptr_array_index(sakura.workspace->panes, i);
-			if (sk_tab != NULL)
+			if (sk_tab != NULL && sk_tab->vte != NULL)
 				vte_terminal_set_cursor_shape(VTE_TERMINAL(sk_tab->vte), sakura.cursor_type);
 		}
 
@@ -3589,7 +3592,7 @@ sakura_show_scrollbar (void)
 	/* Toggle/Untoggle the scrollbar for all tabs */
 	for (i = sakura.workspace->panes != NULL ? (gint)sakura.workspace->panes->len - 1 : -1; i >= 0; i--) {
 		sk_tab = g_ptr_array_index(sakura.workspace->panes, i);
-		if (sk_tab == NULL)
+		if (sk_tab == NULL || sk_tab->vte == NULL)
 			continue;
 		if (!sakura.show_scrollbar)
 			gtk_widget_hide(sk_tab->scrollbar);
@@ -3820,6 +3823,8 @@ sakura_set_colors ()
 		if (sk_tab == NULL)
 			continue;
 		window_opacity = sakura.backcolors[sk_tab->colorset].alpha;
+		if (sk_tab->vte == NULL)
+			continue;
 
 		/* Set fore, back, cursor color and palette for the terminal's colorset */
 		vte_terminal_set_colors(VTE_TERMINAL(sk_tab->vte),

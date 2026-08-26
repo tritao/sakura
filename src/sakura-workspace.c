@@ -3504,6 +3504,8 @@ sakura_sidebar_button_press_cb (GtkWidget *widget, GdkEventButton *event, void *
 	struct sakura_sidebar_node *node;
 	gboolean expander_click;
 
+	sakura.last_user_interaction_us = g_get_monotonic_time();
+
 	/* GTK starts a drag before its default selection handling necessarily runs.
 	 * Capture the row under the pointer so drag-begin cannot reuse a previously
 	 * selected page or task when the user drags an unselected group. */
@@ -5138,6 +5140,25 @@ typedef struct {
 } SakuraWorkspaceRestoreJob;
 
 static SakuraWorkspaceRestoreJob *sakura_workspace_restore_job;
+static gboolean sakura_workspace_restore_job_step(gpointer data);
+
+#define SAKURA_RESTORE_INPUT_GRACE_US (120 * 1000)
+
+
+static void
+sakura_workspace_restore_job_schedule(SakuraWorkspaceRestoreJob *job,
+                                      guint delay_ms)
+{
+	if (job == NULL || job->source_id != 0)
+		return;
+	if (delay_ms > 0)
+		job->source_id = g_timeout_add_full(
+			G_PRIORITY_LOW, delay_ms, sakura_workspace_restore_job_step,
+			job, NULL);
+	else
+		job->source_id = g_idle_add_full(
+			G_PRIORITY_LOW, sakura_workspace_restore_job_step, job, NULL);
+}
 
 
 static void
@@ -5384,10 +5405,23 @@ sakura_workspace_restore_job_step(gpointer data)
 	SakuraSessionSnapshot *snapshot;
 	gboolean step_success;
 	gint64 trace_started;
+	gint64 now;
 	guint restore_index;
 
-	if (job == NULL || sakura.session_shutting_down)
+	if (job == NULL)
 		return G_SOURCE_REMOVE;
+	job->source_id = 0;
+	if (sakura.session_shutting_down)
+		return G_SOURCE_REMOVE;
+	now = g_get_monotonic_time();
+	if (sakura.last_user_interaction_us != 0 &&
+	    now - sakura.last_user_interaction_us < SAKURA_RESTORE_INPUT_GRACE_US) {
+		gint64 remaining_us = SAKURA_RESTORE_INPUT_GRACE_US -
+		                      (now - sakura.last_user_interaction_us);
+		sakura_workspace_restore_job_schedule(
+			job, (guint)MAX(1, (remaining_us + 999) / 1000));
+		return G_SOURCE_REMOVE;
+	}
 	snapshot = job->snapshot;
 	trace_started = sakura_ui_latency_trace_begin();
 	if (job->restore_layout) {
@@ -5407,7 +5441,10 @@ sakura_workspace_restore_job_step(gpointer data)
 		step_success = sakura_workspace_restore_tab_record(job,
 			g_ptr_array_index(snapshot->tabs, restore_index), restore_index);
 	}
-	sakura_ui_latency_trace_end("workspace-restore-step", trace_started);
+	sakura_ui_latency_trace_end(
+		job->index == 0 ? "workspace-restore-selected" :
+		                  "workspace-restore-background",
+		trace_started);
 	if (!step_success) {
 		job->failed = TRUE;
 		sakura_workspace_restore_job_finalize(job, FALSE);
@@ -5416,7 +5453,8 @@ sakura_workspace_restore_job_step(gpointer data)
 	if (job->restore_layout)
 		job->restored++;
 	job->index++;
-	return G_SOURCE_CONTINUE;
+	sakura_workspace_restore_job_schedule(job, 0);
+	return G_SOURCE_REMOVE;
 }
 
 
@@ -5490,7 +5528,7 @@ sakura_workspace_restore_snapshot_async(
 		}
 	}
 	sakura_workspace_restore_job = job;
-	job->source_id = g_idle_add(sakura_workspace_restore_job_step, job);
+	sakura_workspace_restore_job_schedule(job, 0);
 	return TRUE;
 }
 
