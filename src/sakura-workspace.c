@@ -6371,7 +6371,10 @@ sakura_sidebar_set_node_row(SakuraSidebarNode *node, GtkTreeIter *iter)
 	     status_tab->codex_resume_cwd_query_active))
 		status_label = (status_tab->runtime_start_pending ||
 		                status_tab->codex_resume_cwd_query_active)
-	                   ? _("Starting terminal…") : _("Click to resume");
+	                   ? (status_tab->kind == SAKURA_TAB_CODEX
+	                      ? _("Loading Codex session…")
+	                      : _("Starting terminal…"))
+	                   : _("Click to resume");
 	else
 		status_label = task_row ? sakura_task_status_label(task_status) :
 		               (status != SAKURA_TAB_STATUS_NONE ? sakura_tab_status_label(status) : NULL);

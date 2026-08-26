@@ -745,6 +745,38 @@ struct sakura_codex_name_query {
 
 static void sakura_codex_name_helper_dispatch(void);
 
+static gboolean
+sakura_codex_name_query_is_interactive(
+	const struct sakura_codex_name_query *query)
+{
+	return query != NULL &&
+	       (query->resume_cwd ||
+	        query->kind == SAKURA_CODEX_SESSION_QUERY_SET_NAME);
+}
+
+static void
+sakura_codex_name_query_enqueue(struct sakura_codex_name_query *query)
+{
+	GList *position;
+
+	if (sakura.codex_name_query_queue == NULL)
+		sakura.codex_name_query_queue = g_queue_new();
+	if (!sakura_codex_name_query_is_interactive(query)) {
+		g_queue_push_tail(sakura.codex_name_query_queue, query);
+		return;
+	}
+	/* Preserve FIFO ordering within the interactive class, but put it ahead of
+	 * background name refreshes queued for the restored workspace. */
+	for (position = sakura.codex_name_query_queue->head;
+	     position != NULL; position = position->next) {
+		if (!sakura_codex_name_query_is_interactive(position->data)) {
+			g_queue_insert_before(sakura.codex_name_query_queue, position, query);
+			return;
+		}
+	}
+	g_queue_push_tail(sakura.codex_name_query_queue, query);
+}
+
 
 
 SakuraTab *
@@ -969,8 +1001,6 @@ sakura_codex_resolve_resume_cwd_async(SakuraTab *tab, const gchar *fallback_cwd)
 	    tab->codex_tracking_token == NULL || sakura.session_shutting_down)
 		return;
 
-	if (sakura.codex_name_query_queue == NULL)
-		sakura.codex_name_query_queue = g_queue_new();
 	query = g_new0(struct sakura_codex_name_query, 1);
 	query->kind = SAKURA_CODEX_SESSION_QUERY_INFO;
 	query->resume_cwd = TRUE;
@@ -978,7 +1008,7 @@ sakura_codex_resolve_resume_cwd_async(SakuraTab *tab, const gchar *fallback_cwd)
 	query->session_id = g_strdup(tab->codex_session_id);
 	query->fallback_cwd = g_strdup(fallback_cwd);
 	tab->codex_session_query_active = TRUE;
-	g_queue_push_tail(sakura.codex_name_query_queue, query);
+	sakura_codex_name_query_enqueue(query);
 	sakura_codex_name_helper_dispatch();
 }
 
@@ -1441,14 +1471,12 @@ sakura_codex_sync_name(SakuraTab *tab)
 	    tab->codex_session_query_active || sakura.session_shutting_down)
 		return;
 
-	if (sakura.codex_name_query_queue == NULL)
-		sakura.codex_name_query_queue = g_queue_new();
 	query = g_new0(struct sakura_codex_name_query, 1);
 	query->kind = SAKURA_CODEX_SESSION_QUERY_NAME;
 	query->tracking_token = g_strdup(tab->codex_tracking_token);
 	query->session_id = g_strdup(tab->codex_session_id);
 	tab->codex_session_query_active = TRUE;
-	g_queue_push_tail(sakura.codex_name_query_queue, query);
+	sakura_codex_name_query_enqueue(query);
 	sakura_codex_name_helper_dispatch();
 }
 
@@ -1463,15 +1491,13 @@ sakura_codex_set_name_async (struct sakura_tab *sk_tab, const gchar *name)
 	    sk_tab->codex_session_id[0] == '\0' || sakura.session_shutting_down)
 		return;
 
-	if (sakura.codex_name_query_queue == NULL)
-		sakura.codex_name_query_queue = g_queue_new();
 	query = g_new0(struct sakura_codex_name_query, 1);
 	query->kind = SAKURA_CODEX_SESSION_QUERY_SET_NAME;
 	query->tracking_token = g_strdup(sk_tab->codex_tracking_token);
 	query->session_id = g_strdup(sk_tab->codex_session_id);
 	query->new_name = g_strdup(name);
 	sk_tab->codex_session_query_active = TRUE;
-	g_queue_push_tail(sakura.codex_name_query_queue, query);
+	sakura_codex_name_query_enqueue(query);
 	sakura_codex_name_helper_dispatch();
 }
 

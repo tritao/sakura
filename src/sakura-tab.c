@@ -995,11 +995,15 @@ sakura_tab_start_deferred_runtime(SakuraTab *tab)
 	tab->runtime_start_pending = TRUE;
 	if (tab->runtime_placeholder != NULL) {
 		gtk_label_set_text(GTK_LABEL(tab->runtime_placeholder),
-		                   _("Starting terminal…"));
+		                   tab->kind == SAKURA_TAB_CODEX
+		                   ? _("Loading Codex session…")
+		                   : _("Starting terminal…"));
 		gtk_widget_show(tab->runtime_placeholder);
 	}
 	if (tab->spinner != NULL) {
-		gtk_widget_set_tooltip_text(tab->spinner, _("Starting terminal…"));
+		gtk_widget_set_tooltip_text(
+			tab->spinner, tab->kind == SAKURA_TAB_CODEX
+			? _("Loading Codex session…") : _("Starting terminal…"));
 		gtk_widget_show(tab->spinner);
 		gtk_spinner_start(GTK_SPINNER(tab->spinner));
 	}
