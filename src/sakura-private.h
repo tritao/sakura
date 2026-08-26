@@ -238,6 +238,7 @@ struct sakura_app {
 	gboolean sidebar_focus_syncing;
 	gboolean sidebar_visible;
 	gint sidebar_width;
+	guint sidebar_resize_source_id;
 	GtkWidget *notebook;
 	GtkWidget *content_box;
 	GtkWidget *tab_bar_shell;
@@ -802,6 +803,7 @@ void sakura_sidebar_model_reordered_cb(GtkTreeModel *model, GtkTreePath *path,
 void sakura_sidebar_toggle_cb(GtkWidget *widget, void *data);
 void sakura_sidebar_paned_position_cb(GObject *object, GParamSpec *pspec,
                                       void *data);
+void sakura_sidebar_resize_settled_cb_remove(void);
 SakuraSidebarNode *sakura_sidebar_find_group_by_id(const gchar *id);
 gchar *sakura_sidebar_directory_for_node(SakuraSidebarNode *node);
 SakuraSidebarNode *sakura_sidebar_creation_parent_for_context(

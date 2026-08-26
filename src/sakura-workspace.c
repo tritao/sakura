@@ -5628,12 +5628,56 @@ sakura_sidebar_show_archived_cb(GtkWidget *widget, void *data)
 
 
 void
+sakura_sidebar_resize_settled_cb_remove(void)
+{
+	if (sakura.sidebar_resize_source_id == 0)
+		return;
+	g_source_remove(sakura.sidebar_resize_source_id);
+	sakura.sidebar_resize_source_id = 0;
+}
+
+
+static gboolean
+sakura_sidebar_resize_settled_cb(gpointer data)
+{
+	SakuraPage *page;
+
+	(void)data;
+	sakura.sidebar_resize_source_id = 0;
+	if (sakura.session_shutting_down || sakura.notebook == NULL)
+		return G_SOURCE_REMOVE;
+	page = sakura_page_at_page(
+		gtk_notebook_get_current_page(GTK_NOTEBOOK(sakura.notebook)));
+	if (page == NULL || page->panes == NULL)
+		return G_SOURCE_REMOVE;
+	for (guint index = 0; index < page->panes->len; index++) {
+		SakuraTab *tab = g_ptr_array_index(page->panes, index);
+
+		if (tab == NULL || tab->vte == NULL)
+			continue;
+		sakura_tab_sync_agent_size(tab);
+		/* VTE and fullscreen TUIs receive many intermediate allocations while
+		 * the GtkPaned handle is dragged. Invalidate the complete final grid so
+		 * no damage rectangles from an older column count remain visible. */
+		gtk_widget_queue_draw(tab->vte);
+	}
+	return G_SOURCE_REMOVE;
+}
+
+
+void
 sakura_sidebar_paned_position_cb (GObject *object, GParamSpec *pspec, void *data)
 {
+	(void)object;
+	(void)pspec;
+	(void)data;
 	if (sakura.sidebar_paned != NULL && sakura.sidebar_visible) {
 		sakura.sidebar_width = gtk_paned_get_position(GTK_PANED(sakura.sidebar_paned));
 		sakura_workspace_set_integer("sidebar_width", sakura.sidebar_width);
 	}
+	sakura_sidebar_resize_settled_cb_remove();
+	sakura.sidebar_resize_source_id = g_timeout_add(
+		80, sakura_sidebar_resize_settled_cb, NULL);
 	sakura_session_mark_dirty();
 }
 
