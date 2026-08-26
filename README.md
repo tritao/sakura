@@ -192,11 +192,13 @@ python3 tests/profile-codex-workload.py --binary build-opt/src/sakura
 The workload keeps 24 restored Codex sessions active while repeatedly
 switching visible sidebar rows with real X11 pointer events. Its JSON report
 includes click-to-active and selection-to-focus p50/p95/p99/max latency,
-missed or incorrect switches, GTK main-loop stalls with recent-cause
-attribution, timed UI activities, CPU, memory, I/O, and context-switch metrics.
+selection-to-painted-frame latency, frame intervals, missed or incorrect
+switches, GTK main-loop stalls with recent-cause attribution, timed UI
+activities, CPU, memory, I/O, and context-switch metrics.
 The command fails if switch failures exceed 1%, focus-sample coverage falls
 below 98%, active p95 exceeds 50 ms, focus p95 exceeds 25 ms, stall p95 exceeds
-50 ms, or more than three stalls exceed 50 ms. Use `--interaction-interval 0`
+50 ms, paint p95 exceeds 40 ms, frame-interval p95 exceeds 30 ms, or more than
+three stalls or frame intervals exceed 50 ms. Use `--interaction-interval 0`
 for throughput-only profiling.
 
 Tracked Codex tabs show their current state in the terminal sidebar: working,

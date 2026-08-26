@@ -228,6 +228,11 @@ struct sakura_app {
 	gint64 ui_latency_trace_recent_activity_us;
 	gint64 ui_latency_trace_recent_duration_us;
 	const gchar *ui_latency_trace_recent_cause;
+	GdkFrameClock *ui_latency_trace_frame_clock;
+	gulong ui_latency_trace_after_paint_handler_id;
+	gint64 ui_latency_trace_last_paint_us;
+	gint64 ui_latency_trace_selection_paint_us;
+	gchar *ui_latency_trace_selection_terminal_id;
 	gboolean sidebar_focus_syncing;
 	gboolean sidebar_visible;
 	gint sidebar_width;
@@ -706,6 +711,8 @@ void sakura_ui_latency_trace_start(void);
 void sakura_ui_latency_trace_stop(void);
 gint64 sakura_ui_latency_trace_begin(void);
 void sakura_ui_latency_trace_end(const gchar *cause, gint64 started_us);
+void sakura_ui_latency_trace_request_paint(const gchar *terminal_id,
+                                           gint64 selection_us);
 gboolean sakura_term_buttonpressed_cb(GtkWidget *widget, GdkEventButton *event,
                                       gpointer user_data);
 gboolean sakura_term_buttonreleased_cb(GtkWidget *widget, GdkEventButton *event,

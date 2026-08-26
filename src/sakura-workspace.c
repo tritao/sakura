@@ -1965,6 +1965,8 @@ sakura_sidebar_selection_changed_cb (GtkTreeSelection *selection, void *data)
 	else if (node->page != NULL && node->page->active_tab != NULL)
 		sakura.selection_intent_terminal_id =
 			g_strdup(node->page->active_tab->terminal_id);
+	sakura_ui_latency_trace_request_paint(sakura.selection_intent_terminal_id,
+	                                      sakura.selection_intent_us);
 	sakura_sidebar_remember_selection(node);
 	if (node->type == SAKURA_SIDEBAR_GROUP) {
 		sakura_workspace_begin_mutation();

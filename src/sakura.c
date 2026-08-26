@@ -3367,6 +3367,35 @@ sakura_ui_latency_trace_tick(gpointer data)
 }
 
 
+static void
+sakura_ui_latency_trace_after_paint(GdkFrameClock *clock, gpointer data)
+{
+	SakuraApp *app = data;
+	gint64 now, interval;
+
+	(void)clock;
+	if (app == NULL || !app->ui_latency_trace_enabled)
+		return;
+	now = g_get_monotonic_time();
+	if (app->ui_latency_trace_last_paint_us != 0) {
+		interval = now - app->ui_latency_trace_last_paint_us;
+		g_message("ui-frame-interval-us=%" G_GINT64_FORMAT, interval);
+	}
+	app->ui_latency_trace_last_paint_us = now;
+	if (app->ui_latency_trace_selection_paint_us != 0) {
+		if (app->workspace != NULL && app->workspace->active_tab != NULL &&
+		    g_strcmp0(app->ui_latency_trace_selection_terminal_id,
+		              app->workspace->active_tab->terminal_id) == 0)
+			g_message("selection-paint-latency-us=%" G_GINT64_FORMAT
+			          " terminal=%s",
+			          now - app->ui_latency_trace_selection_paint_us,
+			          app->workspace->active_tab->terminal_id);
+		app->ui_latency_trace_selection_paint_us = 0;
+		g_clear_pointer(&app->ui_latency_trace_selection_terminal_id, g_free);
+	}
+}
+
+
 void
 sakura_ui_latency_trace_start(void)
 {
@@ -3387,6 +3416,18 @@ sakura_ui_latency_trace_stop(void)
 		g_source_remove(sakura.ui_latency_trace_source_id);
 		sakura.ui_latency_trace_source_id = 0;
 	}
+	if (sakura.ui_latency_trace_frame_clock != NULL) {
+		gdk_frame_clock_end_updating(sakura.ui_latency_trace_frame_clock);
+		if (sakura.ui_latency_trace_after_paint_handler_id != 0)
+			g_signal_handler_disconnect(
+				sakura.ui_latency_trace_frame_clock,
+				sakura.ui_latency_trace_after_paint_handler_id);
+		g_clear_object(&sakura.ui_latency_trace_frame_clock);
+	}
+	sakura.ui_latency_trace_after_paint_handler_id = 0;
+	sakura.ui_latency_trace_last_paint_us = 0;
+	sakura.ui_latency_trace_selection_paint_us = 0;
+	g_clear_pointer(&sakura.ui_latency_trace_selection_terminal_id, g_free);
 	sakura.ui_latency_trace_enabled = FALSE;
 }
 
@@ -3420,6 +3461,40 @@ sakura_ui_latency_trace_end(const gchar *cause, gint64 started_us)
 	}
 	g_message("ui-activity-us=%" G_GINT64_FORMAT " cause=%s",
 	          duration, cause);
+}
+
+
+void
+sakura_ui_latency_trace_request_paint(const gchar *terminal_id,
+                                      gint64 selection_us)
+{
+	GdkFrameClock *clock;
+
+	if (!sakura.ui_latency_trace_enabled || sakura.main_window == NULL ||
+	    terminal_id == NULL || selection_us == 0)
+		return;
+	clock = gtk_widget_get_frame_clock(sakura.main_window);
+	if (clock == NULL)
+		return;
+	if (sakura.ui_latency_trace_frame_clock != clock) {
+		if (sakura.ui_latency_trace_frame_clock != NULL) {
+			gdk_frame_clock_end_updating(sakura.ui_latency_trace_frame_clock);
+			if (sakura.ui_latency_trace_after_paint_handler_id != 0)
+				g_signal_handler_disconnect(
+					sakura.ui_latency_trace_frame_clock,
+					sakura.ui_latency_trace_after_paint_handler_id);
+			g_clear_object(&sakura.ui_latency_trace_frame_clock);
+		}
+		sakura.ui_latency_trace_frame_clock = g_object_ref(clock);
+		sakura.ui_latency_trace_after_paint_handler_id = g_signal_connect(
+			clock, "after-paint",
+			G_CALLBACK(sakura_ui_latency_trace_after_paint), &sakura);
+		gdk_frame_clock_begin_updating(clock);
+	}
+	sakura.ui_latency_trace_selection_paint_us = selection_us;
+	g_free(sakura.ui_latency_trace_selection_terminal_id);
+	sakura.ui_latency_trace_selection_terminal_id = g_strdup(terminal_id);
+	gdk_frame_clock_request_phase(clock, GDK_FRAME_CLOCK_PHASE_AFTER_PAINT);
 }
 
 

@@ -25,6 +25,9 @@ STALL_PATTERN = re.compile(
 ACTIVITY_PATTERN = re.compile(r"ui-activity-us=(\d+) cause=([a-z-]+)")
 BACKGROUND_ACTIVITY_PATTERN = re.compile(
     r"ui-background-activity-us=(\d+) cause=([a-z-]+)")
+PAINT_LATENCY_PATTERN = re.compile(
+    r"selection-paint-latency-us=(\d+) terminal=(profile-codex-\d+)")
+FRAME_INTERVAL_PATTERN = re.compile(r"ui-frame-interval-us=(\d+)")
 
 
 def require(command):
@@ -380,6 +383,9 @@ def main():
     parser.add_argument("--min-focus-sample-percent", type=float, default=98.0)
     parser.add_argument("--max-main-loop-stall-p95-ms", type=float, default=50.0)
     parser.add_argument("--max-main-loop-stalls-over-50", type=int, default=3)
+    parser.add_argument("--max-paint-p95-ms", type=float, default=40.0)
+    parser.add_argument("--max-frame-interval-p95-ms", type=float, default=30.0)
+    parser.add_argument("--max-frame-intervals-over-50", type=int, default=3)
     parser.add_argument("--json", metavar="PATH", help="also write metrics as JSON")
     args = parser.parse_args()
     if (args.sessions < 1 or args.duration <= 0 or args.warmup < 0 or
@@ -498,9 +504,16 @@ def main():
             activity_events = ACTIVITY_PATTERN.findall(trace_contents)
             background_activity_events = BACKGROUND_ACTIVITY_PATTERN.findall(
                 trace_contents)
+            paint_latency_events = PAINT_LATENCY_PATTERN.findall(trace_contents)
+            frame_interval_us = [
+                int(value) for value in FRAME_INTERVAL_PATTERN.findall(trace_contents)
+            ]
             if expected_interactions:
                 latency_events = latency_events[-len(expected_interactions):]
             latency_us = [int(value) for value, _ in latency_events]
+            if expected_interactions:
+                paint_latency_events = paint_latency_events[-len(expected_interactions):]
+            paint_latency_us = [int(value) for value, _ in paint_latency_events]
             stall_us = [int(value) for value, _, _ in stall_events]
             stall_causes = {}
             for value, cause, age in stall_events:
@@ -538,6 +551,26 @@ def main():
                 "sidebar_focus_latency_ms_p99": percentile(latency_us, 99),
                 "sidebar_focus_latency_ms_max": (
                     round(max(latency_us) / 1000, 3) if latency_us else None),
+                "sidebar_paint_samples": len(paint_latency_us),
+                "sidebar_paint_latency_ms_p50": percentile(paint_latency_us, 50),
+                "sidebar_paint_latency_ms_p95": percentile(paint_latency_us, 95),
+                "sidebar_paint_latency_ms_p99": percentile(paint_latency_us, 99),
+                "sidebar_paint_latency_ms_max": (
+                    round(max(paint_latency_us) / 1000, 3)
+                    if paint_latency_us else None),
+                "frame_samples": len(frame_interval_us),
+                "frame_interval_ms_p50": percentile(frame_interval_us, 50),
+                "frame_interval_ms_p95": percentile(frame_interval_us, 95),
+                "frame_interval_ms_p99": percentile(frame_interval_us, 99),
+                "frame_interval_ms_max": (
+                    round(max(frame_interval_us) / 1000, 3)
+                    if frame_interval_us else None),
+                "frame_intervals_over_16_7ms": sum(
+                    value > 16700 for value in frame_interval_us),
+                "frame_intervals_over_25ms": sum(
+                    value > 25000 for value in frame_interval_us),
+                "frame_intervals_over_50ms": sum(
+                    value > 50000 for value in frame_interval_us),
                 "main_loop_stalls_over_16ms": len(stall_us),
                 "main_loop_stalls_over_25ms": sum(value >= 25000 for value in stall_us),
                 "main_loop_stalls_over_50ms": sum(value >= 50000 for value in stall_us),
@@ -596,6 +629,11 @@ def main():
                         errors.append(
                             f"focus sample coverage {sample_percent:.2f}% is below "
                             f"{args.min_focus_sample_percent:.2f}%")
+                    paint_sample_percent = report["sidebar_paint_samples"] / attempts * 100
+                    if paint_sample_percent < args.min_focus_sample_percent:
+                        errors.append(
+                            f"paint sample coverage {paint_sample_percent:.2f}% is below "
+                            f"{args.min_focus_sample_percent:.2f}%")
                 active_p95 = report["sidebar_active_latency_ms_p95"]
                 focus_p95 = report["sidebar_focus_latency_ms_p95"]
                 if active_p95 is None or active_p95 > args.max_active_p95_ms:
@@ -604,6 +642,21 @@ def main():
                 if focus_p95 is None or focus_p95 > args.max_focus_p95_ms:
                     errors.append(
                         f"focus p95 {focus_p95}ms exceeds {args.max_focus_p95_ms}ms")
+                paint_p95 = report["sidebar_paint_latency_ms_p95"]
+                if paint_p95 is None or paint_p95 > args.max_paint_p95_ms:
+                    errors.append(
+                        f"paint p95 {paint_p95}ms exceeds {args.max_paint_p95_ms}ms")
+                frame_p95 = report["frame_interval_ms_p95"]
+                if (frame_p95 is None or
+                        frame_p95 > args.max_frame_interval_p95_ms):
+                    errors.append(
+                        f"frame interval p95 {frame_p95}ms exceeds "
+                        f"{args.max_frame_interval_p95_ms}ms")
+                frames_over_50 = report["frame_intervals_over_50ms"]
+                if frames_over_50 > args.max_frame_intervals_over_50:
+                    errors.append(
+                        f"{frames_over_50} frame intervals over 50ms exceeds "
+                        f"{args.max_frame_intervals_over_50}")
                 stall_p95 = report["main_loop_stall_ms_p95"]
                 if (stall_p95 is not None and
                         stall_p95 > args.max_main_loop_stall_p95_ms):
