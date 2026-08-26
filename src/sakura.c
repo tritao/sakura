@@ -3779,7 +3779,7 @@ sakura_set_font()
 	/* Set the font for all tabs */
 	for (i = sakura.workspace->panes != NULL ? (gint)sakura.workspace->panes->len - 1 : -1; i >= 0; i--) {
 		sk_tab = g_ptr_array_index(sakura.workspace->panes, i);
-		if (sk_tab == NULL)
+		if (sk_tab == NULL || sk_tab->vte == NULL)
 			continue;
 		vte_terminal_set_font(VTE_TERMINAL(sk_tab->vte), sakura.font);
 		vte_terminal_set_cell_height_scale(VTE_TERMINAL(sk_tab->vte), sakura.line_height);

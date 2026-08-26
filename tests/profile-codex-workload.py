@@ -90,6 +90,7 @@ def startup_probe(binary, root, config, base_env, sessions, index):
     log_path = root / f"startup-{index:02d}.log"
     env = base_env.copy()
     env["SAKURA_PROFILE_STATS_DIR"] = str(stats_dir)
+    env["SAKURA_PROFILE_KIND"] = "active"
     write_fixture(config, sessions)
     launched_us = time.monotonic_ns() // 1000
     with log_path.open("w", encoding="utf-8") as log:
@@ -274,6 +275,88 @@ def run_cold_switch_workload(app, env, log, log_path, sessions):
             "failures": failures}
 
 
+def switch_storm_probe(binary, root, config, base_env, sessions):
+    """Rapidly switch across many output-producing sessions in one group."""
+    count = min(16, sessions)
+    if count < 2:
+        return {"attempts": 0, "failures": 0, "final_correct": True,
+                "final_focus_correct": True, "final_paint_correct": True,
+                "active_us": [], "focus_us": [], "paint_us": [],
+                "output_flush_us": [], "stall_us": []}
+    stats_dir = root / "storm-stats"
+    log_path = root / "storm.log"
+    config = root / "storm.conf"
+    env = base_env.copy()
+    env["SAKURA_PROFILE_STATS_DIR"] = str(stats_dir)
+    write_fixture(config, sessions, group_size=sessions)
+    with log_path.open("w", encoding="utf-8") as log:
+        app = subprocess.Popen([str(binary), "--config-file", config.name],
+                               cwd=root, env=env, stdout=log,
+                               stderr=subprocess.STDOUT)
+        try:
+            wait_for_log_milestone(app, log_path, "workspace-ready")
+            wait_for_worker_count(app, stats_dir, sessions)
+            window = wait_for_window(app.pid, env)
+            x, y = window_origin(window, env)
+            run_xdotool(env, "windowfocus", "--sync", window)
+            row_x = x + 100
+            first_row_y = y + 73 + 25 + 25 + 12
+            for _ in range(2):
+                run_xdotool(env, "mousemove", row_x, first_row_y)
+                run_xdotool(env, "click", "--delay", 0, 1)
+                time.sleep(0.05)
+            log.flush()
+            offset = log.tell()
+            sequence = list(range(count)) + list(reversed(range(count)))
+            active_us = []
+            failures = 0
+            for index in sequence:
+                title = f"Codex workload {index + 1:02d}"
+                run_xdotool(env, "mousemove", row_x, first_row_y + index * 25)
+                started = time.monotonic_ns() // 1000
+                run_xdotool(env, "click", "--delay", 0, 1)
+                deadline = time.monotonic() + 0.025
+                matched = False
+                while time.monotonic() < deadline and app.poll() is None:
+                    if run_xdotool(env, "getwindowname", window).stdout.strip() == title:
+                        active_us.append(time.monotonic_ns() // 1000 - started)
+                        matched = True
+                        break
+                    time.sleep(0.001)
+                if not matched:
+                    failures += 1
+            final_title = f"Codex workload {sequence[-1] + 1:02d}"
+            time.sleep(0.1)
+            final_correct = run_xdotool(
+                env, "getwindowname", window).stdout.strip() == final_title
+            log.flush()
+            with log_path.open(encoding="utf-8", errors="replace") as trace_log:
+                trace_log.seek(offset)
+                contents = trace_log.read()
+            focus_events = LATENCY_PATTERN.findall(contents)
+            paint_events = PAINT_LATENCY_PATTERN.findall(contents)
+            activity_events = ACTIVITY_PATTERN.findall(contents)
+            stall_events = STALL_PATTERN.findall(contents)
+            output_flush_us = [int(value) for value, cause in activity_events
+                               if cause == "terminal-output-flush"]
+            stall_us = [int(value) for value, _, _ in stall_events]
+            final_terminal = f"profile-codex-{sequence[-1]:03d}"
+            return {
+                "attempts": len(sequence), "failures": failures,
+                "final_correct": final_correct, "active_us": active_us,
+                "focus_us": [int(value) for value, _ in focus_events],
+                "paint_us": [int(value) for value, _ in paint_events],
+                "final_focus_correct": bool(focus_events) and
+                    focus_events[-1][1] == final_terminal,
+                "final_paint_correct": bool(paint_events) and
+                    paint_events[-1][1] == final_terminal,
+                "output_flush_us": output_flush_us,
+                "stall_us": stall_us,
+            }
+        finally:
+            terminate_process_tree(app)
+
+
 def start_interaction_workload(app, env, sessions, interval):
     """Select the first six sessions back and forth using real X events."""
     if interval <= 0 or sessions < 2:
@@ -376,7 +459,7 @@ def duration_summary(values):
     }
 
 
-def write_fixture(config_file, sessions):
+def write_fixture(config_file, sessions, group_size=6):
     config_file.write_text(
         "[sakura]\nless_questions=true\ndont_save=false\n"
         "sidebar_visible=true\nsidebar_width=300\n"
@@ -384,7 +467,8 @@ def write_fixture(config_file, sessions):
         encoding="utf-8",
     )
     session_file = Path(f"{config_file}.session")
-    group_count = max(1, (sessions + 5) // 6)
+    group_size = max(1, group_size)
+    group_count = max(1, (sessions + group_size - 1) // group_size)
     lines = [
         "[Session]", "version=3", f"group_count={group_count}",
         f"terminal_count={sessions}", "selected_terminal=0",
@@ -397,7 +481,7 @@ def write_fixture(config_file, sessions):
         workload_cwd = config_file.parent / "workloads" / f"session-{index:03d}"
         workload_cwd.mkdir(parents=True, exist_ok=True)
         lines += [
-            f"[Terminal{index}]", f"parent=group-{index // 6:02d}",
+            f"[Terminal{index}]", f"parent=group-{index // group_size:02d}",
             f"cwd={workload_cwd}", f"terminal_id=profile-codex-{index:03d}",
             "kind=codex", "title_set_by_user=true",
             f"codex_session_id=00000000-0000-0000-0000-{index:012d}",
@@ -608,6 +692,11 @@ def main():
     parser.add_argument("--max-cold-switch-active-ms", type=float, default=25.0)
     parser.add_argument("--max-cold-switch-focus-ms", type=float, default=50.0)
     parser.add_argument("--max-cold-switch-paint-ms", type=float, default=50.0)
+    parser.add_argument("--max-storm-active-ms", type=float, default=25.0)
+    parser.add_argument("--max-storm-focus-ms", type=float, default=50.0)
+    parser.add_argument("--max-storm-paint-ms", type=float, default=50.0)
+    parser.add_argument("--max-storm-output-flush-ms", type=float, default=10.0)
+    parser.add_argument("--max-storm-stall-ms", type=float, default=50.0)
     parser.add_argument("--max-frame-interval-p95-ms", type=float, default=30.0)
     parser.add_argument("--max-frame-intervals-over-50", type=int, default=3)
     parser.add_argument("--startup-runs", type=int, default=3,
@@ -651,6 +740,8 @@ def main():
             for index in range(args.startup_runs)
         ]
         startup_report = startup_summary(startup_probes)
+        storm_report = switch_storm_probe(
+            binary, root, config, env, args.sessions)
         # Each probe is allowed to persist its session. Restore the identical
         # fixture before the detailed steady-state run.
         write_fixture(config, args.sessions)
@@ -724,6 +815,30 @@ def main():
             report = {
                 "profile": args.profile, "sessions": args.sessions,
                 "startup": startup_report,
+                "switch_storm": {
+                    "attempts": storm_report["attempts"],
+                    "failures": storm_report["failures"],
+                    "final_correct": storm_report["final_correct"],
+                    "final_focus_correct": storm_report["final_focus_correct"],
+                    "final_paint_correct": storm_report["final_paint_correct"],
+                    "focus_samples": len(storm_report["focus_us"]),
+                    "paint_samples": len(storm_report["paint_us"]),
+                    "output_flush_latency_ms_max": (
+                        round(max(storm_report["output_flush_us"]) / 1000, 3)
+                        if storm_report["output_flush_us"] else None),
+                    "main_loop_stall_ms_max": (
+                        round(max(storm_report["stall_us"]) / 1000, 3)
+                        if storm_report["stall_us"] else None),
+                    "active_latency_ms_max": (
+                        round(max(storm_report["active_us"]) / 1000, 3)
+                        if storm_report["active_us"] else None),
+                    "focus_latency_ms_max": (
+                        round(max(storm_report["focus_us"]) / 1000, 3)
+                        if storm_report["focus_us"] else None),
+                    "paint_latency_ms_max": (
+                        round(max(storm_report["paint_us"]) / 1000, 3)
+                        if storm_report["paint_us"] else None),
+                },
                 "duration_seconds": round(elapsed, 3),
                 "cpu_seconds": round(cpu_seconds, 3),
                 "average_cpu_percent_one_core": round(cpu_seconds / elapsed * 100, 2),
@@ -892,6 +1007,35 @@ def main():
             if cold_errors:
                 raise RuntimeError(
                     "cold-switch benchmark failed: " + "; ".join(cold_errors))
+            storm_errors = []
+            storm = report["switch_storm"]
+            if storm["failures"]:
+                storm_errors.append(f"{storm['failures']} switches failed")
+            if not storm["final_correct"]:
+                storm_errors.append("final selection rolled back")
+            if not storm["final_focus_correct"]:
+                storm_errors.append("focus rolled back from final selection")
+            if not storm["final_paint_correct"]:
+                storm_errors.append("paint rolled back from final selection")
+            if (storm["active_latency_ms_max"] is None or
+                    storm["active_latency_ms_max"] > args.max_storm_active_ms):
+                storm_errors.append("active latency exceeds threshold")
+            if (storm["focus_latency_ms_max"] is None or
+                    storm["focus_latency_ms_max"] > args.max_storm_focus_ms):
+                storm_errors.append("focus latency exceeds threshold")
+            if (storm["paint_latency_ms_max"] is None or
+                    storm["paint_latency_ms_max"] > args.max_storm_paint_ms):
+                storm_errors.append("paint latency exceeds threshold")
+            if (storm["output_flush_latency_ms_max"] is not None and
+                    storm["output_flush_latency_ms_max"] >
+                    args.max_storm_output_flush_ms):
+                storm_errors.append("output flush exceeds threshold")
+            if (storm["main_loop_stall_ms_max"] is not None and
+                    storm["main_loop_stall_ms_max"] > args.max_storm_stall_ms):
+                storm_errors.append("main-loop stall exceeds threshold")
+            if storm_errors:
+                raise RuntimeError(
+                    "switch-storm benchmark failed: " + "; ".join(storm_errors))
             if args.interaction_interval > 0:
                 errors = []
                 attempts = report["sidebar_switch_attempts"]
