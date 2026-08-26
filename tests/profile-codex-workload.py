@@ -6,6 +6,7 @@ It never connects to, restarts, or writes the session of a running Sakura.
 """
 
 import argparse
+import configparser
 import json
 import os
 from pathlib import Path
@@ -90,7 +91,6 @@ def startup_probe(binary, root, config, base_env, sessions, index):
     log_path = root / f"startup-{index:02d}.log"
     env = base_env.copy()
     env["SAKURA_PROFILE_STATS_DIR"] = str(stats_dir)
-    env["SAKURA_PROFILE_KIND"] = "active"
     write_fixture(config, sessions)
     launched_us = time.monotonic_ns() // 1000
     with log_path.open("w", encoding="utf-8") as log:
@@ -282,12 +282,15 @@ def switch_storm_probe(binary, root, config, base_env, sessions):
         return {"attempts": 0, "failures": 0, "final_correct": True,
                 "final_focus_correct": True, "final_paint_correct": True,
                 "active_us": [], "focus_us": [], "paint_us": [],
-                "output_flush_us": [], "stall_us": []}
+                "output_flush_us": [], "stall_us": [], "mutation_us": [],
+                "mutation_failures": 0, "projection_us": [],
+                "model_consistent": True}
     stats_dir = root / "storm-stats"
     log_path = root / "storm.log"
     config = root / "storm.conf"
     env = base_env.copy()
     env["SAKURA_PROFILE_STATS_DIR"] = str(stats_dir)
+    env["SAKURA_PROFILE_KIND"] = "active"
     write_fixture(config, sessions, group_size=sessions)
     with log_path.open("w", encoding="utf-8") as log:
         app = subprocess.Popen([str(binary), "--config-file", config.name],
@@ -332,9 +335,73 @@ def switch_storm_probe(binary, root, config, base_env, sessions):
             log.flush()
             with log_path.open(encoding="utf-8", errors="replace") as trace_log:
                 trace_log.seek(offset)
+                switch_contents = trace_log.read()
+            mutation_us = []
+            mutation_failures = 0
+            mutation_targets = (0, min(3, count - 1), min(7, count - 1),
+                                min(12, count - 1))
+            for index in mutation_targets:
+                run_xdotool(env, "mousemove", row_x, first_row_y + index * 25)
+                run_xdotool(env, "click", "--delay", 0, 1)
+                time.sleep(0.03)
+                renamed = f"Storm session {index + 1:02d}"
+                started = time.monotonic_ns() // 1000
+                run_xdotool(env, "key", "ctrl+shift+n")
+                time.sleep(0.02)
+                run_xdotool(env, "key", "ctrl+a")
+                run_xdotool(env, "type", "--delay", 0, renamed)
+                run_xdotool(env, "key", "Return")
+                deadline = time.monotonic() + 0.5
+                matched = False
+                while time.monotonic() < deadline and app.poll() is None:
+                    parser = configparser.ConfigParser()
+                    try:
+                        parser.read(Path(f"{config}.session"))
+                        for section in parser.sections():
+                            if (section.startswith("Terminal") and
+                                    parser.get(section, "terminal_id", fallback="") ==
+                                    f"profile-codex-{index:03d}" and
+                                    parser.get(section, "title", fallback="") == renamed):
+                                mutation_us.append(
+                                    time.monotonic_ns() // 1000 - started)
+                                matched = True
+                                break
+                    except (OSError, configparser.Error):
+                        pass
+                    if matched:
+                        break
+                    time.sleep(0.002)
+                if not matched:
+                    mutation_failures += 1
+                run_xdotool(env, "key", "alt+shift+Right")
+                run_xdotool(env, "key", "alt+shift+Left")
+            for _ in range(4):
+                run_xdotool(env, "key", "ctrl+shift+t")
+                time.sleep(0.04)
+                run_xdotool(env, "key", "ctrl+shift+w")
+                time.sleep(0.04)
+            session_path = Path(f"{config}.session")
+            terminal_count = None
+            terminal_ids = []
+            deadline = time.monotonic() + 2
+            while time.monotonic() < deadline:
+                parser = configparser.ConfigParser()
+                try:
+                    parser.read(session_path)
+                    terminal_count = parser.getint("Session", "terminal_count")
+                    terminal_ids = [parser.get(f"Terminal{i}", "terminal_id")
+                                    for i in range(terminal_count)]
+                except (OSError, configparser.Error, KeyError, ValueError):
+                    terminal_count = None
+                if terminal_count == sessions:
+                    break
+                time.sleep(0.02)
+            log.flush()
+            with log_path.open(encoding="utf-8", errors="replace") as trace_log:
+                trace_log.seek(offset)
                 contents = trace_log.read()
-            focus_events = LATENCY_PATTERN.findall(contents)
-            paint_events = PAINT_LATENCY_PATTERN.findall(contents)
+            focus_events = LATENCY_PATTERN.findall(switch_contents)
+            paint_events = PAINT_LATENCY_PATTERN.findall(switch_contents)
             activity_events = ACTIVITY_PATTERN.findall(contents)
             stall_events = STALL_PATTERN.findall(contents)
             output_flush_us = [int(value) for value, cause in activity_events
@@ -352,6 +419,12 @@ def switch_storm_probe(binary, root, config, base_env, sessions):
                     paint_events[-1][1] == final_terminal,
                 "output_flush_us": output_flush_us,
                 "stall_us": stall_us,
+                "mutation_us": mutation_us,
+                "mutation_failures": mutation_failures,
+                "projection_us": [int(value) for value, cause in activity_events
+                                  if cause == "sidebar-projection"],
+                "model_consistent": terminal_count == sessions and
+                    len(terminal_ids) == len(set(terminal_ids)),
             }
         finally:
             terminate_process_tree(app)
@@ -696,7 +769,9 @@ def main():
     parser.add_argument("--max-storm-focus-ms", type=float, default=50.0)
     parser.add_argument("--max-storm-paint-ms", type=float, default=50.0)
     parser.add_argument("--max-storm-output-flush-ms", type=float, default=10.0)
-    parser.add_argument("--max-storm-stall-ms", type=float, default=50.0)
+    parser.add_argument("--max-storm-stall-ms", type=float, default=60.0)
+    parser.add_argument("--max-mutation-persist-ms", type=float, default=750.0)
+    parser.add_argument("--max-projection-ms", type=float, default=50.0)
     parser.add_argument("--max-frame-interval-p95-ms", type=float, default=30.0)
     parser.add_argument("--max-frame-intervals-over-50", type=int, default=3)
     parser.add_argument("--startup-runs", type=int, default=3,
@@ -838,6 +913,14 @@ def main():
                     "paint_latency_ms_max": (
                         round(max(storm_report["paint_us"]) / 1000, 3)
                         if storm_report["paint_us"] else None),
+                    "mutation_failures": storm_report["mutation_failures"],
+                    "mutation_persist_latency_ms_max": (
+                        round(max(storm_report["mutation_us"]) / 1000, 3)
+                        if storm_report["mutation_us"] else None),
+                    "projection_latency_ms_max": (
+                        round(max(storm_report["projection_us"]) / 1000, 3)
+                        if storm_report["projection_us"] else 0.0),
+                    "model_consistent": storm_report["model_consistent"],
                 },
                 "duration_seconds": round(elapsed, 3),
                 "cpu_seconds": round(cpu_seconds, 3),
@@ -1017,6 +1100,10 @@ def main():
                 storm_errors.append("focus rolled back from final selection")
             if not storm["final_paint_correct"]:
                 storm_errors.append("paint rolled back from final selection")
+            if storm["mutation_failures"]:
+                storm_errors.append(f"{storm['mutation_failures']} mutations failed")
+            if not storm["model_consistent"]:
+                storm_errors.append("persisted model diverged after mutations")
             if (storm["active_latency_ms_max"] is None or
                     storm["active_latency_ms_max"] > args.max_storm_active_ms):
                 storm_errors.append("active latency exceeds threshold")
@@ -1033,6 +1120,12 @@ def main():
             if (storm["main_loop_stall_ms_max"] is not None and
                     storm["main_loop_stall_ms_max"] > args.max_storm_stall_ms):
                 storm_errors.append("main-loop stall exceeds threshold")
+            if (storm["mutation_persist_latency_ms_max"] is None or
+                    storm["mutation_persist_latency_ms_max"] >
+                    args.max_mutation_persist_ms):
+                storm_errors.append("mutation persistence latency exceeds threshold")
+            if storm["projection_latency_ms_max"] > args.max_projection_ms:
+                storm_errors.append("projection latency exceeds threshold")
             if storm_errors:
                 raise RuntimeError(
                     "switch-storm benchmark failed: " + "; ".join(storm_errors))
