@@ -333,6 +333,8 @@ test_client_request_cancellation(void)
 		socket_path, test_agent_workspace_id, "sakura-test", 0, &error);
 	g_assert_no_error(error);
 	g_assert_nonnull(client);
+	g_assert_cmpstr(sakura_control_client_agent_version(client), ==,
+	                SAKURA_AGENT_BUILD_ID);
 	cancellable = g_cancellable_new();
 	g_cancellable_cancel(cancellable);
 	g_assert_true(sakura_control_encode_get_snapshot_request(

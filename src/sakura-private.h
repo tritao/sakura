@@ -29,6 +29,7 @@ typedef struct sakura_startup SakuraStartup;
  * module without changing persisted identifiers. */
 typedef SakuraPage SakuraSession;
 int sakura_run(int argc, char **argv);
+gboolean sakura_agent_build_is_current(const gchar *agent_version);
 typedef struct sakura_layout_node SakuraLayoutNode;
 typedef struct sakura_sidebar_node SakuraSidebarNode;
 typedef struct sakura_group SakuraGroup;

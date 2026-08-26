@@ -152,6 +152,13 @@ C<--model> and C<--reasoning> independently override the user's Codex
 configuration for that session. C<--print=json>
 returns stable workspace, group, page, terminal, and Codex session IDs.
 
+On startup Sakura compares the running workspace agent's build fingerprint
+with the application. A stale agent is retired after its workspace is
+snapshotted, replaced with the current binary, and its terminals are recovered.
+Codex terminals resume from their persistent session IDs; shell terminals
+restart because their PTYs were owned by the retired process. If replacement
+cannot be completed safely, Sakura continues with the running agent.
+
 C<sakura-ctl codex apply --group-name=NAME --manifest=PATH> applies a YAML
 session list idempotently. Existing healthy Codex pages with matching group,
 title, canonical working directory, model, and reasoning effort are reused.

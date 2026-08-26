@@ -1,9 +1,13 @@
 #include <errno.h>
+#include <signal.h>
 #include <string.h>
 #include <unistd.h>
 
+#include <glib/gstdio.h>
+
 #include "sakura-private.h"
 #include "sakura-control-client.h"
+#include "sakura-control-discovery.h"
 #include "sakura-control-transport.h"
 
 
@@ -72,6 +76,13 @@ sakura_agent_connect(const gchar *socket_path, const gchar *workspace_id,
 	return sakura_control_client_connect(
 		socket_path, workspace_id, SAKURA_AGENT_CLIENT_NAME,
 		SAKURA_AGENT_REQUIRED_CAPABILITIES, error);
+}
+
+
+gboolean
+sakura_agent_build_is_current(const gchar *agent_version)
+{
+	return g_strcmp0(agent_version, SAKURA_AGENT_BUILD_ID) == 0;
 }
 
 
@@ -1132,6 +1143,7 @@ static gboolean
 sakura_agent_request_snapshot(const gchar *socket_path,
 	                           const gchar *workspace_id,
 	                           SakuraSessionSnapshot **snapshot,
+	                           gchar **agent_version,
 	                           GError **error)
 {
 	SakuraControlClientConnection *connection;
@@ -1145,6 +1157,8 @@ sakura_agent_request_snapshot(const gchar *socket_path,
 
 	if (snapshot != NULL)
 		*snapshot = NULL;
+	if (agent_version != NULL)
+		*agent_version = NULL;
 
 	connection = sakura_agent_connect(socket_path, workspace_id, error);
 	if (connection == NULL)
@@ -1174,6 +1188,9 @@ out:
 		*snapshot = decoded_snapshot;
 		decoded_snapshot = NULL;
 	}
+	if (success && agent_version != NULL)
+		*agent_version = g_strdup(
+			sakura_control_client_agent_version(connection));
 	sakura_session_snapshot_free(decoded_snapshot);
 	g_clear_pointer(&response_payload, g_byte_array_unref);
 	g_clear_pointer(&request, g_byte_array_unref);
@@ -1200,7 +1217,7 @@ sakura_agent_refresh_thread(gpointer data)
 	GError *error = NULL;
 
 	if (sakura_agent_request_snapshot(job->socket_path, job->workspace_id,
-	                                  &snapshot, &error)) {
+	                                  &snapshot, NULL, &error)) {
 		SakuraAgentEvent *event = g_new0(SakuraAgentEvent, 1);
 
 		event->app = job->app;
@@ -2438,7 +2455,7 @@ sakura_agent_wait_ready(const gchar *socket_path, const gchar *workspace_id,
 
 	while (g_get_monotonic_time() < deadline) {
 		if (sakura_agent_request_snapshot(socket_path, workspace_id, snapshot,
-		                                  error))
+		                                  NULL, error))
 			return TRUE;
 		g_clear_error(error);
 		g_usleep(MIN((gint64)10 * 1000,
@@ -2498,6 +2515,63 @@ sakura_agent_launch_owned(SakuraApp *app, const gchar *socket_path,
 
 
 static gboolean
+sakura_agent_retire_stale_process(SakuraApp *app, const gchar *socket_path,
+	                               GError **error)
+{
+	g_autoptr(GPtrArray) endpoints = sakura_control_workspace_discover(error);
+	SakuraControlWorkspaceEndpoint *match = NULL;
+	gint64 deadline;
+
+	if (endpoints == NULL)
+		return FALSE;
+	for (guint index = 0; index < endpoints->len; index++) {
+		SakuraControlWorkspaceEndpoint *candidate = g_ptr_array_index(
+			endpoints, index);
+
+		if (candidate != NULL &&
+		    g_strcmp0(candidate->workspace_id, app->workspace_id) == 0 &&
+		    g_strcmp0(candidate->socket_path, socket_path) == 0) {
+			match = candidate;
+			break;
+		}
+	}
+	if (match == NULL) {
+		g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_NOT_FOUND,
+		                    "could not identify the stale workspace agent");
+		return FALSE;
+	}
+	if (kill((pid_t)match->pid, SIGTERM) != 0 && errno != ESRCH) {
+		g_set_error(error, G_IO_ERROR, g_io_error_from_errno(errno),
+		            "could not retire stale sakura-agent: %s",
+		            g_strerror(errno));
+		return FALSE;
+	}
+	deadline = g_get_monotonic_time() + 2 * G_TIME_SPAN_SECOND;
+	while (g_get_monotonic_time() < deadline &&
+	       g_file_test(socket_path, G_FILE_TEST_EXISTS))
+		g_usleep(10 * 1000);
+	if (g_file_test(socket_path, G_FILE_TEST_EXISTS)) {
+		if (kill((pid_t)match->pid, SIGKILL) != 0 && errno != ESRCH) {
+			g_set_error(error, G_IO_ERROR, g_io_error_from_errno(errno),
+			            "could not stop stale sakura-agent: %s",
+			            g_strerror(errno));
+			return FALSE;
+		}
+		/* SIGKILL cannot run the agent's socket cleanup. The endpoint was
+		 * validated as same-user and matched to this exact workspace above. */
+		g_usleep(10 * 1000);
+		if (g_remove(socket_path) != 0 && errno != ENOENT) {
+			g_set_error(error, G_IO_ERROR, g_io_error_from_errno(errno),
+			            "could not remove the stale agent endpoint: %s",
+			            g_strerror(errno));
+			return FALSE;
+		}
+	}
+	return TRUE;
+}
+
+
+static gboolean
 sakura_agent_restart_cb(gpointer data)
 {
 	SakuraApp *app = data;
@@ -2536,7 +2610,9 @@ sakura_agent_start(SakuraApp *app)
 {
 	GError *error = NULL;
 	gchar *socket_path;
+	g_autofree gchar *agent_version = NULL;
 	SakuraSessionSnapshot *agent_snapshot = NULL;
+	gboolean upgraded = FALSE;
 
 	if (app == NULL)
 		return FALSE;
@@ -2557,15 +2633,32 @@ sakura_agent_start(SakuraApp *app)
 		return FALSE;
 	}
 	if (sakura_agent_request_snapshot(socket_path, app->workspace_id,
-	                                  &agent_snapshot, &error)) {
-		app->agent_socket_path = socket_path;
-		sakura_session_snapshot_free(app->agent_pending_snapshot);
-		app->agent_pending_snapshot = agent_snapshot;
-		agent_snapshot = NULL;
-		sakura_agent_apply_pending_snapshot(app);
-		sakura_agent_subscribe_start(app);
-		sakura_agent_command_start(app);
-		return TRUE;
+	                                  &agent_snapshot, &agent_version, &error)) {
+		if (!sakura_agent_build_is_current(agent_version)) {
+			g_message("Replacing sakura-agent build %s with %s",
+			          agent_version != NULL ? agent_version : "unknown",
+			          SAKURA_AGENT_BUILD_ID);
+			if (!sakura_agent_retire_stale_process(app, socket_path, &error)) {
+				g_warning("Could not upgrade sakura-agent: %s",
+				          error != NULL ? error->message : "unknown error");
+				g_clear_error(&error);
+			} else {
+				sakura_session_snapshot_free(agent_snapshot);
+				agent_snapshot = NULL;
+				sakura_agent_mark_terminals_lost(app);
+				upgraded = TRUE;
+			}
+		}
+		if (!upgraded) {
+			app->agent_socket_path = socket_path;
+			sakura_session_snapshot_free(app->agent_pending_snapshot);
+			app->agent_pending_snapshot = agent_snapshot;
+			agent_snapshot = NULL;
+			sakura_agent_apply_pending_snapshot(app);
+			sakura_agent_subscribe_start(app);
+			sakura_agent_command_start(app);
+			return TRUE;
+		}
 	}
 	g_clear_error(&error);
 
@@ -2583,6 +2676,8 @@ sakura_agent_start(SakuraApp *app)
 	sakura_agent_apply_pending_snapshot(app);
 	sakura_agent_subscribe_start(app);
 	sakura_agent_command_start(app);
+	if (upgraded)
+		sakura_agent_recover_terminals(app);
 	return TRUE;
 }
 

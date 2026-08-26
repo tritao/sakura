@@ -4,6 +4,35 @@ PROJECT (sakura)
 SET (AUTHOR "David Gómez Espinosa" INTERNAL "Author")
 SET (VERSION "3.8.9")
 
+# The UI and agent may outlive one another. Fingerprint every source that can
+# change the agent's persisted/runtime behaviour so a newly launched UI can
+# replace a stale agent even during development without a manual version bump.
+SET_PROPERTY (DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+	"${CMAKE_CURRENT_SOURCE_DIR}/src/sakura-agent.c"
+	"${CMAKE_CURRENT_SOURCE_DIR}/src/sakura-core.c"
+	"${CMAKE_CURRENT_SOURCE_DIR}/src/sakura-core-session.c"
+	"${CMAKE_CURRENT_SOURCE_DIR}/src/sakura-core-workspace.c"
+	"${CMAKE_CURRENT_SOURCE_DIR}/src/sakura-core.h"
+	"${CMAKE_CURRENT_SOURCE_DIR}/src/sakura-control-client.c"
+	"${CMAKE_CURRENT_SOURCE_DIR}/src/sakura-control-client.h"
+	"${CMAKE_CURRENT_SOURCE_DIR}/src/sakura-control-discovery.c"
+	"${CMAKE_CURRENT_SOURCE_DIR}/src/sakura-control-transport.c"
+	"${CMAKE_CURRENT_SOURCE_DIR}/src/sakura-control-transport.h"
+	"${CMAKE_CURRENT_SOURCE_DIR}/proto/sakura/control.proto")
+SET (SAKURA_AGENT_BUILD_INPUT "")
+FOREACH (agent_source
+	src/sakura-agent.c src/sakura-core.c src/sakura-core-session.c
+	src/sakura-core-workspace.c src/sakura-core.h
+	src/sakura-control-client.c src/sakura-control-client.h
+	src/sakura-control-discovery.c src/sakura-control-transport.c
+	src/sakura-control-transport.h
+	proto/sakura/control.proto)
+	FILE (SHA256 "${CMAKE_CURRENT_SOURCE_DIR}/${agent_source}" agent_source_hash)
+	STRING (APPEND SAKURA_AGENT_BUILD_INPUT "${agent_source_hash}")
+ENDFOREACH ()
+STRING (SHA256 SAKURA_AGENT_BUILD_ID "${SAKURA_AGENT_BUILD_INPUT}")
+ADD_COMPILE_DEFINITIONS (SAKURA_AGENT_BUILD_ID="${SAKURA_AGENT_BUILD_ID}")
+
 
 INCLUDE (FindPkgConfig)
 INCLUDE (CTest)

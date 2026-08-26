@@ -68,7 +68,6 @@ typedef struct {
 #define SAKURA_AGENT_OUTPUT_BATCH_SIZE (32 * 1024)
 #define SAKURA_AGENT_MAX_QUEUED_MESSAGES 1000
 #define SAKURA_AGENT_MAX_QUEUED_BYTES (4 * 1024 * 1024)
-#define SAKURA_AGENT_VERSION "0.1"
 #define SAKURA_AGENT_CAPABILITIES \
 	(SAKURA_CONTROL_CAPABILITY_WORKSPACE | \
 	 SAKURA_CONTROL_CAPABILITY_TERMINALS | \
@@ -2507,7 +2506,7 @@ sakura_agent_connection_thread(gpointer data)
 				                    "control workspace identity did not match");
 			} else if (sakura_control_encode_hello_response(
 					request_id, SAKURA_CONTROL_PROTOCOL_VERSION,
-					SAKURA_AGENT_VERSION, SAKURA_AGENT_CAPABILITIES,
+					SAKURA_AGENT_BUILD_ID, SAKURA_AGENT_CAPABILITIES,
 					request->agent->workspace_id, response)) {
 				handshaken = TRUE;
 			}

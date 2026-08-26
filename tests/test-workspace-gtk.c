@@ -3619,6 +3619,15 @@ test_embedded_agent_restarts(void)
 }
 
 
+static void
+test_agent_build_compatibility(void)
+{
+	g_assert_true(sakura_agent_build_is_current(SAKURA_AGENT_BUILD_ID));
+	g_assert_false(sakura_agent_build_is_current(NULL));
+	g_assert_false(sakura_agent_build_is_current("older-agent-build"));
+}
+
+
 int
 main(int argc, char **argv)
 {
@@ -3730,5 +3739,7 @@ main(int argc, char **argv)
 	                test_seeded_workspace_operations);
 	g_test_add_func("/workspace/embedded-agent-restarts",
 	                test_embedded_agent_restarts);
+	g_test_add_func("/workspace/agent-build-compatibility",
+	                test_agent_build_compatibility);
 	return g_test_run();
 }

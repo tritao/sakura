@@ -9,6 +9,7 @@
 
 struct _SakuraControlClientConnection {
 	GSocketConnection *connection;
+	gchar *agent_version;
 	gint ref_count;
 };
 
@@ -21,6 +22,14 @@ GQuark
 sakura_control_error_quark(void)
 {
 	return g_quark_from_static_string("sakura-control-error-quark");
+}
+
+
+const gchar *
+sakura_control_client_agent_version(
+	const SakuraControlClientConnection *connection)
+{
+	return connection != NULL ? connection->agent_version : NULL;
 }
 
 
@@ -141,6 +150,7 @@ sakura_control_client_unref(SakuraControlClientConnection *connection)
 	if (!g_atomic_int_dec_and_test(&connection->ref_count))
 		return;
 	g_clear_object(&connection->connection);
+	g_free(connection->agent_version);
 	g_free(connection);
 }
 
@@ -740,6 +750,7 @@ sakura_control_client_connect(const gchar *socket_path,
 		                    "agent does not support required capabilities");
 		goto fail;
 	}
+	connection->agent_version = g_strdup(response.agent_version);
 	g_clear_pointer(&response_payload, g_byte_array_unref);
 	sakura_control_response_clear(&response);
 	g_byte_array_unref(request);

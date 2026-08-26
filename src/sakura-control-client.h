@@ -21,6 +21,9 @@
 #define SAKURA_CONTROL_CONNECT_TIMEOUT_SECONDS 2
 #define SAKURA_CONTROL_HANDSHAKE_TIMEOUT_SECONDS 2
 #define SAKURA_CONTROL_REQUEST_TIMEOUT_SECONDS 5
+#ifndef SAKURA_AGENT_BUILD_ID
+#define SAKURA_AGENT_BUILD_ID "development"
+#endif
 
 #define SAKURA_CONTROL_ERROR_INVALID_ARGUMENT "INVALID_ARGUMENT"
 #define SAKURA_CONTROL_ERROR_NOT_FOUND "NOT_FOUND"
@@ -102,6 +105,8 @@ SakuraControlClientConnection *sakura_control_client_connect(
 	const gchar *client_name, guint64 required_capabilities, GError **error);
 SakuraControlClientConnection *sakura_control_client_ref(
 	SakuraControlClientConnection *connection);
+const gchar *sakura_control_client_agent_version(
+	const SakuraControlClientConnection *connection);
 void sakura_control_client_close(SakuraControlClientConnection *connection);
 void sakura_control_client_shutdown(SakuraControlClientConnection *connection);
 void sakura_control_client_unref(SakuraControlClientConnection *connection);

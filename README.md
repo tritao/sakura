@@ -72,6 +72,13 @@ renames the underlying Codex conversation after its ID becomes available.
 created terminal ID by default; use `--print json` for workspace, group, page,
 terminal, and Codex-session IDs.
 
+When Sakura reconnects to an agent left running by an older application build,
+it snapshots the workspace, retires that agent, launches the matching current
+agent, and recovers its terminals. Codex terminals resume from their persisted
+session IDs; ordinary shell processes restart because their PTYs belonged to
+the retired agent. If coordinated replacement fails, Sakura keeps using the
+compatible running agent instead of discarding the workspace.
+
 An idempotent batch can be applied with:
 
 ```sh
