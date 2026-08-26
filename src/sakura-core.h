@@ -106,6 +106,8 @@ typedef struct {
 	gchar *codex_tracking_token;
 	gchar *page_id;
 	guint order;
+	guint cols;
+	guint rows;
 	gint colorset;
 	SakuraTabKind kind;
 	gboolean title_set_by_user;

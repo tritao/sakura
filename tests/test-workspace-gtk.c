@@ -3165,7 +3165,9 @@ test_agent_snapshot_merge_uses_agent_page_ownership(void)
 	SakuraSessionGroupRecord *group_record;
 	SakuraSessionPageRecord *page_record;
 	SakuraSessionPageRecord *external_page_record;
+	SakuraSessionPageRecord *archived_page_record;
 	SakuraSessionTabRecord *external_tab_record;
+	SakuraSessionTabRecord *archived_tab_record;
 	SakuraTab *previous_active;
 	SakuraTab *external_tab;
 	GtkWidget *test_window;
@@ -3245,6 +3247,21 @@ test_agent_snapshot_merge_uses_agent_page_ownership(void)
 	external_tab_record->codex_model = g_strdup("gpt-5.6-luna");
 	external_tab_record->codex_reasoning_effort = g_strdup("xhigh");
 	g_ptr_array_add(agent_snapshot->tabs, external_tab_record);
+	archived_page_record = g_new0(SakuraSessionPageRecord, 1);
+	archived_page_record->id = g_strdup("archived-external-page");
+	archived_page_record->parent_id = g_strdup("root");
+	archived_page_record->group_id = g_strdup("root");
+	archived_page_record->title = g_strdup("Closed external Codex");
+	archived_page_record->archived = TRUE;
+	g_ptr_array_add(agent_snapshot->pages, archived_page_record);
+	archived_tab_record = g_new0(SakuraSessionTabRecord, 1);
+	archived_tab_record->terminal_id = g_strdup("archived-external-terminal");
+	archived_tab_record->page_id = g_strdup("archived-external-page");
+	archived_tab_record->parent_id = g_strdup("root");
+	archived_tab_record->cwd = g_strdup("/tmp");
+	archived_tab_record->kind = SAKURA_TAB_CODEX;
+	archived_tab_record->resume_on_start = TRUE;
+	g_ptr_array_add(agent_snapshot->tabs, archived_tab_record);
 	sakura.agent_pending_snapshot = agent_snapshot;
 	agent_snapshot = NULL;
 	sakura_agent_apply_pending_snapshot(&sakura);
@@ -3257,6 +3274,7 @@ test_agent_snapshot_merge_uses_agent_page_ownership(void)
 	g_assert_cmpstr(external_tab->codex_model, ==, "gpt-5.6-luna");
 	g_assert_cmpstr(external_tab->codex_reasoning_effort, ==, "xhigh");
 	g_assert_true(sakura.workspace->active_tab == previous_active);
+	g_assert_null(sakura_find_pane_by_terminal_id("archived-external-terminal"));
 
 	/* Once the authoritative snapshot no longer contains that page, remove
 	 * only the proxy and do not send a redundant delete command to the agent. */

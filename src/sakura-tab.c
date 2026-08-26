@@ -1894,6 +1894,20 @@ sakura_tab_create_chrome(SakuraTab *tab)
 
 
 static void
+sakura_tab_agent_size_allocate_cb(GtkWidget *widget, GtkAllocation *allocation,
+                                  gpointer data)
+{
+	SakuraTab *tab = data;
+
+	(void)widget;
+	(void)allocation;
+	sakura_tab_sync_agent_size(tab);
+	if (tab != NULL && tab->vte != NULL)
+		gtk_widget_queue_draw(tab->vte);
+}
+
+
+static void
 sakura_tab_materialize_terminal(SakuraTab *tab)
 {
 	gint64 trace_started;
@@ -1921,6 +1935,8 @@ sakura_tab_materialize_terminal(SakuraTab *tab)
 	g_signal_connect_swapped(G_OBJECT(tab->vte), "button-release-event", G_CALLBACK(sakura_term_buttonreleased_cb), sakura.menu);
 	g_signal_connect(G_OBJECT(tab->vte), "focus-in-event", G_CALLBACK(sakura_pane_focus_in_cb), tab);
 	g_signal_connect(G_OBJECT(tab->vte), "key-press-event", G_CALLBACK(sakura_tab_keypress_cb), tab);
+	g_signal_connect(G_OBJECT(tab->vte), "size-allocate",
+	                 G_CALLBACK(sakura_tab_agent_size_allocate_cb), tab);
 	gtk_widget_show(tab->vte);
 	gtk_widget_show(tab->scrollbar);
 	sakura_ui_latency_trace_end("vte-materialize", trace_started);

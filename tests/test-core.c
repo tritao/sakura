@@ -106,6 +106,8 @@ test_session_snapshot_round_trip(void)
 	tab->status = SAKURA_TAB_STATUS_READY;
 	tab->attention = TRUE;
 	tab->attention_timestamp = 123456789;
+	tab->cols = 132;
+	tab->rows = 41;
 	g_ptr_array_add(source->tabs, tab);
 	source->selected_terminal = 0;
 	source->selected_terminal_id = g_strdup("terminal-1");
@@ -164,6 +166,8 @@ test_session_snapshot_round_trip(void)
 		g_assert_cmpint(loaded_tab->status, ==, SAKURA_TAB_STATUS_READY);
 		g_assert_true(loaded_tab->attention);
 		g_assert_cmpint(loaded_tab->attention_timestamp, ==, 123456789);
+		g_assert_cmpuint(loaded_tab->cols, ==, 132);
+		g_assert_cmpuint(loaded_tab->rows, ==, 41);
 		{
 			SakuraSessionSidebarExpansionRecord *loaded_group_expansion =
 				g_ptr_array_index(loaded->expanded_sidebar_nodes, 0);

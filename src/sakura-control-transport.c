@@ -2299,6 +2299,8 @@ sakura_control_decode_workspace_snapshot(
 		                        ? wire_terminal->task_id : wire_terminal->group_id);
 		tab->cwd = g_strdup(wire_terminal->cwd);
 		tab->title = g_strdup(wire_terminal->title);
+		tab->cols = wire_terminal->cols;
+		tab->rows = wire_terminal->rows;
 		tab->kind = wire_terminal->kind <= SAKURA_TAB_TOOL
 		          ? (SakuraTabKind)wire_terminal->kind : SAKURA_TAB_SHELL;
 		tab->codex_session_id = g_strdup(wire_terminal->codex_session_id);

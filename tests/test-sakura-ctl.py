@@ -45,22 +45,31 @@ def main():
         prompt = root / "prompt.md"
         manifest = root / "manifest.yml"
         arguments_log = root / "codex-arguments.jsonl"
+        goal_state = root / "codex-goals.json"
+        goal = root / "collision-static.goal"
         prompt.write_text("Inspect the camera worktree.\n", encoding="utf-8")
+        goal.write_text("Fix static collision and verify its tests.\n", encoding="utf-8")
         manifest.write_text(
             "sessions:\n"
             "  - title: \"Tony · Manifest\"\n"
             "    working_directory: /tmp\n"
             f"    prompt_file: {prompt}\n"
             "    model: gpt-5.6-luna\n"
-            "    reasoning: xhigh\n",
+            "    reasoning: xhigh\n"
+            f"    goal_file: {goal}\n"
+            "    goal_policy: start-if-none\n",
             encoding="utf-8",
         )
         env = os.environ.copy()
         env["SAKURA_CODEX_BINARY"] = str(Path(args.fake_codex).resolve())
         env["SAKURA_FAKE_CODEX_ARGUMENTS_LOG"] = str(arguments_log)
+        env["SAKURA_FAKE_CODEX_GOAL_STATE"] = str(goal_state)
         os.environ["SAKURA_CODEX_BINARY"] = env["SAKURA_CODEX_BINARY"]
         os.environ["SAKURA_FAKE_CODEX_ARGUMENTS_LOG"] = env[
             "SAKURA_FAKE_CODEX_ARGUMENTS_LOG"
+        ]
+        os.environ["SAKURA_FAKE_CODEX_GOAL_STATE"] = env[
+            "SAKURA_FAKE_CODEX_GOAL_STATE"
         ]
         agent = subprocess.Popen([
             args.agent, "--socket", str(socket), "--workspace-file",
@@ -78,11 +87,21 @@ def main():
                 "--create-group", "--title", "Tony · Camera",
                 "--working-directory", "/tmp", "--prompt-file", str(prompt),
                 "--model", "gpt-5.6-luna", "--reasoning", "xhigh",
+                "--columns", "132", "--rows", "41",
                 "--print", "json",
             )
             result = json.loads(created.stdout)
             assert result["workspace_id"] == "ctl-integration"
             assert result["group_id"] and result["page_id"] and result["terminal_id"]
+            started_goal = run(
+                args.ctl, "goal", "start", *target, "--group", "Tony",
+                "--title", "Tony · Camera", "--file", str(goal),
+            )
+            assert json.loads(started_goal.stdout)["goal"]["status"] == "active"
+            run(
+                args.ctl, "goal", "clear", *target, "--group-name", "Tony",
+                "--title", "Tony · Camera",
+            )
             groups = run(args.ctl, "groups", *target, "--print", "json")
             assert any(item["name"] == "Tony" for item in
                        map(json.loads, groups.stdout.splitlines()))
@@ -97,6 +116,34 @@ def main():
             )
             assert json.loads(first.stdout)["page_id"]
             assert json.loads(second.stdout)["status"] == "reused"
+            goal_status = run(
+                args.ctl, "goal", "status", *target, "--group-name", "Tony",
+                "--title", "Tony · Manifest",
+            )
+            assert json.loads(goal_status.stdout)["goal"]["status"] == "active"
+            assert "static collision" in json.loads(goal_status.stdout)["goal"][
+                "objective"
+            ]
+            paused = run(
+                args.ctl, "goal", "pause", *target, "--group-name", "Tony",
+                "--title", "Tony · Manifest",
+            )
+            assert json.loads(paused.stdout)["goal"]["status"] == "paused"
+            resumed = run(
+                args.ctl, "goal", "resume", *target, "--group-name", "Tony",
+                "--title", "Tony · Manifest",
+            )
+            assert json.loads(resumed.stdout)["goal"]["status"] == "active"
+            cleared = run(
+                args.ctl, "goal", "clear", *target, "--group-name", "Tony",
+                "--title", "Tony · Manifest",
+            )
+            assert json.loads(cleared.stdout)["cleared"]
+            restarted_goal = run(
+                args.ctl, "codex", "apply", *target, "--group-name", "Tony",
+                "--manifest", str(manifest), "--print", "json",
+            )
+            assert json.loads(restarted_goal.stdout)["status"] == "reused"
             saved = configparser.ConfigParser()
             saved.read(workspace, encoding="utf-8")
             assert saved["Session"].getint("page_count") == 2, dict(saved["Session"])
@@ -139,6 +186,8 @@ def main():
                        for item in terminals)
             assert all(item["codex_reasoning_effort"] == "xhigh"
                        for item in terminals)
+            assert all(item.getint("cols") == 132 for item in terminals)
+            assert all(item.getint("rows") == 41 for item in terminals)
             assert all(item["codex_session_id"] for item in terminals)
             assert all(item.getboolean("resume_on_start") for item in terminals)
 
@@ -181,8 +230,8 @@ def main():
                 time.sleep(0.02)
             launches = [json.loads(line) for line in
                         arguments_log.read_text(encoding="utf-8").splitlines()]
-            assert len(launches) == 7
-            assert launches[1] == ["app-server", "--stdio"]
+            assert len(launches) == 18
+            assert launches[1] == ["app-server", "--stdio", "--enable", "goals"]
             tui_launches = [launch for launch in launches
                             if launch[:1] != ["app-server"]]
             for launch in tui_launches[:4]:

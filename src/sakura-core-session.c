@@ -774,6 +774,10 @@ sakura_session_snapshot_load_into(GKeyFile *key_file,
 		tab->order = g_key_file_has_key(key_file, section, "order", NULL)
 		           ? g_key_file_get_integer(key_file, section, "order", NULL)
 		           : index;
+		tab->cols = g_key_file_has_key(key_file, section, "cols", NULL)
+		          ? g_key_file_get_integer(key_file, section, "cols", NULL) : 0;
+		tab->rows = g_key_file_has_key(key_file, section, "rows", NULL)
+		          ? g_key_file_get_integer(key_file, section, "rows", NULL) : 0;
 		tab->tool_id = g_key_file_get_string(key_file, section, "tool", NULL);
 		tab->tool_target = g_key_file_get_string(key_file, section, "tool_target", NULL);
 		tab->codex_session_id = g_key_file_get_string(key_file, section,
@@ -1014,6 +1018,10 @@ sakura_session_snapshot_save(const SakuraSessionSnapshot *snapshot,
 		g_key_file_set_integer(key_file, section, "order", tab->order);
 		if (tab->page_id != NULL && tab->page_id[0] != '\0')
 			g_key_file_set_string(key_file, section, "page_id", tab->page_id);
+		if (tab->cols > 0)
+			g_key_file_set_integer(key_file, section, "cols", tab->cols);
+		if (tab->rows > 0)
+			g_key_file_set_integer(key_file, section, "rows", tab->rows);
 		if (tab->tool_id != NULL)
 			g_key_file_set_string(key_file, section, "tool", tab->tool_id);
 		if (tab->tool_target != NULL && tab->tool_target[0] != '\0')

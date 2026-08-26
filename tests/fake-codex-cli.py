@@ -17,6 +17,17 @@ if arguments_log:
 
 if sys.argv[1:3] == ["app-server", "--stdio"]:
     thread_id = "9f328589-2569-5184-a037-0d4415dbb70d"
+    goal_state_path = os.environ.get("SAKURA_FAKE_CODEX_GOAL_STATE")
+
+    def load_goals():
+        if goal_state_path and Path(goal_state_path).exists():
+            return json.loads(Path(goal_state_path).read_text(encoding="utf-8"))
+        return {}
+
+    def save_goals(goals):
+        if goal_state_path:
+            Path(goal_state_path).write_text(json.dumps(goals), encoding="utf-8")
+
     for line in sys.stdin:
         message = json.loads(line)
         method = message.get("method")
@@ -32,6 +43,28 @@ if sys.argv[1:3] == ["app-server", "--stdio"]:
         elif method == "turn/start":
             turn_id = "fake-initial-turn"
             result = {"turn": {"id": turn_id, "status": "inProgress"}}
+        elif method == "thread/goal/get":
+            result = {"goal": load_goals().get(message["params"]["threadId"])}
+        elif method == "thread/goal/set":
+            params = message["params"]
+            goals = load_goals()
+            goal = goals.get(params["threadId"], {
+                "threadId": params["threadId"], "objective": "",
+                "createdAt": 1, "tokensUsed": 0, "timeUsedSeconds": 0,
+            })
+            if params.get("objective") is not None:
+                goal["objective"] = params["objective"]
+            if params.get("status") is not None:
+                goal["status"] = params["status"]
+            goal["updatedAt"] = 2
+            goals[params["threadId"]] = goal
+            save_goals(goals)
+            result = {"goal": goal}
+        elif method == "thread/goal/clear":
+            goals = load_goals()
+            goals.pop(message["params"]["threadId"], None)
+            save_goals(goals)
+            result = {}
         else:
             print(json.dumps({"id": request_id, "error": {
                 "code": -32601, "message": f"unsupported method: {method}"

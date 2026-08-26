@@ -1173,7 +1173,9 @@ sakura_core_workspace_from_snapshot(const SakuraSessionSnapshot *snapshot,
 			if (group == NULL)
 				group = workspace->root_group;
 			terminal = sakura_core_terminal_new(
-				record->terminal_id, record->cwd, group, task, 80, 24);
+				record->terminal_id, record->cwd, group, task,
+				record->cols > 0 ? record->cols : 80,
+				record->rows > 0 ? record->rows : 24);
 			terminal->title = g_strdup(record->title);
 			terminal->status = SAKURA_TERMINAL_EXITED;
 			terminal->kind = record->kind;
@@ -1300,6 +1302,8 @@ sakura_core_workspace_sync_snapshot(const SakuraCoreWorkspace *workspace,
 		tab->title = g_strdup(model_terminal->title);
 		tab->kind = model_terminal->kind;
 		tab->runtime_status = model_terminal->status;
+		tab->cols = model_terminal->cols;
+		tab->rows = model_terminal->rows;
 		tab->resume_on_start = model_terminal->resume_on_start;
 		tab->status = model_terminal->status == SAKURA_TERMINAL_ERROR
 		            ? SAKURA_TAB_STATUS_ERROR : SAKURA_TAB_STATUS_IDLE;

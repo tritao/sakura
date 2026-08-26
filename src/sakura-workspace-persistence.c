@@ -364,6 +364,17 @@ sakura_workspace_model_snapshot_new(const SakuraWorkspaceModel *model,
 		                              ? tab->terminal_id : "");
 		record->page_id = g_strdup(tab->page != NULL ? tab->page->id : NULL);
 		record->order = index;
+		record->cols = tab->agent_cols;
+		record->rows = tab->agent_rows;
+		if (tab->vte != NULL) {
+			guint visible_cols = vte_terminal_get_column_count(VTE_TERMINAL(tab->vte));
+			guint visible_rows = vte_terminal_get_row_count(VTE_TERMINAL(tab->vte));
+
+			if (visible_cols > 0)
+				record->cols = visible_cols;
+			if (visible_rows > 0)
+				record->rows = visible_rows;
+		}
 		record->kind = tab->kind;
 		record->tool_id = tab->kind == SAKURA_TAB_TOOL
 		               ? g_strdup(sakura_tool_id(tab->tool)) : NULL;
@@ -379,6 +390,7 @@ sakura_workspace_model_snapshot_new(const SakuraWorkspaceModel *model,
 		                              ? g_strdup(tab->codex_reasoning_effort) : NULL;
 		record->resume_on_start = tab->kind == SAKURA_TAB_CODEX &&
 		                          tab->agent_backed &&
+		                          tab->page != NULL && !tab->page->archived &&
 		                          tab->codex_session_id != NULL &&
 		                          tab->codex_session_id[0] != '\0';
 		record->colorset = tab->colorset;

@@ -1065,6 +1065,16 @@ sakura_agent_set_page_archived(SakuraAgent *agent,
 		return FALSE;
 	}
 	page->archived = request->archived;
+	if (request->archived) {
+		for (guint index = 0; agent->workspace->terminals != NULL &&
+		                     index < agent->workspace->terminals->len; index++) {
+			SakuraCoreTerminal *terminal = g_ptr_array_index(
+				agent->workspace->terminals, index);
+
+			if (terminal != NULL && g_strcmp0(terminal->page_id, page->id) == 0)
+				terminal->resume_on_start = FALSE;
+		}
+	}
 	return TRUE;
 }
 
@@ -1354,6 +1364,8 @@ sakura_agent_create_terminal_with_kind(SakuraAgent *agent,
 		child_argv[child_argc++] = "--yolo";
 		child_argv[child_argc++] = "--enable";
 		child_argv[child_argc++] = "hooks";
+		child_argv[child_argc++] = "--enable";
+		child_argv[child_argc++] = "goals";
 		if (request->model != NULL && request->model[0] != '\0') {
 			child_argv[child_argc++] = "--model";
 			child_argv[child_argc++] = request->model;
@@ -1833,11 +1845,18 @@ sakura_agent_resume_saved_codex_terminals(SakuraAgent *agent)
 	                     index < agent->workspace->terminals->len; index++) {
 		SakuraCoreTerminal *terminal = g_ptr_array_index(
 			agent->workspace->terminals, index);
+		SakuraCorePage *page = terminal != NULL
+		                     ? sakura_core_workspace_find_page(
+			                     agent->workspace, terminal->page_id) : NULL;
 
 		if (terminal != NULL && terminal->kind == SAKURA_TAB_CODEX &&
 		    terminal->resume_on_start &&
+		    page != NULL && !page->archived &&
 		    sakura_agent_codex_session_id_is_valid(terminal->codex_session_id))
 			g_ptr_array_add(terminal_ids, g_strdup(terminal->id));
+		else if (terminal != NULL && terminal->resume_on_start &&
+		         (page == NULL || page->archived))
+			terminal->resume_on_start = FALSE;
 	}
 	for (guint index = 0; index < terminal_ids->len; index++) {
 		const gchar *terminal_id = g_ptr_array_index(terminal_ids, index);
@@ -1858,6 +1877,8 @@ sakura_agent_resume_saved_codex_terminals(SakuraAgent *agent)
 		request.model = terminal->codex_model;
 		request.reasoning_effort = terminal->codex_reasoning_effort;
 		request.tracking_token = terminal->tracking_token;
+		request.cols = terminal->cols;
+		request.rows = terminal->rows;
 		request.order = terminal->order;
 		request.has_order = TRUE;
 		if (!sakura_agent_restart_terminal(agent, &request, &accepted_id,

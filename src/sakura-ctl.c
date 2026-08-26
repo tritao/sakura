@@ -13,6 +13,8 @@ typedef struct {
 	gchar *prompt_file;
 	gchar *model;
 	gchar *reasoning;
+	gchar *goal_file;
+	gchar *goal_policy;
 } SakuraCtlManifestEntry;
 
 static void
@@ -26,6 +28,8 @@ manifest_entry_free(SakuraCtlManifestEntry *entry)
 	g_free(entry->prompt_file);
 	g_free(entry->model);
 	g_free(entry->reasoning);
+	g_free(entry->goal_file);
+	g_free(entry->goal_policy);
 	g_free(entry);
 }
 
@@ -90,6 +94,10 @@ parse_manifest(const gchar *path, GError **error)
 			current->model = g_steal_pointer(&value);
 		else if (strcmp(key, "reasoning") == 0)
 			current->reasoning = g_steal_pointer(&value);
+		else if (strcmp(key, "goal_file") == 0 || strcmp(key, "goal-file") == 0)
+			current->goal_file = g_steal_pointer(&value);
+		else if (strcmp(key, "goal_policy") == 0 || strcmp(key, "goal-policy") == 0)
+			current->goal_policy = g_steal_pointer(&value);
 	}
 	for (guint i = 0; i < entries->len; i++) {
 		SakuraCtlManifestEntry *entry = g_ptr_array_index(entries, i);
@@ -99,6 +107,30 @@ parse_manifest(const gchar *path, GError **error)
 			            "manifest session %u requires title and working_directory", i + 1);
 			g_ptr_array_unref(entries);
 			return NULL;
+		}
+		if (entry->goal_file != NULL && entry->goal_file[0] != '\0') {
+			if (entry->goal_policy == NULL || entry->goal_policy[0] == '\0')
+				entry->goal_policy = g_strdup("start-if-none");
+			if (strcmp(entry->goal_policy, "start-if-none") != 0) {
+				g_set_error(error, G_IO_ERROR, G_IO_ERROR_INVALID_DATA,
+				            "manifest session %u has unsupported goal_policy '%s'",
+				            i + 1, entry->goal_policy);
+				g_ptr_array_unref(entries);
+				return NULL;
+			}
+			if (!g_path_is_absolute(entry->goal_file)) {
+				g_autofree gchar *directory = g_path_get_dirname(path);
+				gchar *resolved = g_canonicalize_filename(entry->goal_file, directory);
+
+				g_free(entry->goal_file);
+				entry->goal_file = resolved;
+			}
+			if (!g_file_test(entry->goal_file, G_FILE_TEST_IS_REGULAR)) {
+				g_set_error(error, G_IO_ERROR, G_IO_ERROR_NOT_FOUND,
+				            "goal file was not found: %s", entry->goal_file);
+				g_ptr_array_unref(entries);
+				return NULL;
+			}
 		}
 	}
 	if (entries->len == 0) {
@@ -336,6 +368,50 @@ prepare_codex_thread(const SakuraCtlManifestEntry *entry, GError **error)
 	return g_steal_pointer(&stdout_text);
 }
 
+static gchar *
+run_codex_goal(const gchar *session_id, const gchar *action,
+               const gchar *goal_file, const gchar *title, GError **error)
+{
+	g_autofree gchar *helper = g_find_program_in_path("sakura-codex-app-server");
+	g_autofree gchar *stdout_text = NULL;
+	g_autofree gchar *stderr_text = NULL;
+	g_autoptr(GPtrArray) args = g_ptr_array_new_with_free_func(g_free);
+	gint wait_status = 0;
+
+	if (helper == NULL && g_file_test(SAKURA_CODEX_APP_SERVER_HELPER_BUILD_PATH,
+	                                  G_FILE_TEST_IS_EXECUTABLE))
+		helper = g_strdup(SAKURA_CODEX_APP_SERVER_HELPER_BUILD_PATH);
+	if (helper == NULL) {
+		g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_NOT_FOUND,
+		                    "sakura-codex-app-server was not found");
+		return NULL;
+	}
+	g_ptr_array_add(args, g_steal_pointer(&helper));
+	g_ptr_array_add(args, g_strdup("--thread-id"));
+	g_ptr_array_add(args, g_strdup(session_id));
+	g_ptr_array_add(args, g_strdup("--goal-action"));
+	g_ptr_array_add(args, g_strdup(action));
+	if (goal_file != NULL && goal_file[0] != '\0') {
+		g_ptr_array_add(args, g_strdup("--goal-file"));
+		g_ptr_array_add(args, g_strdup(goal_file));
+	}
+	if (title != NULL && title[0] != '\0') {
+		g_ptr_array_add(args, g_strdup("--title"));
+		g_ptr_array_add(args, g_strdup(title));
+	}
+	g_ptr_array_add(args, NULL);
+	if (!g_spawn_sync(NULL, (gchar **)args->pdata, NULL, G_SPAWN_DEFAULT,
+	                  NULL, NULL, &stdout_text, &stderr_text, &wait_status,
+	                  error) || !g_spawn_check_wait_status(wait_status, error)) {
+		if (error != NULL && *error != NULL && stderr_text != NULL &&
+		    stderr_text[0] != '\0')
+			g_prefix_error(error, "%s: ", g_strstrip(stderr_text));
+		return NULL;
+	}
+	g_strstrip(stdout_text);
+	return g_steal_pointer(&stdout_text);
+}
+
 static SakuraSessionTabRecord *
 find_manifest_match(SakuraSessionSnapshot *snapshot, const gchar *group_id,
                     const SakuraCtlManifestEntry *entry)
@@ -385,6 +461,92 @@ find_manifest_page(SakuraSessionSnapshot *snapshot, const gchar *group_id,
 }
 
 static gboolean
+snapshot_terminal_is_visible(const SakuraSessionSnapshot *snapshot,
+                             const SakuraSessionTabRecord *tab)
+{
+	for (guint index = 0; snapshot != NULL && snapshot->pages != NULL &&
+	                     index < snapshot->pages->len; index++) {
+		SakuraSessionPageRecord *page = g_ptr_array_index(snapshot->pages, index);
+
+		if (page != NULL && g_strcmp0(page->id, tab->page_id) == 0)
+			return !page->archived;
+	}
+	return FALSE;
+}
+
+static void
+inherit_terminal_dimensions(const SakuraSessionSnapshot *snapshot,
+                            gint *columns, gint *rows)
+{
+	const SakuraSessionTabRecord *best = NULL;
+	guint64 best_area = 0;
+
+	for (guint index = 0; snapshot != NULL && snapshot->tabs != NULL &&
+	                     index < snapshot->tabs->len; index++) {
+		SakuraSessionTabRecord *candidate = g_ptr_array_index(snapshot->tabs, index);
+		guint64 area;
+
+		if (candidate == NULL || candidate->cols == 0 || candidate->rows == 0 ||
+		    candidate->runtime_status != SAKURA_TERMINAL_RUNNING ||
+		    !snapshot_terminal_is_visible(snapshot, candidate))
+			continue;
+		if (snapshot->selected_terminal_id != NULL &&
+		    g_strcmp0(candidate->terminal_id, snapshot->selected_terminal_id) == 0) {
+			best = candidate;
+			break;
+		}
+		area = (guint64)candidate->cols * candidate->rows;
+		if (best == NULL || area > best_area) {
+			best = candidate;
+			best_area = area;
+		}
+	}
+	if (*columns < 0)
+		*columns = best != NULL ? (gint)best->cols : 80;
+	if (*rows < 0)
+		*rows = best != NULL ? (gint)best->rows : 24;
+}
+
+static SakuraSessionPageRecord *
+snapshot_page_for_tab(SakuraSessionSnapshot *snapshot,
+                      const SakuraSessionTabRecord *tab)
+{
+	for (guint index = 0; snapshot != NULL && snapshot->pages != NULL &&
+	                     index < snapshot->pages->len; index++) {
+		SakuraSessionPageRecord *page = g_ptr_array_index(snapshot->pages, index);
+
+		if (page != NULL && g_strcmp0(page->id, tab->page_id) == 0)
+			return page;
+	}
+	return NULL;
+}
+
+static GPtrArray *
+find_goal_sessions(SakuraSessionSnapshot *snapshot, const gchar *group_id,
+                   const gchar *title)
+{
+	GPtrArray *matches = g_ptr_array_new();
+
+	for (guint index = 0; snapshot != NULL && snapshot->tabs != NULL &&
+	                     index < snapshot->tabs->len; index++) {
+		SakuraSessionTabRecord *tab = g_ptr_array_index(snapshot->tabs, index);
+		SakuraSessionPageRecord *page = tab != NULL
+		                               ? snapshot_page_for_tab(snapshot, tab) : NULL;
+
+		if (tab == NULL || page == NULL || page->archived ||
+		    tab->kind != SAKURA_TAB_CODEX || tab->codex_session_id == NULL ||
+		    tab->codex_session_id[0] == '\0' ||
+		    (group_id != NULL && group_id[0] != '\0' &&
+		     g_strcmp0(page->group_id, group_id) != 0) ||
+		    (title != NULL && title[0] != '\0' &&
+		     g_strcmp0(page->title, title) != 0))
+			continue;
+		g_ptr_array_add(matches, tab);
+	}
+	return matches;
+}
+
+static gboolean
 apply_manifest(SakuraControlClientConnection *connection,
                const gchar *manifest_path, const gchar *workspace_id,
                const gchar *group_id, const gchar *group_name,
@@ -410,6 +572,16 @@ apply_manifest(SakuraControlClientConnection *connection,
 			return FALSE;
 		match = find_manifest_match(snapshot, group_id, entry);
 		if (match != NULL) {
+			if (entry->goal_file != NULL && entry->goal_file[0] != '\0') {
+				g_autofree gchar *goal_output = run_codex_goal(
+					match->codex_session_id, entry->goal_policy,
+					entry->goal_file, entry->title, error);
+
+				if (goal_output == NULL) {
+					sakura_session_snapshot_free(snapshot);
+					return FALSE;
+				}
+			}
 			if (print_format != NULL && strcmp(print_format, "json") == 0) {
 				g_autofree gchar *j_title = json_escape(entry->title);
 				g_autofree gchar *j_terminal = json_escape(match->terminal_id);
@@ -446,6 +618,8 @@ apply_manifest(SakuraControlClientConnection *connection,
 			}
 			g_ptr_array_add(args, g_strdup("--resume"));
 			g_ptr_array_add(args, g_strdup(prepared_session_id));
+			g_ptr_array_add(args, g_strdup("--prompt-file"));
+			g_ptr_array_add(args, g_strdup(entry->prompt_file));
 		}
 		if (entry->reasoning != NULL && entry->reasoning[0] != '\0') {
 			g_ptr_array_add(args, g_strdup("--reasoning"));
@@ -473,6 +647,27 @@ apply_manifest(SakuraControlClientConnection *connection,
 		}
 		g_print("%s", stdout_text != NULL ? stdout_text : "");
 		g_ptr_array_unref(args);
+		if (entry->goal_file != NULL && entry->goal_file[0] != '\0') {
+			SakuraSessionSnapshot *created_snapshot = NULL;
+			SakuraSessionTabRecord *created_match;
+
+			if (!request_snapshot(connection, &created_snapshot, error))
+				return FALSE;
+			created_match = find_manifest_match(created_snapshot, group_id, entry);
+			if (created_match == NULL) {
+				sakura_session_snapshot_free(created_snapshot);
+				g_set_error(error, G_IO_ERROR, G_IO_ERROR_NOT_FOUND,
+				            "created session '%s' was not found for goal setup",
+				            entry->title);
+				return FALSE;
+			}
+			g_autofree gchar *goal_output = run_codex_goal(
+				created_match->codex_session_id, entry->goal_policy,
+				entry->goal_file, entry->title, error);
+			sakura_session_snapshot_free(created_snapshot);
+			if (goal_output == NULL)
+				return FALSE;
+		}
 	}
 	(void)group_name;
 	return TRUE;
@@ -538,9 +733,10 @@ main(int argc, char **argv)
 	gchar *cwd = NULL, *group_id = NULL, *group_name = NULL, *task_id = NULL;
 	gchar *model = NULL, *reasoning = NULL, *resume = NULL, *title = NULL;
 	gchar *session_name = NULL, *prompt_file = NULL, *print_format = NULL;
-	gchar *manifest = NULL, *delete_page_id = NULL;
+	gchar *goal_file = NULL;
+	gchar *manifest = NULL, *delete_page_id = NULL, *terminal_target = NULL;
 	gchar **arguments = NULL;
-	gint columns = 80, rows = 24;
+	gint columns = -1, rows = -1;
 	GOptionContext *context = NULL;
 	GError *error = NULL;
 	GPtrArray *endpoints = NULL;
@@ -550,8 +746,8 @@ main(int argc, char **argv)
 	g_autofree gchar *codex_session_id = NULL;
 	SakuraSessionSnapshot *snapshot = NULL;
 	SakuraSessionGroupRecord *resolved_group = NULL;
-	const gchar *command;
-	gboolean codex, success, apply = FALSE, create_group_if_missing = FALSE;
+	const gchar *command, *goal_action = NULL;
+	gboolean codex, goal, success, apply = FALSE, create_group_if_missing = FALSE;
 	gboolean created_resource = FALSE;
 	int result = EXIT_FAILURE;
 	GOptionEntry entries[] = {
@@ -587,12 +783,16 @@ main(int argc, char **argv)
 		  "Set the Codex session name once its ID is available", "NAME" },
 		{ "prompt-file", 0, 0, G_OPTION_ARG_FILENAME, &prompt_file,
 		  "Send this file as the initial Codex request", "PATH" },
+		{ "file", 0, 0, G_OPTION_ARG_FILENAME, &goal_file,
+		  "Goal objective file", "PATH" },
 		{ "print", 0, 0, G_OPTION_ARG_STRING, &print_format,
 		  "Output format: id or json", "FORMAT" },
 		{ "manifest", 0, 0, G_OPTION_ARG_FILENAME, &manifest,
 		  "Session manifest for 'codex apply'", "PATH" },
 		{ "page", 0, 0, G_OPTION_ARG_STRING, &delete_page_id,
 		  "Page ID for 'delete-page'", "ID" },
+		{ "terminal", 0, 0, G_OPTION_ARG_STRING, &terminal_target,
+		  "Target terminal ID for 'input'", "ID" },
 		{ G_OPTION_REMAINING, 0, 0, G_OPTION_ARG_STRING_ARRAY, &arguments,
 		  NULL, "COMMAND" },
 		{ NULL }
@@ -606,6 +806,8 @@ main(int argc, char **argv)
 		"  groups       List groups in a workspace\n"
 		"  new          Open a shell page\n"
 		"  codex        Open a Codex page\n"
+		"  goal         Manage a Codex session goal\n"
+		"  input        Send --prompt-file to --terminal\n"
 		"  delete-page  Remove a page and its terminals");
 	g_option_context_add_main_entries(context, entries, NULL);
 	if (!g_option_context_parse(context, &argc, &argv, &error))
@@ -613,17 +815,33 @@ main(int argc, char **argv)
 	if (arguments == NULL || g_strv_length(arguments) < 1 ||
 	    g_strv_length(arguments) > 2 ||
 	    (g_strv_length(arguments) == 2 &&
-	     (strcmp(arguments[0], "codex") != 0 ||
-	      strcmp(arguments[1], "apply") != 0))) {
+	     !((strcmp(arguments[0], "codex") == 0 &&
+	        strcmp(arguments[1], "apply") == 0) ||
+	       strcmp(arguments[0], "goal") == 0))) {
 		g_set_error_literal(&error, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT,
 		                    "exactly one command is required: list, groups, new, codex, or delete-page");
 		goto out;
 	}
 	command = arguments[0];
-	apply = g_strv_length(arguments) == 2;
+	apply = g_strv_length(arguments) == 2 && strcmp(command, "codex") == 0;
+	goal = strcmp(command, "goal") == 0;
+	if (goal)
+		goal_action = arguments[1];
+	if (goal && (goal_action == NULL ||
+	    (strcmp(goal_action, "start") != 0 &&
+	     strcmp(goal_action, "status") != 0 &&
+	     strcmp(goal_action, "pause") != 0 &&
+	     strcmp(goal_action, "resume") != 0 &&
+	     strcmp(goal_action, "clear") != 0))) {
+		g_set_error_literal(&error, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT,
+		                    "goal requires start, status, pause, resume, or clear");
+		goto out;
+	}
 	if (strcmp(command, "list") != 0 && strcmp(command, "groups") != 0 &&
 	    strcmp(command, "new") != 0 &&
-	    strcmp(command, "codex") != 0 && strcmp(command, "delete-page") != 0) {
+	    strcmp(command, "codex") != 0 && strcmp(command, "goal") != 0 &&
+	    strcmp(command, "input") != 0 &&
+	    strcmp(command, "delete-page") != 0) {
 		g_set_error(&error, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT,
 		            "unknown command: %s", command);
 		goto out;
@@ -642,7 +860,8 @@ main(int argc, char **argv)
 		result = EXIT_SUCCESS;
 		goto out;
 	}
-	if (columns <= 0 || columns > 65535 || rows <= 0 || rows > 65535) {
+	if (columns == 0 || columns < -1 || columns > 65535 ||
+	    rows == 0 || rows < -1 || rows > 65535) {
 		g_set_error_literal(&error, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT,
 		                    "rows and columns must be between 1 and 65535");
 		goto out;
@@ -665,7 +884,7 @@ main(int argc, char **argv)
 		endpoint->socket_path, endpoint->workspace_id, "sakura-ctl",
 		SAKURA_CONTROL_CAPABILITY_WORKSPACE |
 		SAKURA_CONTROL_CAPABILITY_TERMINALS |
-		(codex ? SAKURA_CONTROL_CAPABILITY_CODEX : 0) |
+		((codex || goal) ? SAKURA_CONTROL_CAPABILITY_CODEX : 0) |
 		(model != NULL ? SAKURA_CONTROL_CAPABILITY_CODEX_MODEL : 0), &error);
 	if (connection == NULL)
 		goto out;
@@ -701,6 +920,31 @@ main(int argc, char **argv)
 		result = EXIT_SUCCESS;
 		goto out;
 	}
+	if (strcmp(command, "input") == 0) {
+		g_autofree gchar *prompt = NULL;
+		g_autofree gchar *submitted = NULL;
+		gsize prompt_length = 0;
+
+		if (terminal_target == NULL || terminal_target[0] == '\0' ||
+		    prompt_file == NULL || prompt_file[0] == '\0') {
+			g_set_error_literal(&error, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT,
+			                    "input requires --terminal and --prompt-file");
+			goto out;
+		}
+		if (!g_file_get_contents(prompt_file, &prompt, &prompt_length, &error))
+			goto out;
+		submitted = g_strconcat(prompt, "\r", NULL);
+		if (!sakura_control_client_terminal_input(
+			connection, terminal_target, (const guint8 *)submitted,
+			strlen(submitted), &error))
+			goto out;
+		g_usleep(500 * 1000);
+		if (!sakura_control_client_terminal_input(
+			connection, terminal_target, (const guint8 *)"\r", 1, &error))
+			goto out;
+		result = EXIT_SUCCESS;
+		goto out;
+	}
 	if (group_id != NULL && group_name != NULL) {
 		g_set_error_literal(&error, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT,
 		                    "--group and --group-name are mutually exclusive");
@@ -715,6 +959,33 @@ main(int argc, char **argv)
 	               session_name != NULL)) {
 		g_set_error_literal(&error, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT,
 		                    "--model, --reasoning, --resume, --prompt-file, and --session-name are only valid with codex");
+		goto out;
+	}
+	if (!goal && goal_file != NULL) {
+		g_set_error_literal(&error, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT,
+		                    "--file is only valid with goal start");
+		goto out;
+	}
+	if (goal && strcmp(goal_action, "start") == 0 &&
+	    (goal_file == NULL || goal_file[0] == '\0')) {
+		g_set_error_literal(&error, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT,
+		                    "goal start requires --file");
+		goto out;
+	}
+	if (goal && strcmp(goal_action, "start") != 0 && goal_file != NULL) {
+		g_set_error_literal(&error, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT,
+		                    "--file is only valid with goal start");
+		goto out;
+	}
+	if (goal && strcmp(goal_action, "status") != 0 &&
+	    (title == NULL || title[0] == '\0')) {
+		g_set_error_literal(&error, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT,
+		                    "goal action requires --title");
+		goto out;
+	}
+	if (goal_file != NULL && !g_file_test(goal_file, G_FILE_TEST_IS_REGULAR)) {
+		g_set_error(&error, G_IO_ERROR, G_IO_ERROR_NOT_FOUND,
+		            "goal file was not found: %s", goal_file);
 		goto out;
 	}
 	if (apply && (manifest == NULL || manifest[0] == '\0')) {
@@ -764,6 +1035,71 @@ main(int argc, char **argv)
 		}
 		group_id = g_strdup(resolved_group->id);
 	}
+	if (goal && group_id != NULL && group_id[0] != '\0') {
+		gboolean id_exists = FALSE;
+
+		if (snapshot == NULL && !request_snapshot(connection, &snapshot, &error))
+			goto out;
+		for (guint index = 0; snapshot->groups != NULL &&
+		                     index < snapshot->groups->len; index++) {
+			SakuraSessionGroupRecord *candidate = g_ptr_array_index(
+				snapshot->groups, index);
+
+			if (candidate != NULL && g_strcmp0(candidate->id, group_id) == 0) {
+				id_exists = TRUE;
+				break;
+			}
+		}
+		if (!id_exists) {
+			SakuraSessionGroupRecord *named = find_group(snapshot, group_id, &error);
+
+			if (error != NULL)
+				goto out;
+			if (named == NULL) {
+				g_set_error(&error, G_IO_ERROR, G_IO_ERROR_NOT_FOUND,
+				            "group '%s' was not found", group_id);
+				goto out;
+			}
+			g_free(group_id);
+			group_id = g_strdup(named->id);
+		}
+	}
+	if (goal) {
+		g_autoptr(GPtrArray) matches = NULL;
+
+		if (snapshot == NULL && !request_snapshot(connection, &snapshot, &error))
+			goto out;
+		matches = find_goal_sessions(snapshot, group_id, title);
+		if (matches->len == 0) {
+			g_set_error(&error, G_IO_ERROR, G_IO_ERROR_NOT_FOUND,
+			            "no matching Codex session was found%s%s",
+			            title != NULL ? ": " : "", title != NULL ? title : "");
+			goto out;
+		}
+		if (strcmp(goal_action, "status") != 0 && matches->len != 1) {
+			g_set_error(&error, G_IO_ERROR, G_IO_ERROR_FAILED,
+			            "more than one Codex session matched title '%s'", title);
+			goto out;
+		}
+		for (guint index = 0; index < matches->len; index++) {
+			SakuraSessionTabRecord *tab = g_ptr_array_index(matches, index);
+			SakuraSessionPageRecord *page = snapshot_page_for_tab(snapshot, tab);
+			g_autofree gchar *output = run_codex_goal(
+				tab->codex_session_id, goal_action,
+				strcmp(goal_action, "start") == 0 ? goal_file : NULL,
+				page != NULL ? page->title : title, &error);
+
+			if (output == NULL)
+				goto out;
+			g_print("%s\n", output);
+		}
+		result = EXIT_SUCCESS;
+		goto out;
+	}
+	if ((columns < 0 || rows < 0) && snapshot == NULL &&
+	    !request_snapshot(connection, &snapshot, &error))
+		goto out;
+	inherit_terminal_dimensions(snapshot, &columns, &rows);
 	if (apply) {
 		if (group_id == NULL || group_id[0] == '\0') {
 			g_set_error_literal(&error, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT,
@@ -792,14 +1128,6 @@ main(int argc, char **argv)
 	created_resource = TRUE;
 	if (title != NULL && !rename_page(connection, page_id, title, &error))
 		goto out;
-	if (codex) {
-		codex_session_id = resume != NULL && resume[0] != '\0'
-		                 ? g_strdup(resume)
-		                 : wait_for_codex_session_id(connection, terminal_id,
-		                                                   &error);
-		if (codex_session_id == NULL)
-			goto out;
-	}
 	if (prompt_file != NULL) {
 		g_autofree gchar *prompt = NULL;
 		gsize prompt_length = 0;
@@ -811,10 +1139,24 @@ main(int argc, char **argv)
 		}
 		if (!g_file_get_contents(prompt_file, &prompt, &prompt_length, &error))
 			goto out;
+		/* Codex stages pasted multiline input on the first Enter.  The second
+		 * Enter must arrive as a separate input event to submit it. */
 		submitted = g_strconcat(prompt, "\r", NULL);
 		if (!sakura_control_client_terminal_input(
 			connection, terminal_id, (const guint8 *)submitted,
 			strlen(submitted), &error))
+			goto out;
+		g_usleep(5 * G_USEC_PER_SEC);
+		if (!sakura_control_client_terminal_input(
+			connection, terminal_id, (const guint8 *)"\r", 1, &error))
+			goto out;
+	}
+	if (codex) {
+		codex_session_id = resume != NULL && resume[0] != '\0'
+		                 ? g_strdup(resume)
+		                 : wait_for_codex_session_id(connection, terminal_id,
+		                                                   &error);
+		if (codex_session_id == NULL)
 			goto out;
 	}
 	if (session_name != NULL) {
@@ -875,6 +1217,7 @@ out:
 	g_free(reasoning);
 	g_free(resume); g_free(title); g_free(session_name); g_free(prompt_file);
 	g_free(print_format); g_free(manifest);
+	g_free(goal_file);
 	g_free(delete_page_id);
 	if (context != NULL)
 		g_option_context_free(context);

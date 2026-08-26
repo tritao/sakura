@@ -113,6 +113,10 @@ test_snapshot_response_roundtrip(void)
 	g_assert_cmpuint(snapshot->tabs->len, ==, 3);
 	g_assert_cmpstr(((SakuraSessionTabRecord *)g_ptr_array_index(
 		snapshot->tabs, 0))->terminal_id, ==, "terminal-first");
+	g_assert_cmpuint(((SakuraSessionTabRecord *)g_ptr_array_index(
+		snapshot->tabs, 0))->cols, ==, 80);
+	g_assert_cmpuint(((SakuraSessionTabRecord *)g_ptr_array_index(
+		snapshot->tabs, 0))->rows, ==, 24);
 	g_assert_cmpstr(((SakuraSessionTabRecord *)g_ptr_array_index(
 		snapshot->tabs, 1))->terminal_id, ==, "terminal-second");
 	g_assert_true(((SakuraSessionTabRecord *)g_ptr_array_index(

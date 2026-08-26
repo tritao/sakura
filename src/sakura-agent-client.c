@@ -601,7 +601,7 @@ sakura_agent_materialize_snapshot_terminals(const SakuraSessionSnapshot *snapsho
 		    sakura_find_pane_by_terminal_id(record->terminal_id) != NULL)
 			continue;
 		page_record = sakura_agent_snapshot_page(snapshot, record->page_id);
-		if (page_record == NULL)
+		if (page_record == NULL || page_record->archived)
 			continue;
 		page = sakura_agent_local_page(page_record->id);
 		if (page_record->task_id != NULL && page_record->task_id[0] != '\0') {
