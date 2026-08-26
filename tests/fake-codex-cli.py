@@ -15,6 +15,38 @@ if arguments_log:
     with open(arguments_log, "a", encoding="utf-8") as output:
         output.write(json.dumps(sys.argv[1:]) + "\n")
 
+if sys.argv[1:3] == ["app-server", "--stdio"]:
+    thread_id = "9f328589-2569-5184-a037-0d4415dbb70d"
+    for line in sys.stdin:
+        message = json.loads(line)
+        method = message.get("method")
+        request_id = message.get("id")
+        if request_id is None:
+            continue
+        if method == "initialize":
+            result = {"userAgent": "fake-codex"}
+        elif method == "thread/start":
+            result = {"thread": {"id": thread_id}}
+        elif method == "thread/name/set":
+            result = {}
+        elif method == "turn/start":
+            turn_id = "fake-initial-turn"
+            result = {"turn": {"id": turn_id, "status": "inProgress"}}
+        else:
+            print(json.dumps({"id": request_id, "error": {
+                "code": -32601, "message": f"unsupported method: {method}"
+            }}), flush=True)
+            continue
+        print(json.dumps({"id": request_id, "result": result}), flush=True)
+        if method == "turn/start":
+            print(json.dumps({
+                "method": "turn/completed",
+                "params": {"threadId": thread_id, "turn": {
+                    "id": turn_id, "status": "completed"
+                }},
+            }), flush=True)
+    sys.exit(0)
+
 tracking_dir = os.environ.get("SAKURA_CODEX_TRACKING_DIR")
 tracking_token = os.environ.get("SAKURA_CODEX_TAB_TOKEN")
 if tracking_dir and tracking_token and "no-session" not in sys.argv:

@@ -210,7 +210,8 @@ TARGET_INCLUDE_DIRECTORIES (sakura-ctl PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
 TARGET_COMPILE_OPTIONS (sakura-ctl PRIVATE ${SAKURA_WARNING_FLAGS})
 TARGET_LINK_LIBRARIES (sakura-ctl PRIVATE sakura-control-client PkgConfig::GLIB)
 TARGET_COMPILE_DEFINITIONS (sakura-ctl PRIVATE
-	SAKURA_CODEX_NAME_HELPER_BUILD_PATH="${CMAKE_CURRENT_SOURCE_DIR}/scripts/sakura-codex-session-name")
+	SAKURA_CODEX_NAME_HELPER_BUILD_PATH="${CMAKE_CURRENT_SOURCE_DIR}/scripts/sakura-codex-session-name"
+	SAKURA_CODEX_APP_SERVER_HELPER_BUILD_PATH="${CMAKE_CURRENT_SOURCE_DIR}/scripts/sakura-codex-app-server")
 TARGET_COMPILE_DEFINITIONS (sakura PRIVATE
 	SAKURA_AGENT_BUILD_PATH="${CMAKE_BINARY_DIR}/src/sakura-agent")
 
@@ -466,7 +467,8 @@ IF (POD2MAN)
 	INSTALL (FILES ${sakura_BINARY_DIR}/sakura.1 DESTINATION share/man/man1)
 ENDIF (POD2MAN)
 INSTALL (FILES README.md DESTINATION share/doc/sakura)
-INSTALL (PROGRAMS scripts/sakura-codex-session-hook scripts/sakura-codex-session-name DESTINATION bin)
+INSTALL (PROGRAMS scripts/sakura-codex-session-hook scripts/sakura-codex-session-name
+	scripts/sakura-codex-app-server DESTINATION bin)
 
 FILE (GLOB MO_FILES po/*.mo)
 

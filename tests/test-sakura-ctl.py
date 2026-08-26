@@ -58,6 +58,10 @@ def main():
         env = os.environ.copy()
         env["SAKURA_CODEX_BINARY"] = str(Path(args.fake_codex).resolve())
         env["SAKURA_FAKE_CODEX_ARGUMENTS_LOG"] = str(arguments_log)
+        os.environ["SAKURA_CODEX_BINARY"] = env["SAKURA_CODEX_BINARY"]
+        os.environ["SAKURA_FAKE_CODEX_ARGUMENTS_LOG"] = env[
+            "SAKURA_FAKE_CODEX_ARGUMENTS_LOG"
+        ]
         agent = subprocess.Popen([
             args.agent, "--socket", str(socket), "--workspace-file",
             str(workspace), "--session", str(session),
@@ -177,13 +181,17 @@ def main():
                 time.sleep(0.02)
             launches = [json.loads(line) for line in
                         arguments_log.read_text(encoding="utf-8").splitlines()]
-            assert len(launches) == 6
-            for launch in launches[:4]:
+            assert len(launches) == 7
+            assert launches[1] == ["app-server", "--stdio"]
+            tui_launches = [launch for launch in launches
+                            if launch[:1] != ["app-server"]]
+            for launch in tui_launches[:4]:
                 assert launch[launch.index("--model") + 1] == "gpt-5.6-luna"
                 assert "model_reasoning_effort=xhigh" in launch
-            assert all("resume" in launch for launch in launches[2:4])
-            assert launches[4][launches[4].index("--model") + 1] == "exit-immediately"
-            assert launches[5][launches[5].index("--model") + 1] == "no-session"
+            assert all("resume" in launch for launch in tui_launches[1:4])
+            assert "9f328589-2569-5184-a037-0d4415dbb70d" in tui_launches[1]
+            assert tui_launches[4][tui_launches[4].index("--model") + 1] == "exit-immediately"
+            assert tui_launches[5][tui_launches[5].index("--model") + 1] == "no-session"
         finally:
             stop_agent(agent)
 

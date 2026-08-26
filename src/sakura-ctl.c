@@ -284,6 +284,58 @@ set_codex_session_name(const gchar *session_id, const gchar *name,
 	return TRUE;
 }
 
+static gchar *
+prepare_codex_thread(const SakuraCtlManifestEntry *entry, GError **error)
+{
+	g_autofree gchar *helper = g_find_program_in_path("sakura-codex-app-server");
+	g_autofree gchar *stdout_text = NULL;
+	g_autofree gchar *stderr_text = NULL;
+	g_autoptr(GPtrArray) args = g_ptr_array_new_with_free_func(g_free);
+	gint wait_status = 0;
+
+	if (helper == NULL && g_file_test(SAKURA_CODEX_APP_SERVER_HELPER_BUILD_PATH,
+	                                  G_FILE_TEST_IS_EXECUTABLE))
+		helper = g_strdup(SAKURA_CODEX_APP_SERVER_HELPER_BUILD_PATH);
+	if (helper == NULL) {
+		g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_NOT_FOUND,
+		                    "sakura-codex-app-server was not found");
+		return NULL;
+	}
+	g_ptr_array_add(args, g_steal_pointer(&helper));
+	g_ptr_array_add(args, g_strdup("--working-directory"));
+	g_ptr_array_add(args, g_strdup(entry->working_directory));
+	g_ptr_array_add(args, g_strdup("--prompt-file"));
+	g_ptr_array_add(args, g_strdup(entry->prompt_file));
+	if (entry->model != NULL && entry->model[0] != '\0') {
+		g_ptr_array_add(args, g_strdup("--model"));
+		g_ptr_array_add(args, g_strdup(entry->model));
+	}
+	if (entry->reasoning != NULL && entry->reasoning[0] != '\0') {
+		g_ptr_array_add(args, g_strdup("--reasoning"));
+		g_ptr_array_add(args, g_strdup(entry->reasoning));
+	}
+	if (entry->session_name != NULL && entry->session_name[0] != '\0') {
+		g_ptr_array_add(args, g_strdup("--session-name"));
+		g_ptr_array_add(args, g_strdup(entry->session_name));
+	}
+	g_ptr_array_add(args, NULL);
+	if (!g_spawn_sync(NULL, (gchar **)args->pdata, NULL, G_SPAWN_DEFAULT,
+	                  NULL, NULL, &stdout_text, &stderr_text, &wait_status,
+	                  error) || !g_spawn_check_wait_status(wait_status, error)) {
+		if (error != NULL && *error != NULL && stderr_text != NULL &&
+		    stderr_text[0] != '\0')
+			g_prefix_error(error, "%s: ", g_strstrip(stderr_text));
+		return NULL;
+	}
+	g_strstrip(stdout_text);
+	if (stdout_text[0] == '\0') {
+		g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_INVALID_DATA,
+		                    "Codex app-server returned no thread ID");
+		return NULL;
+	}
+	return g_steal_pointer(&stdout_text);
+}
+
 static SakuraSessionTabRecord *
 find_manifest_match(SakuraSessionSnapshot *snapshot, const gchar *group_id,
                     const SakuraCtlManifestEntry *entry)
@@ -351,6 +403,7 @@ apply_manifest(SakuraControlClientConnection *connection,
 		GPtrArray *args;
 		g_autofree gchar *stdout_text = NULL;
 		g_autofree gchar *stderr_text = NULL;
+		g_autofree gchar *prepared_session_id = NULL;
 		gint wait_status = 0;
 
 		if (!request_snapshot(connection, &snapshot, error))
@@ -385,6 +438,15 @@ apply_manifest(SakuraControlClientConnection *connection,
 		g_ptr_array_add(args, g_strdup(entry->title));
 		g_ptr_array_add(args, g_strdup("--working-directory"));
 		g_ptr_array_add(args, g_strdup(entry->working_directory));
+		if (entry->prompt_file != NULL && entry->prompt_file[0] != '\0') {
+			prepared_session_id = prepare_codex_thread(entry, error);
+			if (prepared_session_id == NULL) {
+				g_ptr_array_unref(args);
+				return FALSE;
+			}
+			g_ptr_array_add(args, g_strdup("--resume"));
+			g_ptr_array_add(args, g_strdup(prepared_session_id));
+		}
 		if (entry->reasoning != NULL && entry->reasoning[0] != '\0') {
 			g_ptr_array_add(args, g_strdup("--reasoning"));
 			g_ptr_array_add(args, g_strdup(entry->reasoning));
@@ -392,10 +454,6 @@ apply_manifest(SakuraControlClientConnection *connection,
 		if (entry->model != NULL && entry->model[0] != '\0') {
 			g_ptr_array_add(args, g_strdup("--model"));
 			g_ptr_array_add(args, g_strdup(entry->model));
-		}
-		if (entry->prompt_file != NULL && entry->prompt_file[0] != '\0') {
-			g_ptr_array_add(args, g_strdup("--prompt-file"));
-			g_ptr_array_add(args, g_strdup(entry->prompt_file));
 		}
 		if (entry->session_name != NULL && entry->session_name[0] != '\0') {
 			g_ptr_array_add(args, g_strdup("--session-name"));
