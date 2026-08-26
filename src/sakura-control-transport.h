@@ -63,6 +63,10 @@ typedef struct {
 	gchar *cwd;
 	gchar *reasoning_effort;
 	gchar *resume_session_id;
+	gchar *tracking_token;
+	guint terminal_kind;
+	guint order;
+	gboolean has_order;
 	gchar *provider;
 	gchar *external_id;
 	gchar *url;
@@ -227,6 +231,11 @@ gboolean sakura_control_encode_create_terminal_request_with_page(
 	const gchar *request_id, const gchar *terminal_id, const gchar *page_id,
 	const gchar *group_id, const gchar *task_id, const gchar *cwd,
 	guint cols, guint rows, GByteArray *payload);
+gboolean sakura_control_encode_create_terminal_request_with_order(
+	const gchar *request_id, const gchar *terminal_id, const gchar *page_id,
+	const gchar *group_id, const gchar *task_id, const gchar *cwd,
+	guint cols, guint rows, guint order, gboolean has_order,
+	GByteArray *payload);
 gboolean sakura_control_encode_create_codex_request(
 	const gchar *request_id, const gchar *terminal_id, const gchar *page_id,
 	const gchar *group_id, const gchar *task_id, const gchar *cwd,
@@ -256,6 +265,18 @@ gboolean sakura_control_encode_restart_terminal_request_with_page(
 	const gchar *request_id, const gchar *terminal_id, const gchar *page_id,
 	const gchar *group_id, const gchar *task_id, const gchar *cwd,
 	guint cols, guint rows, GByteArray *payload);
+gboolean sakura_control_encode_restart_terminal_request_with_spec(
+	const gchar *request_id, const gchar *terminal_id, const gchar *page_id,
+	const gchar *group_id, const gchar *task_id, const gchar *cwd,
+	guint cols, guint rows, SakuraTabKind kind, const gchar *resume_session_id,
+	const gchar *reasoning_effort, const gchar *tracking_token,
+	GByteArray *payload);
+gboolean sakura_control_encode_restart_terminal_request_with_order(
+	const gchar *request_id, const gchar *terminal_id, const gchar *page_id,
+	const gchar *group_id, const gchar *task_id, const gchar *cwd,
+	guint cols, guint rows, SakuraTabKind kind, const gchar *resume_session_id,
+	const gchar *reasoning_effort, const gchar *tracking_token,
+	guint order, gboolean has_order, GByteArray *payload);
 gboolean sakura_control_encode_subscribe_events_request(
 	const gchar *request_id, guint64 after_sequence, GByteArray *payload);
 gboolean sakura_control_decode_request(const guint8 *payload,

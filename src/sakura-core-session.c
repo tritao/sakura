@@ -324,6 +324,7 @@ sakura_session_layout_reachable(const SakuraSessionLayoutRecord *record,
 
 static gboolean
 sakura_session_layout_valid(const SakuraSessionSnapshot *snapshot,
+                             gboolean external_workspace,
                              GError **error)
 {
 	GHashTable *pages = g_hash_table_new(g_str_hash, g_str_equal);
@@ -343,11 +344,11 @@ sakura_session_layout_valid(const SakuraSessionSnapshot *snapshot,
 		SakuraSessionTaskRecord *task = g_ptr_array_index(snapshot->tasks, index);
 		g_hash_table_add(tasks, task->id);
 	}
-	if (snapshot->active_group_id != NULL &&
+	if (!external_workspace && snapshot->active_group_id != NULL &&
 	    g_strcmp0(snapshot->active_group_id, "root") != 0 &&
 	    !g_hash_table_contains(groups, snapshot->active_group_id))
 		goto invalid;
-	if (snapshot->selected_task_id != NULL && snapshot->selected_task_id[0] != '\0' &&
+	if (!external_workspace && snapshot->selected_task_id != NULL && snapshot->selected_task_id[0] != '\0' &&
 	    !g_hash_table_contains(tasks, snapshot->selected_task_id))
 		goto invalid;
 
@@ -366,15 +367,15 @@ sakura_session_layout_valid(const SakuraSessionSnapshot *snapshot,
 		                          g_strcmp0(page->parent_id, "root") != 0 &&
 		                          g_hash_table_contains(tasks, page->parent_id);
 
-		if (page->parent_id != NULL && g_strcmp0(page->parent_id, "root") != 0 &&
+		if (!external_workspace && page->parent_id != NULL && g_strcmp0(page->parent_id, "root") != 0 &&
 		    !g_hash_table_contains(groups, page->parent_id) &&
 		    !g_hash_table_contains(tasks, page->parent_id))
 			goto invalid;
-		if (page->group_id != NULL && page->group_id[0] != '\0' &&
+		if (!external_workspace && page->group_id != NULL && page->group_id[0] != '\0' &&
 		    g_strcmp0(page->group_id, "root") != 0 &&
 		    !g_hash_table_contains(groups, page->group_id))
 			goto invalid;
-		if (has_task && !g_hash_table_contains(tasks, page->task_id))
+		if (!external_workspace && has_task && !g_hash_table_contains(tasks, page->task_id))
 			goto invalid;
 		if (has_task && g_strcmp0(page->parent_id, page->task_id) != 0)
 			goto invalid;
@@ -768,6 +769,10 @@ sakura_session_snapshot_load_into(GKeyFile *key_file,
 		tab->cwd = g_key_file_get_string(key_file, section, "cwd", NULL);
 		tab->title = g_key_file_get_string(key_file, section, "title", NULL);
 		tab->terminal_id = g_key_file_get_string(key_file, section, "terminal_id", NULL);
+		tab->page_id = g_key_file_get_string(key_file, section, "page_id", NULL);
+		tab->order = g_key_file_has_key(key_file, section, "order", NULL)
+		           ? g_key_file_get_integer(key_file, section, "order", NULL)
+		           : index;
 		tab->tool_id = g_key_file_get_string(key_file, section, "tool", NULL);
 		tab->tool_target = g_key_file_get_string(key_file, section, "tool_target", NULL);
 		tab->codex_session_id = g_key_file_get_string(key_file, section,
@@ -806,13 +811,17 @@ sakura_session_snapshot_load_into(GKeyFile *key_file,
 	}
 	sakura_session_repair_duplicate_page_ids(snapshot);
 
-	return sakura_session_group_ids_valid(snapshot, error) &&
+	{
+		gboolean external_workspace = g_key_file_get_boolean(
+			key_file, "Session", "external_workspace", NULL);
+
+		return sakura_session_group_ids_valid(snapshot, error) &&
 	       sakura_session_task_ids_valid(snapshot, error) &&
 	       sakura_session_terminal_ids_valid(
-		       snapshot,
-		       g_key_file_get_boolean(key_file, "Session",
-		                              "external_workspace", NULL), error) &&
-	       (version < 4 || sakura_session_layout_valid(snapshot, error));
+		       snapshot, external_workspace, error) &&
+	       (version < 4 || sakura_session_layout_valid(
+		       snapshot, external_workspace, error));
+	}
 }
 
 
@@ -987,6 +996,9 @@ sakura_session_snapshot_save(const SakuraSessionSnapshot *snapshot,
 		g_key_file_set_string(key_file, section, "terminal_id",
 		                      tab->terminal_id != NULL ? tab->terminal_id : "");
 		g_key_file_set_string(key_file, section, "kind", kind);
+		g_key_file_set_integer(key_file, section, "order", tab->order);
+		if (tab->page_id != NULL && tab->page_id[0] != '\0')
+			g_key_file_set_string(key_file, section, "page_id", tab->page_id);
 		if (tab->tool_id != NULL)
 			g_key_file_set_string(key_file, section, "tool", tab->tool_id);
 		if (tab->tool_target != NULL && tab->tool_target[0] != '\0')

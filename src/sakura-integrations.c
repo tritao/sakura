@@ -12,6 +12,7 @@
 #define SAKURA_CODEX_HELPER_PROTOCOL_VERSION "v1"
 #define SAKURA_CODEX_HELPER_OVERRIDE_ENV "SAKURA_CODEX_HELPER"
 #define SAKURA_CODEX_HELPER_NAME "sakura-codex-session-name"
+#define SAKURA_CODEX_HOOK_HELPER_NAME "sakura-codex-session-hook"
 
 const gchar *
 sakura_tool_label(SakuraToolKind tool)
@@ -1511,60 +1512,109 @@ sakura_process_has_environment (GPid pid, const gchar *name, const gchar *value)
 
 
 static gchar *
-sakura_codex_hooks_path (void)
+sakura_find_codex_hook_helper (void)
 {
-	const gchar *codex_home = g_getenv("CODEX_HOME");
+	gchar *helper;
 
-	if (codex_home == NULL || codex_home[0] == '\0')
-		return g_build_filename(g_get_home_dir(), ".codex", "hooks.json", NULL);
+	helper = g_find_program_in_path(SAKURA_CODEX_HOOK_HELPER_NAME);
+	if (sakura_codex_helper_is_usable(helper))
+		return helper;
+	g_free(helper);
 
-	return g_build_filename(codex_home, "hooks.json", NULL);
+	helper = sakura_codex_helper_beside_executable();
+	if (helper != NULL) {
+		gchar *directory = g_path_get_dirname(helper);
+		g_free(helper);
+		helper = g_build_filename(directory, SAKURA_CODEX_HOOK_HELPER_NAME, NULL);
+		g_free(directory);
+		if (sakura_codex_helper_is_usable(helper))
+			return helper;
+		g_free(helper);
+	}
+
+	helper = g_build_filename(SAKURA_SOURCE_SCRIPT_DIR,
+	                          SAKURA_CODEX_HOOK_HELPER_NAME, NULL);
+	if (sakura_codex_helper_is_usable(helper))
+		return helper;
+	g_free(helper);
+
+	helper = g_build_filename(SAKURA_INSTALL_BINDIR,
+	                          SAKURA_CODEX_HOOK_HELPER_NAME, NULL);
+	if (sakura_codex_helper_is_usable(helper))
+		return helper;
+	g_free(helper);
+	return NULL;
 }
 
 
 SakuraCodexTrackingState
 sakura_codex_tracking_state (void)
 {
-	static const gchar *required_events[] = {
-		"SessionStart",
-		"UserPromptSubmit",
-		"PreToolUse",
-		"PermissionRequest",
-		"Stop"
-	};
-	gchar *hook_path;
-	gchar *hook_config = NULL;
-	gsize hook_config_length = 0;
-	guint found_events = 0;
-	guint i;
-	gboolean has_marker;
+	gchar *helper;
+	gchar *standard_output = NULL;
+	gchar *argv[3];
+	gint status = 0;
+	GError *error = NULL;
+	SakuraCodexTrackingState state = SAKURA_CODEX_TRACKING_MISSING;
 
-	hook_path = sakura_codex_hooks_path();
-	if (!g_file_get_contents(hook_path, &hook_config, &hook_config_length, NULL)) {
-		g_free(hook_path);
+	helper = sakura_find_codex_hook_helper();
+	if (helper == NULL)
 		return SAKURA_CODEX_TRACKING_MISSING;
+	argv[0] = helper;
+	argv[1] = (gchar *)"--status";
+	argv[2] = NULL;
+	if (g_spawn_sync(NULL, argv, NULL, G_SPAWN_DEFAULT, NULL, NULL,
+	                 &standard_output, NULL, &status, &error) && status == 0) {
+		g_strstrip(standard_output);
+		if (g_strcmp0(standard_output, "enabled") == 0)
+			state = SAKURA_CODEX_TRACKING_ENABLED;
+		else if (g_strcmp0(standard_output, "partial") == 0)
+			state = SAKURA_CODEX_TRACKING_PARTIAL;
 	}
+	g_clear_error(&error);
+	g_free(standard_output);
+	g_free(helper);
+	return state;
+}
 
-	has_marker = g_strstr_len(hook_config, (gssize)hook_config_length,
-	                          "sakura-codex-session-hook") != NULL;
-	if (has_marker) {
-		for (i = 0; i < G_N_ELEMENTS(required_events); i++) {
-			gchar *event_key = g_strdup_printf("\"%s\"", required_events[i]);
 
-			if (g_strstr_len(hook_config, (gssize)hook_config_length, event_key) != NULL)
-				found_events++;
-			g_free(event_key);
-		}
+gboolean
+sakura_codex_ensure_tracking (GError **error)
+{
+	gchar *helper;
+	gchar *argv[3];
+	gchar *standard_error = NULL;
+	gint status = 0;
+
+	if (sakura_codex_tracking_state() == SAKURA_CODEX_TRACKING_ENABLED)
+		return TRUE;
+	helper = sakura_find_codex_hook_helper();
+	if (helper == NULL) {
+		g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_NOT_FOUND,
+		                    "sakura-codex-session-hook was not found");
+		return FALSE;
 	}
-
-	g_free(hook_config);
-	g_free(hook_path);
-
-	if (!has_marker)
-		return SAKURA_CODEX_TRACKING_MISSING;
-	if (found_events == G_N_ELEMENTS(required_events))
-		return SAKURA_CODEX_TRACKING_ENABLED;
-	return SAKURA_CODEX_TRACKING_PARTIAL;
+	argv[0] = helper;
+	argv[1] = (gchar *)"--install";
+	argv[2] = NULL;
+	if (!g_spawn_sync(NULL, argv, NULL, G_SPAWN_DEFAULT, NULL, NULL,
+	                  NULL, &standard_error, &status, error) || status != 0) {
+		if (error != NULL && *error == NULL)
+			g_set_error(error, G_IO_ERROR, G_IO_ERROR_FAILED, "%s",
+			            standard_error != NULL && standard_error[0] != '\0'
+			            ? standard_error : "hook installer failed");
+		g_free(standard_error);
+		g_free(helper);
+		return FALSE;
+	}
+	g_free(standard_error);
+	g_free(helper);
+	if (sakura_codex_tracking_state() != SAKURA_CODEX_TRACKING_ENABLED) {
+		g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_FAILED,
+		                    "Codex hook installation did not enable every required event");
+		return FALSE;
+	}
+	return TRUE;
 }
 
 
@@ -1757,6 +1807,30 @@ sakura_rename_codex_session_cb (GtkWidget *widget, void *data)
 }
 
 
+GtkWidget *
+sakura_codex_rename_menu_item_new(SakuraTab *tab)
+{
+	GtkWidget *item;
+	gchar *terminal_id;
+	gboolean identified;
+
+	if (tab == NULL || tab->kind != SAKURA_TAB_CODEX)
+		return NULL;
+	identified = tab->codex_session_id != NULL &&
+	             tab->codex_session_id[0] != '\0';
+	item = gtk_menu_item_new_with_label(
+		identified ? _("Rename Codex session...")
+		           : _("Detecting Codex session..."));
+	gtk_widget_set_sensitive(item, identified);
+	terminal_id = g_strdup(tab->terminal_id);
+	g_object_set_data_full(G_OBJECT(item), "sakura-codex-terminal-id",
+	                       terminal_id, g_free);
+	g_signal_connect(item, "activate",
+	                 G_CALLBACK(sakura_rename_codex_session_cb), terminal_id);
+	return item;
+}
+
+
 void
 sakura_attach_codex_cb (GtkWidget *widget, void *data)
 {
@@ -1836,28 +1910,15 @@ sakura_refresh_codex_name_cb (GtkWidget *widget, void *data)
 void
 sakura_install_codex_hook_cb (GtkWidget *widget, void *data)
 {
-	gchar *hook, *standard_error = NULL;
 	GError *error = NULL;
-	gint status;
 
 	(void)data;
-	hook = g_find_program_in_path("sakura-codex-session-hook");
-	if (hook == NULL) {
-		sakura_error(_("The Codex hook is not installed. Run scripts/sakura-codex-session-hook --install from the Sakura source tree first."));
-		return;
-	}
-	g_free(hook);
-
-	if (!g_spawn_command_line_sync("sakura-codex-session-hook --install",
-	                               NULL, &standard_error, &status, &error) || status != 0) {
+	if (!sakura_codex_ensure_tracking(&error)) {
 		sakura_error(_("Could not install the Codex session hook: %s"),
-		             error != NULL ? error->message :
-		             (standard_error != NULL ? standard_error : _("unknown error")));
+		             error != NULL ? error->message : _("unknown error"));
 		g_clear_error(&error);
-		g_free(standard_error);
 		return;
 	}
-	g_free(standard_error);
 	sakura_codex_tracking_menu_update(widget);
 
 	{
@@ -2022,11 +2083,12 @@ sakura_codex_tracking_poll_cb(gpointer data)
 	gboolean changed = FALSE;
 
 	(void)data;
+	sakura.codex_tracking_source_id = 0;
 	if (sakura.codex_tracking_dir == NULL)
-		return G_SOURCE_CONTINUE;
+		return G_SOURCE_REMOVE;
 	dir = g_dir_open(sakura.codex_tracking_dir, 0, NULL);
 	if (dir == NULL)
-		return G_SOURCE_CONTINUE;
+		return G_SOURCE_REMOVE;
 
 	while ((filename = g_dir_read_name(dir)) != NULL) {
 		gchar *path, *contents, *session_id = NULL, *state = NULL;
@@ -2073,9 +2135,9 @@ sakura_codex_tracking_poll_cb(gpointer data)
 			continue;
 		}
 
-		if (sakura.workspace->tabs != NULL) {
-			for (page = 0; page < sakura.workspace->tabs->len; page++) {
-				SakuraTab *tab = sakura_tab_at_page((gint)page);
+		if (sakura.workspace->panes != NULL) {
+			for (page = 0; page < sakura.workspace->panes->len; page++) {
+				SakuraTab *tab = g_ptr_array_index(sakura.workspace->panes, page);
 				if (tab == NULL || tab->codex_tracking_token == NULL ||
 				    g_strcmp0(tab->codex_tracking_token, filename) != 0)
 					continue;
@@ -2144,7 +2206,28 @@ sakura_codex_tracking_poll_cb(gpointer data)
 	g_dir_close(dir);
 	if (changed)
 		sakura_session_mark_dirty();
-	return G_SOURCE_CONTINUE;
+	return G_SOURCE_REMOVE;
+}
+
+
+void
+sakura_codex_tracking_changed_cb(GFileMonitor *monitor, GFile *file,
+	                              GFile *other_file,
+	                              GFileMonitorEvent event_type, gpointer data)
+{
+	(void)monitor;
+	(void)file;
+	(void)other_file;
+	(void)data;
+	if (sakura.session_shutting_down ||
+	    (event_type != G_FILE_MONITOR_EVENT_CREATED &&
+	     event_type != G_FILE_MONITOR_EVENT_CHANGED &&
+	     event_type != G_FILE_MONITOR_EVENT_CHANGES_DONE_HINT &&
+	     event_type != G_FILE_MONITOR_EVENT_MOVED_IN))
+		return;
+	if (sakura.codex_tracking_source_id == 0)
+		sakura.codex_tracking_source_id = g_timeout_add(
+			25, sakura_codex_tracking_poll_cb, NULL);
 }
 
 

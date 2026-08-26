@@ -65,6 +65,7 @@ typedef struct {
 } SakuraTerminalCreate;
 
 #define SAKURA_AGENT_OUTPUT_BUFFER_SIZE (1024 * 1024)
+#define SAKURA_AGENT_OUTPUT_BATCH_SIZE (32 * 1024)
 #define SAKURA_AGENT_MAX_QUEUED_MESSAGES 1000
 #define SAKURA_AGENT_MAX_QUEUED_BYTES (4 * 1024 * 1024)
 #define SAKURA_AGENT_VERSION "0.1"
@@ -95,6 +96,7 @@ struct _SakuraAgent {
 	guint64 workspace_revision;
 	gchar *socket_path;
 	gchar *workspace_path;
+	gchar *tracking_dir;
 };
 
 
@@ -556,7 +558,7 @@ sakura_agent_terminal_reader(gpointer data)
 {
 	SakuraAgentTerminal *terminal = data;
 	SakuraAgent *agent = terminal->agent;
-	guint8 buffer[4096];
+	guint8 buffer[SAKURA_AGENT_OUTPUT_BATCH_SIZE];
 
 	for (;;) {
 		ssize_t count = read(terminal->master_fd, buffer, sizeof(buffer));
@@ -1212,6 +1214,7 @@ sakura_agent_create_terminal_with_kind(SakuraAgent *agent,
 	gchar *owned_cwd = NULL;
 	gchar *id = NULL;
 	gchar *title = NULL;
+	const gchar *tracking_token = NULL;
 
 	group = sakura_agent_request_group(agent, request->group_id, error);
 	if (group == NULL)
@@ -1287,6 +1290,9 @@ sakura_agent_create_terminal_with_kind(SakuraAgent *agent,
 	} else {
 		id = g_uuid_string_random();
 	}
+	tracking_token = request->tracking_token != NULL &&
+	                 request->tracking_token[0] != '\0'
+	               ? request->tracking_token : id;
 	create.child_pid = forkpty(&create.pty_fd, NULL, NULL, &size);
 	if (create.child_pid < 0) {
 		g_set_error(error, G_IO_ERROR, g_io_error_from_errno(errno),
@@ -1297,9 +1303,13 @@ sakura_agent_create_terminal_with_kind(SakuraAgent *agent,
 	if (create.child_pid == 0) {
 		if (chdir(cwd) != 0)
 			_exit(127);
-		if (codex)
+		if (codex) {
+			if (agent->tracking_dir != NULL)
+				setenv("SAKURA_CODEX_TRACKING_DIR", agent->tracking_dir, 1);
+			if (tracking_token != NULL)
+				setenv("SAKURA_CODEX_TAB_TOKEN", tracking_token, 1);
 			execvp(child_argv[0], (gchar * const *)child_argv);
-		else
+		} else
 			execl(shell, shell, "-i", (gchar *)NULL);
 		_exit(127);
 	}
@@ -1309,6 +1319,22 @@ sakura_agent_create_terminal_with_kind(SakuraAgent *agent,
 	create.core->title = title;
 	title = NULL;
 	create.core->status = SAKURA_TERMINAL_RUNNING;
+	create.core->kind = codex ? SAKURA_TAB_CODEX : SAKURA_TAB_SHELL;
+	create.core->codex_session_id = g_strdup(request->resume_session_id);
+	create.core->codex_reasoning_effort = g_strdup(request->reasoning_effort);
+	create.core->tracking_token = codex ? g_strdup(tracking_token) : NULL;
+	create.core->page_id = g_strdup(request->page_id);
+	if (request->has_order) {
+		create.core->order = request->order;
+	} else {
+		for (guint index = 0; agent->workspace->terminals != NULL &&
+		                     index < agent->workspace->terminals->len; index++) {
+			SakuraCoreTerminal *terminal = g_ptr_array_index(
+				agent->workspace->terminals, index);
+			if (terminal != NULL && terminal->order >= create.core->order)
+				create.core->order = terminal->order + 1;
+		}
+	}
 	if (!sakura_core_workspace_add_terminal(agent->workspace, create.core)) {
 		sakura_agent_error(error, "could not register terminal");
 		goto fail;
@@ -1569,13 +1595,57 @@ sakura_agent_restart_terminal(SakuraAgent *agent,
 	                             GError **error)
 {
 	SakuraAgentTerminal *existing = NULL;
+	SakuraCoreTerminal *logical_terminal;
+	SakuraControlRequest restart_request;
+	gchar *resume_session_id = NULL;
+	gchar *reasoning_effort = NULL;
+	gchar *tracking_token = NULL;
+	gchar *restart_cwd = NULL;
+	gchar *restart_page_id = NULL;
+	guint logical_order = G_MAXUINT;
 	guint existing_index = 0;
+	guint logical_index = G_MAXUINT;
 
 	if (retired_terminal != NULL)
 		*retired_terminal = NULL;
 	if (request->terminal_id == NULL || request->terminal_id[0] == '\0' ||
 	    !sakura_agent_terminal_id_is_valid(request->terminal_id))
 		return sakura_agent_error(error, "terminal id is invalid");
+	restart_request = *request;
+	logical_terminal = sakura_core_workspace_find_terminal(
+		agent->workspace, request->terminal_id);
+	if (logical_terminal != NULL) {
+		g_ptr_array_find(agent->workspace->terminals, logical_terminal,
+		                 &logical_index);
+		logical_order = request->has_order ? request->order : logical_terminal->order;
+		restart_page_id = g_strdup(logical_terminal->page_id);
+		if (restart_page_id != NULL && restart_page_id[0] != '\0')
+			restart_request.page_id = restart_page_id;
+		restart_request.group_id = logical_terminal->group != NULL
+		                         ? logical_terminal->group->id : "root";
+		restart_request.task_id = logical_terminal->task != NULL
+		                        ? logical_terminal->task->id : "root";
+		if (logical_terminal->cwd != NULL && logical_terminal->cwd[0] != '\0') {
+			restart_cwd = g_strdup(logical_terminal->cwd);
+			restart_request.cwd = restart_cwd;
+		}
+		if (logical_terminal->kind == SAKURA_TAB_CODEX)
+			restart_request.terminal_kind = SAKURA_TAB_CODEX;
+		resume_session_id = g_strdup(
+			request->resume_session_id != NULL && request->resume_session_id[0] != '\0'
+			? request->resume_session_id : logical_terminal->codex_session_id);
+		reasoning_effort = g_strdup(
+			request->reasoning_effort != NULL && request->reasoning_effort[0] != '\0'
+			? request->reasoning_effort : logical_terminal->codex_reasoning_effort);
+		tracking_token = g_strdup(
+			request->tracking_token != NULL && request->tracking_token[0] != '\0'
+			? request->tracking_token : logical_terminal->tracking_token);
+		restart_request.resume_session_id = resume_session_id;
+		restart_request.reasoning_effort = reasoning_effort;
+		restart_request.tracking_token = tracking_token;
+	}
+	else if (request->has_order)
+		logical_order = request->order;
 
 	/* Restart is an idempotent replacement operation. This matters both after
 	 * an agent process restart and when a caller retries a request after losing
@@ -1605,7 +1675,40 @@ sakura_agent_restart_terminal(SakuraAgent *agent,
 			*retired_terminal = g_ptr_array_steal_index(agent->terminals,
 			                                           existing_index);
 	}
-	return sakura_agent_create_terminal(agent, request, accepted_id, error);
+	logical_terminal = sakura_core_workspace_find_terminal(
+		agent->workspace, request->terminal_id);
+	if (logical_terminal != NULL &&
+	    !sakura_core_workspace_remove_terminal(agent->workspace,
+	                                           logical_terminal)) {
+		g_free(resume_session_id);
+		g_free(reasoning_effort);
+		g_free(tracking_token);
+		g_free(restart_cwd);
+		g_free(restart_page_id);
+		return sakura_agent_error(error, "could not replace logical terminal");
+	}
+	gboolean created = sakura_agent_create_terminal_with_kind(
+		agent, &restart_request,
+		restart_request.terminal_kind == SAKURA_TAB_CODEX, accepted_id, error);
+	if (created && logical_index != G_MAXUINT &&
+	    logical_index + 1 < agent->workspace->terminals->len) {
+		SakuraCoreTerminal *replacement = g_ptr_array_steal_index(
+			agent->workspace->terminals,
+			agent->workspace->terminals->len - 1);
+		g_ptr_array_insert(agent->workspace->terminals, logical_index, replacement);
+	}
+	if (created && logical_order != G_MAXUINT) {
+		SakuraCoreTerminal *replacement = sakura_core_workspace_find_terminal(
+			agent->workspace, request->terminal_id);
+		if (replacement != NULL)
+			replacement->order = logical_order;
+	}
+	g_free(resume_session_id);
+	g_free(reasoning_effort);
+	g_free(tracking_token);
+	g_free(restart_cwd);
+	g_free(restart_page_id);
+	return created;
 }
 
 
@@ -2748,6 +2851,8 @@ main(int argc, char **argv)
 		(GDestroyNotify)sakura_agent_terminal_free);
 	agent.socket_path = socket_path;
 	agent.workspace_path = workspace_path;
+	agent.tracking_dir = session_path != NULL
+	                   ? g_strdup_printf("%s.codex", session_path) : NULL;
 	g_mutex_init(&agent.state_mutex);
 	g_cond_init(&agent.connections_drained);
 	if (!sakura_agent_persist_workspace(&agent, &error)) {
@@ -2813,5 +2918,6 @@ main(int argc, char **argv)
 	g_free(session_path);
 	g_free(workspace_path);
 	g_free(workspace_id);
+	g_free(agent.tracking_dir);
 	return EXIT_SUCCESS;
 }

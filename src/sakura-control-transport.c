@@ -94,6 +94,7 @@ sakura_control_request_clear(SakuraControlRequest *request)
 	g_clear_pointer(&request->cwd, g_free);
 	g_clear_pointer(&request->reasoning_effort, g_free);
 	g_clear_pointer(&request->resume_session_id, g_free);
+	g_clear_pointer(&request->tracking_token, g_free);
 	g_clear_pointer(&request->provider, g_free);
 	g_clear_pointer(&request->external_id, g_free);
 	g_clear_pointer(&request->url, g_free);
@@ -111,6 +112,7 @@ sakura_control_request_clear(SakuraControlRequest *request)
 	request->input_length = 0;
 	request->cols = 0;
 	request->rows = 0;
+	request->terminal_kind = SAKURA_TAB_SHELL;
 	request->after_sequence = 0;
 	request->has_after_output_offset = FALSE;
 	request->after_output_offset = 0;
@@ -812,6 +814,24 @@ sakura_control_encode_create_terminal_request_with_page(
 	                                             guint cols, guint rows,
 	                                             GByteArray *payload)
 {
+	return sakura_control_encode_create_terminal_request_with_order(
+		request_id, terminal_id, page_id, group_id, task_id, cwd, cols, rows,
+		0, FALSE, payload);
+}
+
+
+gboolean
+sakura_control_encode_create_terminal_request_with_order(
+	                                             const gchar *request_id,
+	                                             const gchar *terminal_id,
+	                                             const gchar *page_id,
+	                                             const gchar *group_id,
+	                                             const gchar *task_id,
+	                                             const gchar *cwd,
+	                                             guint cols, guint rows,
+	                                             guint order, gboolean has_order,
+	                                             GByteArray *payload)
+{
 	Sakura__Control__V1__CreateTerminalRequest create_terminal =
 		SAKURA__CONTROL__V1__CREATE_TERMINAL_REQUEST__INIT;
 	Sakura__Control__V1__Request request =
@@ -826,6 +846,8 @@ sakura_control_encode_create_terminal_request_with_page(
 	create_terminal.cwd = (gchar *)sakura_control_string(cwd);
 	create_terminal.cols = cols;
 	create_terminal.rows = rows;
+	create_terminal.order = order;
+	create_terminal.has_order = has_order;
 	request.request_id = (gchar *)request_id;
 	request.body_case = SAKURA__CONTROL__V1__REQUEST__BODY_CREATE_TERMINAL;
 	request.create_terminal = &create_terminal;
@@ -1034,7 +1056,7 @@ sakura_control_encode_detach_terminal_request(const gchar *request_id,
 
 
 gboolean
-sakura_control_encode_restart_terminal_request_with_page(
+sakura_control_encode_restart_terminal_request_with_spec(
 	                                               const gchar *request_id,
 	                                               const gchar *terminal_id,
 	                                               const gchar *page_id,
@@ -1042,6 +1064,34 @@ sakura_control_encode_restart_terminal_request_with_page(
 	                                               const gchar *task_id,
 	                                               const gchar *cwd,
 	                                               guint cols, guint rows,
+	                                               SakuraTabKind kind,
+	                                               const gchar *resume_session_id,
+	                                               const gchar *reasoning_effort,
+	                                               const gchar *tracking_token,
+	                                               GByteArray *payload)
+{
+	return sakura_control_encode_restart_terminal_request_with_order(
+		request_id, terminal_id, page_id, group_id, task_id, cwd, cols, rows,
+		kind, resume_session_id, reasoning_effort, tracking_token, 0, FALSE,
+		payload);
+}
+
+
+gboolean
+sakura_control_encode_restart_terminal_request_with_order(
+	                                               const gchar *request_id,
+	                                               const gchar *terminal_id,
+	                                               const gchar *page_id,
+	                                               const gchar *group_id,
+	                                               const gchar *task_id,
+	                                               const gchar *cwd,
+	                                               guint cols, guint rows,
+	                                               SakuraTabKind kind,
+	                                               const gchar *resume_session_id,
+	                                               const gchar *reasoning_effort,
+	                                               const gchar *tracking_token,
+	                                               guint order,
+	                                               gboolean has_order,
 	                                               GByteArray *payload)
 {
 	Sakura__Control__V1__RestartTerminalRequest restart =
@@ -1059,10 +1109,33 @@ sakura_control_encode_restart_terminal_request_with_page(
 	restart.cwd = (gchar *)sakura_control_string(cwd);
 	restart.cols = cols;
 	restart.rows = rows;
+	restart.kind = kind;
+	restart.resume_session_id = (gchar *)sakura_control_string(resume_session_id);
+	restart.reasoning_effort = (gchar *)sakura_control_string(reasoning_effort);
+	restart.tracking_token = (gchar *)sakura_control_string(tracking_token);
+	restart.order = order;
+	restart.has_order = has_order;
 	request.request_id = (gchar *)request_id;
 	request.body_case = SAKURA__CONTROL__V1__REQUEST__BODY_RESTART_TERMINAL;
 	request.restart_terminal = &restart;
 	return sakura_control_pack_message(&request.base, payload);
+}
+
+
+gboolean
+sakura_control_encode_restart_terminal_request_with_page(
+	                                               const gchar *request_id,
+	                                               const gchar *terminal_id,
+	                                               const gchar *page_id,
+	                                               const gchar *group_id,
+	                                               const gchar *task_id,
+	                                               const gchar *cwd,
+	                                               guint cols, guint rows,
+	                                               GByteArray *payload)
+{
+	return sakura_control_encode_restart_terminal_request_with_spec(
+		request_id, terminal_id, page_id, group_id, task_id, cwd, cols, rows,
+		SAKURA_TAB_SHELL, NULL, NULL, NULL, payload);
 }
 
 
@@ -1075,9 +1148,9 @@ sakura_control_encode_restart_terminal_request(const gchar *request_id,
 	                                               guint cols, guint rows,
 	                                               GByteArray *payload)
 {
-	return sakura_control_encode_restart_terminal_request_with_page(
+	return sakura_control_encode_restart_terminal_request_with_spec(
 		request_id, terminal_id, NULL, group_id, task_id, cwd, cols, rows,
-		payload);
+		SAKURA_TAB_SHELL, NULL, NULL, NULL, payload);
 }
 
 
@@ -1304,6 +1377,8 @@ sakura_control_decode_request(const guint8 *payload,
 			request->cwd = g_strdup(decoded->create_terminal->cwd);
 			request->cols = decoded->create_terminal->cols;
 			request->rows = decoded->create_terminal->rows;
+			request->order = decoded->create_terminal->order;
+			request->has_order = decoded->create_terminal->has_order;
 		}
 		break;
 	case SAKURA__CONTROL__V1__REQUEST__BODY_CREATE_CODEX:
@@ -1320,6 +1395,10 @@ sakura_control_decode_request(const guint8 *payload,
 				decoded->create_codex->reasoning_effort);
 			request->resume_session_id = g_strdup(
 				decoded->create_codex->resume_session_id);
+			request->tracking_token = g_strdup(
+				decoded->create_codex->tracking_token);
+			request->order = decoded->create_codex->order;
+			request->has_order = decoded->create_codex->has_order;
 		}
 		break;
 	case SAKURA__CONTROL__V1__REQUEST__BODY_TERMINAL_INPUT:
@@ -1379,6 +1458,15 @@ sakura_control_decode_request(const guint8 *payload,
 			request->cwd = g_strdup(decoded->restart_terminal->cwd);
 			request->cols = decoded->restart_terminal->cols;
 			request->rows = decoded->restart_terminal->rows;
+			request->terminal_kind = decoded->restart_terminal->kind;
+			request->resume_session_id = g_strdup(
+				decoded->restart_terminal->resume_session_id);
+			request->reasoning_effort = g_strdup(
+				decoded->restart_terminal->reasoning_effort);
+			request->tracking_token = g_strdup(
+				decoded->restart_terminal->tracking_token);
+			request->order = decoded->restart_terminal->order;
+			request->has_order = decoded->restart_terminal->has_order;
 		}
 		break;
 	case SAKURA__CONTROL__V1__REQUEST__BODY_SUBSCRIBE_EVENTS:
@@ -1449,6 +1537,15 @@ sakura_control_fill_terminal(Sakura__Control__V1__Terminal *message,
 	message->cols = terminal->cols;
 	message->rows = terminal->rows;
 	message->status = terminal->status;
+	message->kind = terminal->kind;
+	message->codex_session_id = (gchar *)sakura_control_string(
+		terminal->codex_session_id);
+	message->codex_reasoning_effort = (gchar *)sakura_control_string(
+		terminal->codex_reasoning_effort);
+	message->tracking_token = (gchar *)sakura_control_string(
+		terminal->tracking_token);
+	message->page_id = (gchar *)sakura_control_string(terminal->page_id);
+	message->order = terminal->order;
 }
 
 
@@ -1469,6 +1566,18 @@ sakura_control_fill_page(Sakura__Control__V1__Page *message,
 		page->root_layout_id);
 	message->active_terminal_id = (gchar *)sakura_control_string(
 		page->active_terminal_id);
+}
+
+
+static gint
+sakura_control_terminal_order_compare(gconstpointer left, gconstpointer right)
+{
+	const SakuraCoreTerminal *a = *(SakuraCoreTerminal * const *)left;
+	const SakuraCoreTerminal *b = *(SakuraCoreTerminal * const *)right;
+
+	if (a->order != b->order)
+		return a->order < b->order ? -1 : 1;
+	return g_strcmp0(a->id, b->id);
 }
 
 
@@ -1513,8 +1622,13 @@ sakura_control_fill_snapshot(
 	}
 	g_ptr_array_unref(tasks);
 
-	terminals = workspace != NULL && workspace->terminals != NULL
-	          ? workspace->terminals : g_ptr_array_new();
+	terminals = g_ptr_array_new();
+	if (workspace != NULL && workspace->terminals != NULL) {
+		for (guint index = 0; index < workspace->terminals->len; index++)
+			g_ptr_array_add(terminals,
+			                g_ptr_array_index(workspace->terminals, index));
+		g_ptr_array_sort(terminals, sakura_control_terminal_order_compare);
+	}
 	if (terminals->len != 0) {
 		snapshot->terminals = g_new0(Sakura__Control__V1__Terminal *,
 		                             terminals->len);
@@ -1528,8 +1642,7 @@ sakura_control_fill_snapshot(
 		}
 		snapshot->n_terminals = terminals->len;
 	}
-	if (terminals != workspace->terminals)
-		g_ptr_array_unref(terminals);
+	g_ptr_array_unref(terminals);
 
 	pages = workspace != NULL && workspace->pages != NULL
 	      ? workspace->pages : g_ptr_array_new();
@@ -2136,6 +2249,27 @@ sakura_control_decode_workspace_snapshot(
 		task->order = wire_task->order;
 		task->archived = wire_task->archived;
 		g_ptr_array_add(decoded_snapshot->tasks, task);
+	}
+	for (gsize index = 0; index < wire_snapshot->n_terminals; index++) {
+		Sakura__Control__V1__Terminal *wire_terminal =
+			wire_snapshot->terminals[index];
+		SakuraSessionTabRecord *tab = g_new0(SakuraSessionTabRecord, 1);
+
+		tab->terminal_id = g_strdup(wire_terminal->id);
+		tab->parent_id = g_strdup(wire_terminal->task_id != NULL &&
+		                          wire_terminal->task_id[0] != '\0'
+		                        ? wire_terminal->task_id : wire_terminal->group_id);
+		tab->cwd = g_strdup(wire_terminal->cwd);
+		tab->title = g_strdup(wire_terminal->title);
+		tab->kind = wire_terminal->kind <= SAKURA_TAB_TOOL
+		          ? (SakuraTabKind)wire_terminal->kind : SAKURA_TAB_SHELL;
+		tab->codex_session_id = g_strdup(wire_terminal->codex_session_id);
+		tab->codex_reasoning_effort =
+			g_strdup(wire_terminal->codex_reasoning_effort);
+		tab->codex_tracking_token = g_strdup(wire_terminal->tracking_token);
+		tab->page_id = g_strdup(wire_terminal->page_id);
+		tab->order = wire_terminal->order;
+		g_ptr_array_add(decoded_snapshot->tabs, tab);
 	}
 	for (gsize index = 0; index < wire_snapshot->n_pages; index++) {
 		Sakura__Control__V1__Page *wire_page = wire_snapshot->pages[index];

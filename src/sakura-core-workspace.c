@@ -183,6 +183,10 @@ sakura_core_terminal_free(SakuraCoreTerminal *terminal)
 	g_free(terminal->id);
 	g_free(terminal->cwd);
 	g_free(terminal->title);
+	g_free(terminal->codex_session_id);
+	g_free(terminal->codex_reasoning_effort);
+	g_free(terminal->tracking_token);
+	g_free(terminal->page_id);
 	g_free(terminal);
 }
 
@@ -1238,7 +1242,6 @@ sakura_core_workspace_sync_snapshot(const SakuraCoreWorkspace *workspace,
 		page->active_terminal_id = g_strdup(model_page->active_terminal_id);
 		g_ptr_array_add(snapshot->pages, page);
 	}
-
 	g_free(snapshot->active_group_id);
 	snapshot->active_group_id = g_strdup(
 		workspace->active_group != NULL ? workspace->active_group->id : "root");

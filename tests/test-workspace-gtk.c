@@ -96,6 +96,34 @@ test_codex_helper_resolution(void)
 
 
 static void
+test_codex_rename_menu_tracks_identification(void)
+{
+	SakuraTab *tab;
+	GtkWidget *item;
+
+	setup_workspace();
+	tab = sakura_page_at_page(1)->active_tab;
+	tab->kind = SAKURA_TAB_CODEX;
+	g_clear_pointer(&tab->codex_session_id, g_free);
+
+	item = sakura_codex_rename_menu_item_new(tab);
+	g_assert_nonnull(item);
+	g_assert_cmpstr(gtk_menu_item_get_label(GTK_MENU_ITEM(item)), ==,
+	                "Detecting Codex session...");
+	g_assert_false(gtk_widget_get_sensitive(item));
+	gtk_widget_destroy(item);
+
+	tab->codex_session_id = g_strdup("01234567-89ab-cdef-0123-456789abcdef");
+	item = sakura_codex_rename_menu_item_new(tab);
+	g_assert_cmpstr(gtk_menu_item_get_label(GTK_MENU_ITEM(item)), ==,
+	                "Rename Codex session...");
+	g_assert_true(gtk_widget_get_sensitive(item));
+	gtk_widget_destroy(item);
+	teardown_workspace();
+}
+
+
+static void
 test_codex_tracking_write(const gchar *directory, const gchar *token,
                           const gchar *event_name, const gchar *state)
 {
@@ -832,7 +860,12 @@ teardown_workspace(void)
 	guint index;
 
 	sakura_sidebar_cancel_pending_selection();
+	sakura_sidebar_cancel_primary_click();
+	sakura_sidebar_spinner_stop();
 	sakura_focus_tab_cancel_pending();
+	sakura_session_save_shutdown();
+	g_clear_pointer(&sakura.selection_intent_terminal_id, g_free);
+	sakura.selection_intent_us = 0;
 	/* Fixture tests can start the asynchronous Codex name helper. Stop it
 	 * before the global Sakura record is reset so its callbacks do not retain
 	 * query/process state across the next fixture. */
@@ -1041,6 +1074,58 @@ test_snapshot_destroy_restore_equivalence(void)
 }
 
 
+static void
+test_background_save_shutdown_persists_latest_snapshot(void)
+{
+	SakuraPage *latest;
+	GKeyFile *saved;
+	GError *error = NULL;
+	gchar *directory, *session_path, *selected_terminal_id;
+
+	directory = g_dir_make_tmp("sakura-background-save-XXXXXX", &error);
+	g_assert_no_error(error);
+	g_assert_nonnull(directory);
+	session_path = g_build_filename(directory, "workspace.session", NULL);
+	setup_workspace();
+	setup_sidebar_fixture();
+	sakura.sessionfile = g_strdup(session_path);
+	sakura.session_ready = TRUE;
+
+	/* Queue one snapshot, then replace it while the worker may already be
+	 * serializing. Shutdown must drain the newest generation before returning. */
+	sakura_session_mark_dirty();
+	sakura_session_flush();
+	latest = sakura_page_at_page(2);
+	sakura_select_tab(latest->active_tab, FALSE);
+	sakura_session_mark_dirty();
+	sakura_session_flush();
+	sakura_session_save_shutdown();
+
+	saved = g_key_file_new();
+	g_assert_true(g_key_file_load_from_file(saved, session_path,
+	                                       G_KEY_FILE_NONE, &error));
+	g_assert_no_error(error);
+	selected_terminal_id = g_key_file_get_string(
+		saved, "Session", "selected_terminal_id", &error);
+	g_assert_no_error(error);
+	g_assert_cmpstr(selected_terminal_id, ==, latest->active_tab->terminal_id);
+	g_free(selected_terminal_id);
+	g_key_file_free(saved);
+
+	g_clear_pointer(&sakura.sessionfile, g_free);
+	teardown_workspace();
+	g_remove(session_path);
+	{
+		gchar *backup_path = g_strdup_printf("%s.bak", session_path);
+		g_remove(backup_path);
+		g_free(backup_path);
+	}
+	g_rmdir(directory);
+	g_free(session_path);
+	g_free(directory);
+}
+
+
 static gchar *
 test_sidebar_column(SakuraTab *tab, guint column)
 {
@@ -1233,7 +1318,7 @@ test_sidebar_hides_redundant_directory(void)
 
 
 static void
-test_sidebar_pulses_nested_rows(void)
+test_sidebar_spinner_does_not_mutate_model(void)
 {
 	SakuraPage *page;
 	SakuraTab *tab;
@@ -1255,13 +1340,14 @@ test_sidebar_pulses_nested_rows(void)
 	setup_sidebar_fixture();
 
 	tab->status = SAKURA_TAB_STATUS_RUNNING;
-	sakura.sidebar_spinner_pulse = 41;
 	sakura_sidebar_update_tab(tab);
 	before = test_sidebar_uint_column(tab, SAKURA_SIDEBAR_COLUMN_STATUS_PULSE);
 	sakura_sidebar_spinner_pulse_cb(NULL);
 	after = test_sidebar_uint_column(tab, SAKURA_SIDEBAR_COLUMN_STATUS_PULSE);
-	g_assert_cmpuint(before, ==, 41);
-	g_assert_cmpuint(after, ==, 42);
+	g_assert_cmpuint(before, ==, 0);
+	g_assert_cmpuint(after, ==, 0);
+	/* Headless fixtures keep the sidebar container hidden, so the timer stops;
+	 * the important invariant is that an animation tick never changes rows. */
 
 	teardown_workspace();
 }
@@ -1465,6 +1551,33 @@ test_sidebar_selection_priority(void)
 
 
 static void
+test_sidebar_reorders_sessions_relative_to_siblings(void)
+{
+	SakuraPage *page_a, *page_b, *page_c;
+
+	setup_workspace();
+	setup_sidebar_fixture();
+	page_a = sakura_page_at_page(0);
+	page_b = sakura_page_at_page(1);
+	page_c = sakura_page_at_page(2);
+
+	g_assert_true(sakura_sidebar_reorder_page_relative(
+		page_a, page_c, GTK_TREE_VIEW_DROP_AFTER));
+	g_assert_true(sakura_page_at_page(0) == page_b);
+	g_assert_true(sakura_page_at_page(1) == page_c);
+	g_assert_true(sakura_page_at_page(2) == page_a);
+
+	g_assert_true(sakura_sidebar_reorder_page_relative(
+		page_a, page_b, GTK_TREE_VIEW_DROP_BEFORE));
+	g_assert_true(sakura_page_at_page(0) == page_a);
+	g_assert_true(sakura_page_at_page(1) == page_b);
+	g_assert_true(sakura_page_at_page(2) == page_c);
+	assert_workspace_consistent();
+	teardown_workspace();
+}
+
+
+static void
 test_sidebar_selection_survives_projection_rebuild(void)
 {
 	SakuraPage *page;
@@ -1501,6 +1614,50 @@ test_sidebar_selection_survives_projection_rebuild(void)
 
 
 static void
+test_sidebar_primary_click_overrides_pending_selection(void)
+{
+	SakuraPage *page_a, *page_c;
+	GtkTreeIter iter;
+	GtkTreePath *path;
+
+	setup_workspace();
+	setup_sidebar_fixture();
+	g_signal_connect(sakura.sidebar_selection, "changed",
+	                 G_CALLBACK(sakura_sidebar_selection_changed_cb), NULL);
+	page_a = sakura_page_at_page(0);
+	page_c = sakura_page_at_page(2);
+
+	/* Keep C highlighted while simulating notebook state and a queued sync to
+	 * A. Clicking C again emits no GtkTreeSelection::changed signal. */
+	g_assert_true(sakura_sidebar_get_iter(page_c->sidebar_node, &iter));
+	path = gtk_tree_model_get_path(GTK_TREE_MODEL(sakura.sidebar_model), &iter);
+	gtk_tree_selection_select_path(sakura.sidebar_selection, path);
+	gtk_tree_path_free(path);
+	while (g_main_context_pending(NULL))
+		g_main_context_iteration(NULL, FALSE);
+	sakura.workspace->active_page = page_a;
+	sakura.workspace->active_tab = page_a->active_tab;
+	gtk_notebook_set_current_page(GTK_NOTEBOOK(sakura.notebook), 0);
+	sakura_sidebar_queue_select_node_with_reason(
+		page_a->sidebar_node, SAKURA_SIDEBAR_SELECTION_CREATION);
+
+	sakura_sidebar_primary_click(page_c->sidebar_node);
+	/* The button callback must not mutate GTK selection/notebook state while
+	 * GtkTreeView still owns the click's internal path. */
+	g_assert_true(sakura.workspace->active_page == page_a);
+	g_assert_cmpuint(sakura.sidebar_primary_click_source_id, !=, 0);
+	while (g_main_context_pending(NULL))
+		g_main_context_iteration(NULL, FALSE);
+
+	g_assert_true(sakura_sidebar_selected_node() == page_c->sidebar_node);
+	g_assert_true(sakura.workspace->active_page == page_c);
+	g_assert_cmpint(gtk_notebook_get_current_page(GTK_NOTEBOOK(sakura.notebook)),
+	                ==, 2);
+	teardown_workspace();
+}
+
+
+static void
 test_programmatic_focus_does_not_queue_sidebar_selection(void)
 {
 	SakuraPage *page;
@@ -1517,6 +1674,41 @@ test_programmatic_focus_does_not_queue_sidebar_selection(void)
 
 	g_assert_cmpuint(sakura.sidebar_selection_source_id, ==, 0);
 	g_assert_null(sakura.sidebar_pending_selection);
+	teardown_workspace();
+}
+
+
+static void
+test_new_selection_cancels_stale_focus(void)
+{
+	SakuraPage *page_a, *page_b;
+
+	setup_workspace();
+	page_a = sakura_page_at_page(0);
+	page_b = sakura_page_at_page(1);
+	/* The model fixture deliberately omits VTE instances. Its pane widgets are
+	 * sufficient to exercise ownership and idle-source cancellation. */
+	page_a->active_tab->vte = page_a->active_tab->hbox;
+	page_b->active_tab->vte = page_b->active_tab->hbox;
+
+	/* A focus request is deferred until GTK finishes the current event. A
+	 * newer selection that deliberately preserves keyboard focus must still
+	 * invalidate it, or the old terminal can steal focus afterward. */
+	sakura_focus_tab(page_a->active_tab);
+	g_assert_cmpuint(sakura.focus_tab_source_id, !=, 0);
+	g_assert_true(sakura.focus_tab_pending_vte == page_a->active_tab->vte);
+
+	sakura_select_tab(page_b->active_tab, FALSE);
+	g_assert_cmpuint(sakura.focus_tab_source_id, ==, 0);
+	g_assert_null(sakura.focus_tab_pending_vte);
+	g_assert_null(sakura.focus_tab_pending_terminal_id);
+	g_assert_true(sakura.workspace->active_tab == page_b->active_tab);
+
+	while (g_main_context_pending(NULL))
+		g_main_context_iteration(NULL, FALSE);
+	g_assert_true(sakura.workspace->active_tab == page_b->active_tab);
+	page_a->active_tab->vte = NULL;
+	page_b->active_tab->vte = NULL;
 	teardown_workspace();
 }
 
@@ -3386,6 +3578,8 @@ main(int argc, char **argv)
 	                test_codex_interrupt_event_matching);
 	g_test_add_func("/workspace/codex-helper-resolution",
 	                test_codex_helper_resolution);
+	g_test_add_func("/workspace/codex-rename-menu-tracks-identification",
+	                test_codex_rename_menu_tracks_identification);
 	g_test_add_func("/workspace/restored-attention-survives-codex-session-start",
 	                test_restored_attention_survives_codex_session_start);
 	g_test_add_func("/workspace/terminal-bell-does-not-create-codex-ready-state",
@@ -3397,10 +3591,12 @@ main(int argc, char **argv)
 	                test_select_and_detach_by_identity);
 	g_test_add_func("/workspace/snapshot-destroy-restore",
 	                test_snapshot_destroy_restore_equivalence);
+	g_test_add_func("/workspace/background-save-shutdown-latest",
+	                test_background_save_shutdown_persists_latest_snapshot);
 	g_test_add_func("/workspace/sidebar-directory-subtitles",
 	                test_sidebar_hides_redundant_directory);
-	g_test_add_func("/workspace/sidebar-pulses-nested-rows",
-	                test_sidebar_pulses_nested_rows);
+	g_test_add_func("/workspace/sidebar-spinner-does-not-mutate-model",
+	                test_sidebar_spinner_does_not_mutate_model);
 	g_test_add_func("/workspace/sidebar-selects-created-tab",
 	                test_sidebar_selects_created_tab);
 	g_test_add_func("/workspace/reconciles-at-outer-mutation-boundary",
@@ -3411,10 +3607,16 @@ main(int argc, char **argv)
 	                test_workspace_clears_selection_for_empty_scope);
 	g_test_add_func("/workspace/sidebar-selection-priority",
 	                test_sidebar_selection_priority);
+	g_test_add_func("/workspace/sidebar-reorders-sessions-relative-to-siblings",
+	                test_sidebar_reorders_sessions_relative_to_siblings);
 	g_test_add_func("/workspace/sidebar-selection-survives-rebuild",
 	                test_sidebar_selection_survives_projection_rebuild);
+	g_test_add_func("/workspace/sidebar-primary-click-overrides-pending-selection",
+	                test_sidebar_primary_click_overrides_pending_selection);
 	g_test_add_func("/workspace/programmatic-focus-does-not-queue-selection",
 	                test_programmatic_focus_does_not_queue_sidebar_selection);
+	g_test_add_func("/workspace/new-selection-cancels-stale-focus",
+	                test_new_selection_cancels_stale_focus);
 	g_test_add_func("/workspace/close-active-page-preserves-group",
 	                test_close_active_page_preserves_group_scope);
 	g_test_add_func("/workspace/select-terminal-switches-group-scope",

@@ -3,7 +3,7 @@
 
 #include <glib.h>
 
-#define SAKURA_SESSION_VERSION 10
+#define SAKURA_SESSION_VERSION 11
 #define NUM_COLORSETS 6
 
 /* The domain layer owns these bounds. GTK rendering and persistence must
@@ -102,6 +102,9 @@ typedef struct {
 	gchar *codex_session_id;
 	gchar *codex_session_name;
 	gchar *codex_reasoning_effort;
+	gchar *codex_tracking_token;
+	gchar *page_id;
+	guint order;
 	gint colorset;
 	SakuraTabKind kind;
 	gboolean title_set_by_user;
@@ -210,6 +213,12 @@ struct sakura_core_terminal {
 	guint cols;
 	guint rows;
 	SakuraCoreTerminalStatus status;
+	SakuraTabKind kind;
+	gchar *codex_session_id;
+	gchar *codex_reasoning_effort;
+	gchar *tracking_token;
+	gchar *page_id;
+	guint order;
 };
 
 struct sakura_core_workspace {

@@ -51,6 +51,14 @@ static guint sakura_workspace_next_task_order(SakuraGroup *group,
                                               SakuraTask *parent);
 static void sakura_sidebar_refresh_group_rows(void);
 static void sakura_sidebar_refresh_tab_rows(void);
+static void sakura_sidebar_update_spinner_timer(void);
+static void sakura_sidebar_spinner_cell_data_cb(GtkTreeViewColumn *column,
+                                                 GtkCellRenderer *renderer,
+                                                 GtkTreeModel *model,
+                                                 GtkTreeIter *iter,
+                                                 gpointer data);
+static void sakura_sidebar_map_cb(GtkWidget *widget, gpointer data);
+static void sakura_sidebar_unmap_cb(GtkWidget *widget, gpointer data);
 static void sakura_sidebar_show_page_panes(SakuraPage *page);
 static void sakura_sidebar_hide_page_panes(SakuraPage *page);
 static void sakura_sidebar_add_page(SakuraPage *page, SakuraSidebarNode *parent);
@@ -84,6 +92,23 @@ static gboolean sakura_sidebar_drag_drop_cb(GtkWidget *widget,
                                              GdkDragContext *context,
                                              gint x, gint y, guint time,
                                              gpointer data);
+typedef enum {
+	SAKURA_SIDEBAR_DROP_PAGE_RELATIVE,
+	SAKURA_SIDEBAR_DROP_PAGE_TO_GROUP,
+	SAKURA_SIDEBAR_DROP_TASK_RELATIVE,
+	SAKURA_SIDEBAR_DROP_GROUP,
+	SAKURA_SIDEBAR_DROP_NODE_TO_GROUP
+} SakuraSidebarDropKind;
+struct sakura_sidebar_pending_drop {
+	SakuraSidebarDropKind kind;
+	SakuraSidebarNodeType source_type;
+	SakuraSidebarNodeType target_type;
+	gchar *source_id;
+	gchar *target_id;
+	GtkTreeViewDropPosition position;
+};
+static gboolean sakura_sidebar_pending_drop_idle(gpointer data);
+static void sakura_sidebar_pending_drop_free(gpointer data);
 static void sakura_sidebar_row_expansion_changed_cb(GtkTreeView *tree,
                                                      GtkTreeIter *iter,
                                                      GtkTreePath *path,
@@ -1377,6 +1402,9 @@ sakura_select_pane (struct sakura_tab *sk_tab, gboolean focus)
 
 	if (sk_tab == NULL || sk_tab->hbox == NULL || sakura.notebook == NULL)
 		return;
+	/* Any newer selection invalidates an idle focus request, including callers
+	 * that intentionally select without moving keyboard focus. */
+	sakura_focus_tab_cancel_pending();
 
 	if (!sakura_pane_is_in_active_scope(sk_tab)) {
 		/* A page owned by a task has the task node as its immediate parent.
@@ -1454,7 +1482,7 @@ sakura_workspace_start_page_runtime(SakuraPage *page)
 	for (guint index = 0; index < page->panes->len; index++) {
 		SakuraTab *tab = g_ptr_array_index(page->panes, index);
 		if (tab != NULL && tab->runtime_deferred)
-			sakura_tab_start_deferred_runtime(tab);
+			sakura_tab_start_deferred_runtime_async(tab);
 	}
 }
 
@@ -1841,12 +1869,27 @@ sakura_focus_tab_cb (gpointer data)
 	vte = sakura.focus_tab_pending_vte;
 	sakura.focus_tab_pending_vte = NULL;
 	if (!sakura.session_shutting_down && vte != NULL &&
+	    sakura.workspace != NULL && sakura.workspace->active_tab != NULL &&
+	    sakura.workspace->active_tab->vte == vte &&
+	    g_strcmp0(sakura.focus_tab_pending_terminal_id,
+	              sakura.workspace->active_tab->terminal_id) == 0 &&
 	    gtk_widget_get_visible(vte) && gtk_widget_get_realized(vte)) {
 		was_focus_syncing = sakura.sidebar_focus_syncing;
 		sakura.sidebar_focus_syncing = TRUE;
 		gtk_widget_grab_focus(vte);
 		sakura.sidebar_focus_syncing = was_focus_syncing;
+		if (sakura.selection_intent_us != 0 &&
+		    g_strcmp0(sakura.selection_intent_terminal_id,
+		              sakura.workspace->active_tab->terminal_id) == 0 &&
+		    g_getenv("SAKURA_LATENCY_TRACE") != NULL)
+			g_message("selection-focus-latency-us=%" G_GINT64_FORMAT
+			          " terminal=%s",
+			          g_get_monotonic_time() - sakura.selection_intent_us,
+			          sakura.workspace->active_tab->terminal_id);
 	}
+	g_clear_pointer(&sakura.focus_tab_pending_terminal_id, g_free);
+	g_clear_pointer(&sakura.selection_intent_terminal_id, g_free);
+	sakura.selection_intent_us = 0;
 	g_clear_object(&vte);
 	return G_SOURCE_REMOVE;
 }
@@ -1860,13 +1903,16 @@ sakura_focus_tab_cancel_pending(void)
 		sakura.focus_tab_source_id = 0;
 	}
 	g_clear_object(&sakura.focus_tab_pending_vte);
+	g_clear_pointer(&sakura.focus_tab_pending_terminal_id, g_free);
 }
 
 
 void
 sakura_focus_tab (struct sakura_tab *sk_tab)
 {
+#ifdef HAVE_WEBKITGTK
 	gboolean was_focus_syncing;
+#endif
 
 	if (sakura.session_shutting_down || sk_tab == NULL)
 		return;
@@ -1888,6 +1934,7 @@ sakura_focus_tab (struct sakura_tab *sk_tab)
 	 * selected terminal. Coalesce focus requests so an older selection cannot
 	 * steal focus after a newer one. */
 	sakura.focus_tab_pending_vte = g_object_ref(sk_tab->vte);
+	sakura.focus_tab_pending_terminal_id = g_strdup(sk_tab->terminal_id);
 	sakura.focus_tab_source_id = g_idle_add(sakura_focus_tab_cb, NULL);
 }
 void
@@ -1911,6 +1958,15 @@ sakura_sidebar_selection_changed_cb (GtkTreeSelection *selection, void *data)
 	node = sakura_sidebar_selected_node();
 	if (node == NULL)
 		return;
+	g_clear_pointer(&sakura.selection_intent_terminal_id, g_free);
+	sakura.selection_intent_us = g_get_monotonic_time();
+	if (node->type == SAKURA_SIDEBAR_TERMINAL && node->tab != NULL)
+		sakura.selection_intent_terminal_id = g_strdup(node->tab->terminal_id);
+	else if (node->page != NULL && node->page->active_tab != NULL)
+		sakura.selection_intent_terminal_id =
+			g_strdup(node->page->active_tab->terminal_id);
+	sakura_ui_latency_trace_request_paint(sakura.selection_intent_terminal_id,
+	                                      sakura.selection_intent_us);
 	sakura_sidebar_remember_selection(node);
 	if (node->type == SAKURA_SIDEBAR_GROUP) {
 		sakura_workspace_begin_mutation();
@@ -1949,6 +2005,58 @@ sakura_sidebar_selection_changed_cb (GtkTreeSelection *selection, void *data)
 	sakura.workspace->active_task = node->tab->page != NULL ? node->tab->page->task : NULL;
 	sakura_select_pane(node->tab, TRUE);
 	sakura_session_mark_dirty();
+}
+
+
+static gboolean
+sakura_sidebar_primary_click_idle(gpointer data)
+{
+	SakuraSidebarNode *node;
+	SakuraSidebarNodeType type = sakura.sidebar_primary_click_type;
+	gchar *id = g_steal_pointer(&sakura.sidebar_primary_click_id);
+
+	(void)data;
+	sakura.sidebar_primary_click_source_id = 0;
+	if (!sakura.session_shutting_down && id != NULL) {
+		node = sakura_sidebar_find_node_by_identity(type, id);
+		if (node != NULL) {
+			/* Resolve the row only after GTK has released the event's internal
+			 * tree path. The projection may have changed in the meantime. */
+			sakura_sidebar_select_node_now(node);
+			sakura_sidebar_selection_changed_cb(sakura.sidebar_selection, NULL);
+		}
+	}
+	g_free(id);
+	return G_SOURCE_REMOVE;
+}
+
+
+void
+sakura_sidebar_cancel_primary_click(void)
+{
+	if (sakura.sidebar_primary_click_source_id != 0) {
+		g_source_remove(sakura.sidebar_primary_click_source_id);
+		sakura.sidebar_primary_click_source_id = 0;
+	}
+	g_clear_pointer(&sakura.sidebar_primary_click_id, g_free);
+}
+
+
+void
+sakura_sidebar_primary_click(SakuraSidebarNode *node)
+{
+	/* Button press is the earliest reliable indication of user intent, but GTK
+	 * still owns the event's tree path until dispatch completes. Cancel stale
+	 * synchronization now and defer any model/selection work until idle. */
+	sakura_sidebar_cancel_pending_selection();
+	sakura_sidebar_cancel_primary_click();
+	if (node != NULL && node->id != NULL &&
+	    node == sakura_sidebar_selected_node()) {
+		sakura.sidebar_primary_click_type = node->type;
+		sakura.sidebar_primary_click_id = g_strdup(node->id);
+		sakura.sidebar_primary_click_source_id = g_idle_add(
+			sakura_sidebar_primary_click_idle, NULL);
+	}
 }
 
 
@@ -2076,17 +2184,50 @@ sakura_new_codex_in_scope_cb (GtkWidget *widget, void *data)
 {
 	struct sakura_sidebar_action_target *target = data;
 	SakuraSidebarNode *node = sakura_sidebar_action_target_node(target);
-	SakuraSidebarNode *parent = sakura_sidebar_creation_parent_for_context(node);
+	SakuraSidebarNode *parent;
+	SakuraGroup *group;
+	SakuraTask *task;
+	const gchar *reasoning_effort;
+	gchar *group_id;
+	gchar *task_id;
+	gchar *cwd;
 
 	if (target != NULL && node == NULL)
 		return;
+	parent = sakura_sidebar_creation_parent_for_context(node);
+	group = sakura_group_for_sidebar_node(parent);
+	task = parent != NULL && parent->type == SAKURA_SIDEBAR_TASK
+	     ? parent->task : NULL;
+	group_id = g_strdup(group != NULL && group->id != NULL ? group->id : "root");
+	task_id = g_strdup(task != NULL ? task->id : NULL);
+	cwd = sakura_sidebar_directory_for_node(parent);
+	reasoning_effort = widget != NULL
+	                 ? g_object_get_data(G_OBJECT(widget),
+	                                     SAKURA_CODEX_REASONING_EFFORT_DATA_KEY)
+	                 : NULL;
+
 	sakura_workspace_begin_mutation();
 	sakura_sidebar_prepare_context(node);
-	/* Preserve the row that opened the context menu. The generic Codex action
-	 * otherwise falls back to the currently selected tab's group, which may be
-	 * a child group of the clicked group. */
-	sakura_new_codex_cb(widget, parent);
+	/* Changing scope may rebuild the sidebar projection. Resolve the captured
+	 * stable ownership IDs again instead of retaining a pointer into the old
+	 * tree, and pass the captured folder explicitly so neither active-tab nor
+	 * process-CWD fallback can redirect the Codex workspace. */
+	if (task_id != NULL) {
+		task = sakura_workspace_model_find_task(sakura.workspace, task_id);
+		parent = task != NULL ? task->sidebar_node : NULL;
+	} else {
+		parent = sakura_sidebar_find_group_by_id(group_id);
+	}
+	if (parent == NULL)
+		parent = sakura.sidebar_root;
+	sakura_session_accept_changes();
+	sakura_add_tab_with_options(cwd, parent, NULL, FALSE, SAKURA_TAB_CODEX,
+	                            SAKURA_TOOL_NONE, NULL, NULL, reasoning_effort,
+	                            NULL, NULL, -1);
 	sakura_workspace_end_mutation();
+	g_free(cwd);
+	g_free(task_id);
+	g_free(group_id);
 }
 
 
@@ -2631,19 +2772,17 @@ sakura_sidebar_context_menu_new (struct sakura_sidebar_node *node)
 		}
 
 		gtk_menu_shell_append(GTK_MENU_SHELL(menu), gtk_separator_menu_item_new());
-		item = gtk_menu_item_new_with_label(_("Rename terminal..."));
-		g_signal_connect_data(item, "activate", G_CALLBACK(sakura_set_name_dialog_cb),
-		                      g_strdup(context_node->tab->terminal_id),
-		                      sakura_sidebar_group_id_data_free, 0);
-		gtk_menu_shell_append(GTK_MENU_SHELL(menu), item);
-		if (context_node->tab != NULL && context_node->tab->kind == SAKURA_TAB_CODEX) {
-			item = gtk_menu_item_new_with_label(_("Rename Codex session..."));
+		if (context_node->tab != NULL &&
+		    context_node->tab->kind == SAKURA_TAB_CODEX) {
+			item = sakura_codex_rename_menu_item_new(context_node->tab);
+		} else {
+			item = gtk_menu_item_new_with_label(_("Rename terminal..."));
 			g_signal_connect_data(item, "activate",
-			                      G_CALLBACK(sakura_rename_codex_session_cb),
+			                      G_CALLBACK(sakura_set_name_dialog_cb),
 			                      g_strdup(context_node->tab->terminal_id),
 			                      sakura_sidebar_group_id_data_free, 0);
-			gtk_menu_shell_append(GTK_MENU_SHELL(menu), item);
 		}
+		gtk_menu_shell_append(GTK_MENU_SHELL(menu), item);
 		if (context_node->tab != NULL && context_node->tab->page != NULL) {
 			item = gtk_menu_item_new_with_label(
 				context_node->tab->page->archived
@@ -2827,6 +2966,65 @@ sakura_sidebar_page_for_drag_node(SakuraSidebarNode *node)
 }
 
 
+static SakuraPage *
+sakura_sidebar_page_for_drop_node(SakuraSidebarNode *node)
+{
+	if (node == NULL)
+		return NULL;
+	if (node->type == SAKURA_SIDEBAR_PAGE)
+		return node->page;
+	if (node->type == SAKURA_SIDEBAR_TERMINAL && node->tab != NULL)
+		return node->tab->page;
+	return NULL;
+}
+
+
+gboolean
+sakura_sidebar_reorder_page_relative(SakuraPage *source, SakuraPage *target,
+                                     GtkTreeViewDropPosition position)
+{
+	SakuraGroup *target_group;
+	SakuraSidebarNode *target_group_node;
+	GtkWidget *child;
+	gint source_index, target_index, destination;
+	gboolean after;
+
+	if (source == NULL || target == NULL || source == target ||
+	    source->active_tab == NULL || target->active_tab == NULL ||
+	    sakura.notebook == NULL)
+		return FALSE;
+	target_group = sakura_workspace_model_group_for_session(sakura.workspace, target);
+	target_group_node = sakura_sidebar_group_node(target_group);
+	if (target_group_node == NULL ||
+	    !sakura_sidebar_move_page_to_group(source, target_group_node))
+		return FALSE;
+
+	source_index = sakura_page_for_tab(source->active_tab);
+	target_index = sakura_page_for_tab(target->active_tab);
+	if (source_index < 0 || target_index < 0)
+		return FALSE;
+	after = position == GTK_TREE_VIEW_DROP_AFTER ||
+	        position == GTK_TREE_VIEW_DROP_INTO_OR_AFTER;
+	/* Compute the insertion point after removing the source from its old
+	 * position. GtkNotebook uses this final zero-based position. */
+	destination = target_index;
+	if (source_index < target_index)
+		destination--;
+	if (after)
+		destination++;
+	child = gtk_notebook_get_nth_page(GTK_NOTEBOOK(sakura.notebook), source_index);
+	if (child == NULL)
+		return FALSE;
+	gtk_notebook_reorder_child(GTK_NOTEBOOK(sakura.notebook), child, destination);
+	sakura_notebook_sync_page_order();
+	sakura_sidebar_rebuild_projection();
+	sakura_workspace_mark_changed(SAKURA_WORKSPACE_CHANGE_STRUCTURE |
+	                              SAKURA_WORKSPACE_CHANGE_SELECTION);
+	sakura_session_mark_dirty();
+	return TRUE;
+}
+
+
 gboolean
 sakura_sidebar_can_reorder_node_to_group(SakuraSidebarNode *source,
                                           SakuraSidebarNode *target)
@@ -2986,8 +3184,14 @@ sakura_sidebar_drag_motion_cb(GtkWidget *widget, GdkDragContext *context,
 	SakuraSidebarNode *source = sakura_sidebar_drag_node(widget);
 	SakuraSidebarNode *raw_target = sakura_sidebar_drop_target_node(
 		widget, x, y, &position);
+	SakuraPage *source_page = sakura_sidebar_page_for_drag_node(source);
+	SakuraPage *target_page = sakura_sidebar_page_for_drop_node(raw_target);
 
 	(void)data;
+	if (source_page != NULL && target_page != NULL && source_page != target_page) {
+		gdk_drag_status(context, GDK_ACTION_MOVE, time);
+		return TRUE;
+	}
 	if (source != NULL && source->type == SAKURA_SIDEBAR_TASK &&
 	    raw_target != NULL && raw_target->type == SAKURA_SIDEBAR_TASK &&
 	    raw_target != source && source->task != NULL && raw_target->task != NULL &&
@@ -3024,6 +3228,83 @@ sakura_sidebar_drag_motion_cb(GtkWidget *widget, GdkDragContext *context,
 }
 
 
+static void
+sakura_sidebar_pending_drop_free(gpointer data)
+{
+	struct sakura_sidebar_pending_drop *pending = data;
+
+	if (pending == NULL)
+		return;
+	g_free(pending->source_id);
+	g_free(pending->target_id);
+	g_free(pending);
+}
+
+
+static gboolean
+sakura_sidebar_pending_drop_idle(gpointer data)
+{
+	struct sakura_sidebar_pending_drop *pending = data;
+	SakuraSidebarNode *source, *target;
+	SakuraPage *source_page, *target_page;
+	SakuraTab *active_tab;
+	gboolean moved = FALSE;
+
+	if (pending == NULL || sakura.session_shutting_down)
+		return G_SOURCE_REMOVE;
+	source = sakura_sidebar_find_node_by_identity(
+		pending->source_type, pending->source_id);
+	target = sakura_sidebar_find_node_by_identity(
+		pending->target_type, pending->target_id);
+	if (source == NULL || target == NULL)
+		goto failed;
+
+	switch (pending->kind) {
+	case SAKURA_SIDEBAR_DROP_PAGE_RELATIVE:
+		source_page = sakura_sidebar_page_for_drag_node(source);
+		target_page = sakura_sidebar_page_for_drop_node(target);
+		active_tab = source_page != NULL ? source_page->active_tab : NULL;
+		moved = sakura_sidebar_reorder_page_relative(
+			source_page, target_page, pending->position);
+		if (moved && sakura.workspace->active_tab == active_tab && active_tab != NULL)
+			sakura_select_tab(active_tab, TRUE);
+		break;
+	case SAKURA_SIDEBAR_DROP_PAGE_TO_GROUP:
+		source_page = sakura_sidebar_page_for_drag_node(source);
+		active_tab = source_page != NULL ? source_page->active_tab : NULL;
+		sakura_workspace_begin_mutation();
+		moved = sakura_sidebar_move_page_to_group(source_page, target);
+		if (moved && sakura.workspace->active_tab == active_tab && active_tab != NULL)
+			sakura_select_tab(active_tab, TRUE);
+		else if (moved)
+			sakura_workspace_mark_changed(SAKURA_WORKSPACE_CHANGE_STRUCTURE);
+		if (moved)
+			sakura_sidebar_save_groups();
+		sakura_workspace_end_mutation();
+		break;
+	case SAKURA_SIDEBAR_DROP_TASK_RELATIVE:
+		moved = sakura_sidebar_reorder_task_to_sibling(
+			source, target, pending->position);
+		break;
+	case SAKURA_SIDEBAR_DROP_GROUP:
+		moved = sakura_sidebar_move_group_to_target(
+			source, target, pending->position);
+		break;
+	case SAKURA_SIDEBAR_DROP_NODE_TO_GROUP:
+		moved = sakura_sidebar_reorder_node_to_group(
+			source, target, pending->position);
+		break;
+	}
+	if (moved)
+		return G_SOURCE_REMOVE;
+
+failed:
+	sakura_sidebar_report_move_failure(
+		_("The workspace changed before the drop could be applied. Please try again."));
+	return G_SOURCE_REMOVE;
+}
+
+
 static gboolean
 sakura_sidebar_drag_drop_cb(GtkWidget *widget, GdkDragContext *context,
                             gint x, gint y, guint time, gpointer data)
@@ -3035,34 +3316,28 @@ sakura_sidebar_drag_drop_cb(GtkWidget *widget, GdkDragContext *context,
 	SakuraSidebarNode *raw_target = sakura_sidebar_drop_target_node(
 		widget, x, y, &position);
 	SakuraPage *page = sakura_sidebar_page_for_drag_node(source);
-	SakuraTab *tab = page != NULL ? page->active_tab : NULL;
+	SakuraPage *target_page = sakura_sidebar_page_for_drop_node(raw_target);
+	struct sakura_sidebar_pending_drop *pending = NULL;
 
 	(void)data;
-	if (source != NULL && source->type == SAKURA_SIDEBAR_TASK &&
-	    raw_target != NULL && raw_target->type == SAKURA_SIDEBAR_TASK &&
-	    sakura_sidebar_reorder_task_to_sibling(source, raw_target, position)) {
-		gtk_drag_finish(context, TRUE, FALSE, time);
-		return TRUE;
+	if (page != NULL && target_page != NULL && page != target_page) {
+		pending = g_new0(struct sakura_sidebar_pending_drop, 1);
+		pending->kind = SAKURA_SIDEBAR_DROP_PAGE_RELATIVE;
+		pending->target_type = raw_target->type;
 	}
-	if (target != NULL && page != NULL) {
-		/* Move the page, not just the terminal child row. This keeps the visible
-		 * page, its panes, and its persisted parent together. */
-		sakura_workspace_begin_mutation();
-		if (sakura_sidebar_move_page_to_group(page, target)) {
-			if (sakura.workspace->active_tab == tab && tab != NULL)
-				sakura_select_tab(tab, TRUE);
-			else
-				sakura_workspace_mark_changed(SAKURA_WORKSPACE_CHANGE_STRUCTURE);
-			sakura_sidebar_save_groups();
-			sakura_workspace_end_mutation();
-			gtk_drag_finish(context, TRUE, FALSE, time);
-			return TRUE;
-		}
-		sakura_workspace_end_mutation();
-		gtk_drag_finish(context, FALSE, FALSE, time);
-		sakura_sidebar_report_move_failure(
-			_("The workspace or sakura-agent rejected the move."));
-		return TRUE;
+	else if (source != NULL && source->type == SAKURA_SIDEBAR_TASK &&
+	    raw_target != NULL && raw_target->type == SAKURA_SIDEBAR_TASK &&
+	    raw_target != source && source->task != NULL && raw_target->task != NULL &&
+	    source->task->group == raw_target->task->group &&
+	    source->task->parent == raw_target->task->parent) {
+		pending = g_new0(struct sakura_sidebar_pending_drop, 1);
+		pending->kind = SAKURA_SIDEBAR_DROP_TASK_RELATIVE;
+		pending->target_type = raw_target->type;
+	}
+	else if (target != NULL && page != NULL) {
+		pending = g_new0(struct sakura_sidebar_pending_drop, 1);
+		pending->kind = SAKURA_SIDEBAR_DROP_PAGE_TO_GROUP;
+		pending->target_type = target->type;
 	}
 	if (target != NULL && source == NULL) {
 		gtk_drag_finish(context, FALSE, FALSE, time);
@@ -3079,23 +3354,32 @@ sakura_sidebar_drag_drop_cb(GtkWidget *widget, GdkDragContext *context,
 	}
 	if (target != NULL && source != NULL &&
 	    source->type == SAKURA_SIDEBAR_GROUP) {
-		if (sakura_sidebar_move_group_to_target(source, target, position)) {
-			gtk_drag_finish(context, TRUE, FALSE, time);
-			return TRUE;
+		if (sakura_sidebar_group_drop_destination(source, target, position,
+		                                          NULL, NULL, NULL)) {
+			pending = g_new0(struct sakura_sidebar_pending_drop, 1);
+			pending->kind = SAKURA_SIDEBAR_DROP_GROUP;
+			pending->target_type = target->type;
 		}
-		gtk_drag_finish(context, FALSE, FALSE, time);
-		sakura_sidebar_report_move_failure(
-			_("The group could not be moved there. The workspace rejected the change."));
-		return TRUE;
 	}
-	if (target != NULL && sakura_sidebar_can_reorder_node_to_group(source, target)) {
-		if (sakura_sidebar_reorder_node_to_group(source, target, position)) {
-			gtk_drag_finish(context, TRUE, FALSE, time);
-			return TRUE;
-		}
-		gtk_drag_finish(context, FALSE, FALSE, time);
-		sakura_sidebar_report_move_failure(
-			_("The item could not be moved there. The workspace rejected the change."));
+	else if (target != NULL &&
+	         sakura_sidebar_can_reorder_node_to_group(source, target)) {
+		pending = g_new0(struct sakura_sidebar_pending_drop, 1);
+		pending->kind = SAKURA_SIDEBAR_DROP_NODE_TO_GROUP;
+		pending->target_type = target->type;
+	}
+	if (pending != NULL) {
+		pending->source_type = source->type;
+		pending->source_id = g_strdup(source->id);
+		pending->target_id = g_strdup(
+			pending->kind == SAKURA_SIDEBAR_DROP_PAGE_RELATIVE
+			? raw_target->id : target != NULL ? target->id : raw_target->id);
+		pending->position = position;
+		/* GTK still owns its drag source/destination paths here. Finish the
+		 * event first; the idle callback resolves fresh rows by stable ID. */
+		gtk_drag_finish(context, TRUE, FALSE, time);
+		g_idle_add_full(G_PRIORITY_DEFAULT_IDLE,
+		                sakura_sidebar_pending_drop_idle, pending,
+		                sakura_sidebar_pending_drop_free);
 		return TRUE;
 	}
 	gdk_drag_status(context, 0, time);
@@ -3220,6 +3504,8 @@ sakura_sidebar_button_press_cb (GtkWidget *widget, GdkEventButton *event, void *
 	struct sakura_sidebar_node *node;
 	gboolean expander_click;
 
+	sakura.last_user_interaction_us = g_get_monotonic_time();
+
 	/* GTK starts a drag before its default selection handling necessarily runs.
 	 * Capture the row under the pointer so drag-begin cannot reuse a previously
 	 * selected page or task when the user drags an unselected group. */
@@ -3233,6 +3519,8 @@ sakura_sidebar_button_press_cb (GtkWidget *widget, GdkEventButton *event, void *
 				node = NULL;
 			expander_click = sakura_sidebar_event_is_expander(
 				GTK_TREE_VIEW(widget), path, column, (gint)event->x);
+			if (!expander_click && event->type == GDK_BUTTON_PRESS)
+				sakura_sidebar_primary_click(node);
 			if (!expander_click)
 				g_object_set_data_full(
 					G_OBJECT(widget), "sakura-sidebar-drag-node",
@@ -4431,13 +4719,33 @@ static gboolean
 sakura_workspace_restore_should_defer(const gchar *page_id,
                                        const gchar *terminal_id)
 {
+	const gchar *selected_page_id = NULL;
+
 	if (!sakura.session_restoring)
 		return FALSE;
-	if (sakura.session_snapshot != NULL &&
-	    sakura.session_snapshot->selected_page_id != NULL &&
-	    sakura.session_snapshot->selected_page_id[0] != '\0' &&
+	if (sakura.session_snapshot != NULL) {
+		selected_page_id = sakura.session_snapshot->selected_page_id;
+		/* Older layout snapshots did not always persist selected_page_id.
+		 * Their selected terminal is also the active terminal of its page, so
+		 * recover the page identity before deciding which whole layout to defer. */
+		if ((selected_page_id == NULL || selected_page_id[0] == '\0') &&
+		    sakura.session_snapshot->selected_terminal_id != NULL &&
+		    sakura.session_snapshot->pages != NULL) {
+			for (guint index = 0;
+			     index < sakura.session_snapshot->pages->len; index++) {
+				SakuraSessionPageRecord *record = g_ptr_array_index(
+					sakura.session_snapshot->pages, index);
+				if (g_strcmp0(record->active_terminal_id,
+				              sakura.session_snapshot->selected_terminal_id) == 0) {
+					selected_page_id = record->id;
+					break;
+				}
+			}
+		}
+	}
+	if (selected_page_id != NULL && selected_page_id[0] != '\0' &&
 	    page_id != NULL && page_id[0] != '\0')
-		return g_strcmp0(page_id, sakura.session_snapshot->selected_page_id) != 0;
+		return g_strcmp0(page_id, selected_page_id) != 0;
 	if (sakura.session_snapshot != NULL &&
 	    sakura.session_snapshot->selected_terminal_id != NULL &&
 	    sakura.session_snapshot->selected_terminal_id[0] != '\0' &&
@@ -4524,6 +4832,9 @@ sakura_workspace_restore_layout_subtree(SakuraPage *page,
 	config.split_direction = record->direction;
 	config.defer_process_start = sakura_workspace_restore_should_defer(
 		page->id, second_tab_record->terminal_id);
+	config.order = second_tab_record->order;
+	config.has_order = TRUE;
+	config.codex_tracking_token = second_tab_record->codex_tracking_token;
 	parent = sakura_sidebar_find_container_by_id(second_tab_record->parent_id);
 		sakura_tab_add_with_options(second_tab_record->cwd, parent,
 		                            second_tab_record->title,
@@ -4601,6 +4912,9 @@ sakura_workspace_restore_layout_snapshot(SakuraSessionSnapshot *snapshot)
 		parent = sakura_workspace_restore_page_parent(page_record, tab_record);
 		config.defer_process_start = sakura_workspace_restore_should_defer(
 			page_record->id, tab_record->terminal_id);
+		config.order = tab_record->order;
+		config.has_order = TRUE;
+		config.codex_tracking_token = tab_record->codex_tracking_token;
 		sakura_tab_add_with_options(tab_record->cwd, parent,
 		                            tab_record->title,
 		                            tab_record->title_set_by_user,
@@ -4755,6 +5069,9 @@ sakura_workspace_restore_snapshot (SakuraSessionSnapshot *snapshot)
 		}
 		config.defer_process_start = sakura_workspace_restore_should_defer(
 			NULL, record->terminal_id);
+		config.order = record->order;
+		config.has_order = TRUE;
+		config.codex_tracking_token = record->codex_tracking_token;
 		sakura_workspace_begin_mutation();
 		sakura_tab_add_with_options(cwd, parent, title_set ? record->title : NULL,
 		                            title_set, tab_kind, tool_kind,
@@ -4813,6 +5130,7 @@ typedef struct {
 	gpointer callback_data;
 	GHashTable *layout_records;
 	GHashTable *tab_records;
+	GArray *restore_order;
 	gboolean restore_layout;
 	gboolean failed;
 	gboolean previous_show_archived;
@@ -4822,6 +5140,25 @@ typedef struct {
 } SakuraWorkspaceRestoreJob;
 
 static SakuraWorkspaceRestoreJob *sakura_workspace_restore_job;
+static gboolean sakura_workspace_restore_job_step(gpointer data);
+
+#define SAKURA_RESTORE_INPUT_GRACE_US (120 * 1000)
+
+
+static void
+sakura_workspace_restore_job_schedule(SakuraWorkspaceRestoreJob *job,
+                                      guint delay_ms)
+{
+	if (job == NULL || job->source_id != 0)
+		return;
+	if (delay_ms > 0)
+		job->source_id = g_timeout_add_full(
+			G_PRIORITY_LOW, delay_ms, sakura_workspace_restore_job_step,
+			job, NULL);
+	else
+		job->source_id = g_idle_add_full(
+			G_PRIORITY_LOW, sakura_workspace_restore_job_step, job, NULL);
+}
 
 
 static void
@@ -4835,13 +5172,15 @@ sakura_workspace_restore_job_free(SakuraWorkspaceRestoreJob *job)
 	}
 	g_clear_pointer(&job->layout_records, g_hash_table_destroy);
 	g_clear_pointer(&job->tab_records, g_hash_table_destroy);
+	g_clear_pointer(&job->restore_order, g_array_unref);
 	g_free(job);
 }
 
 
 static gboolean
 sakura_workspace_restore_layout_page(SakuraWorkspaceRestoreJob *job,
-                                      SakuraSessionPageRecord *page_record)
+                                      SakuraSessionPageRecord *page_record,
+                                      guint saved_index)
 {
 	SakuraSessionLayoutRecord *root;
 	SakuraSessionLayoutRecord *root_leaf;
@@ -4864,6 +5203,9 @@ sakura_workspace_restore_layout_page(SakuraWorkspaceRestoreJob *job,
 	parent = sakura_workspace_restore_page_parent(page_record, tab_record);
 	config.defer_process_start = sakura_workspace_restore_should_defer(
 		page_record->id, tab_record->terminal_id);
+	config.order = tab_record->order;
+	config.has_order = TRUE;
+	config.codex_tracking_token = tab_record->codex_tracking_token;
 	sakura_tab_add_with_options(tab_record->cwd, parent,
 	                            tab_record->title,
 	                            tab_record->title_set_by_user,
@@ -4878,6 +5220,11 @@ sakura_workspace_restore_layout_page(SakuraWorkspaceRestoreJob *job,
 	tab = sakura_find_pane_by_terminal_id(tab_record->terminal_id);
 	if (tab == NULL || tab->page == NULL)
 		return FALSE;
+	/* The selected page is deliberately materialized first. Put every page at
+	 * its persisted notebook position as it arrives so that prioritization does
+	 * not become a visible or persisted reorder. */
+	gtk_notebook_reorder_child(GTK_NOTEBOOK(sakura.notebook),
+	                           tab->page->container, (gint)saved_index);
 	sakura_workspace_restore_tab_state(tab, tab_record);
 	g_free(tab->page->id);
 	tab->page->id = g_strdup(page_record->id);
@@ -4900,7 +5247,8 @@ sakura_workspace_restore_layout_page(SakuraWorkspaceRestoreJob *job,
 
 static gboolean
 sakura_workspace_restore_tab_record(SakuraWorkspaceRestoreJob *job,
-                                     SakuraSessionTabRecord *record)
+                                     SakuraSessionTabRecord *record,
+                                     guint saved_index)
 {
 	SakuraSidebarNode *parent;
 	SakuraTabKind tab_kind;
@@ -4933,6 +5281,9 @@ sakura_workspace_restore_tab_record(SakuraWorkspaceRestoreJob *job,
 	}
 	config.defer_process_start = sakura_workspace_restore_should_defer(
 		NULL, record->terminal_id);
+	config.order = record->order;
+	config.has_order = TRUE;
+	config.codex_tracking_token = record->codex_tracking_token;
 	sakura_workspace_begin_mutation();
 	sakura_tab_add_with_options(cwd, parent, title_set ? record->title : NULL,
 	                            title_set, tab_kind, tool_kind,
@@ -4949,8 +5300,12 @@ sakura_workspace_restore_tab_record(SakuraWorkspaceRestoreJob *job,
 	                            record->colorset, &config);
 	sakura_workspace_end_mutation();
 	restored_tab = sakura_find_pane_by_terminal_id(record->terminal_id);
-	if (restored_tab != NULL)
+	if (restored_tab != NULL) {
+		gtk_notebook_reorder_child(GTK_NOTEBOOK(sakura.notebook),
+		                           restored_tab->page->container,
+		                           (gint)saved_index);
 		sakura_workspace_restore_tab_state(restored_tab, record);
+	}
 	g_free(cwd);
 	if (restored_tab == NULL)
 		return FALSE;
@@ -5049,25 +5404,47 @@ sakura_workspace_restore_job_step(gpointer data)
 	SakuraWorkspaceRestoreJob *job = data;
 	SakuraSessionSnapshot *snapshot;
 	gboolean step_success;
+	gint64 trace_started;
+	gint64 now;
+	guint restore_index;
 
-	if (job == NULL || sakura.session_shutting_down)
+	if (job == NULL)
 		return G_SOURCE_REMOVE;
-	snapshot = job->snapshot;
-	if (job->restore_layout) {
-		if (job->index >= snapshot->pages->len) {
-			sakura_workspace_restore_job_finalize(job, TRUE);
-			return G_SOURCE_REMOVE;
-		}
-		step_success = sakura_workspace_restore_layout_page(job,
-			g_ptr_array_index(snapshot->pages, job->index));
-	} else {
-		if (job->index >= snapshot->tabs->len) {
-			sakura_workspace_restore_job_finalize(job, TRUE);
-			return G_SOURCE_REMOVE;
-		}
-		step_success = sakura_workspace_restore_tab_record(job,
-			g_ptr_array_index(snapshot->tabs, job->index));
+	job->source_id = 0;
+	if (sakura.session_shutting_down)
+		return G_SOURCE_REMOVE;
+	now = g_get_monotonic_time();
+	if (sakura.last_user_interaction_us != 0 &&
+	    now - sakura.last_user_interaction_us < SAKURA_RESTORE_INPUT_GRACE_US) {
+		gint64 remaining_us = SAKURA_RESTORE_INPUT_GRACE_US -
+		                      (now - sakura.last_user_interaction_us);
+		sakura_workspace_restore_job_schedule(
+			job, (guint)MAX(1, (remaining_us + 999) / 1000));
+		return G_SOURCE_REMOVE;
 	}
+	snapshot = job->snapshot;
+	trace_started = sakura_ui_latency_trace_begin();
+	if (job->restore_layout) {
+		if (job->index >= job->restore_order->len) {
+			sakura_workspace_restore_job_finalize(job, TRUE);
+			return G_SOURCE_REMOVE;
+		}
+		restore_index = g_array_index(job->restore_order, guint, job->index);
+		step_success = sakura_workspace_restore_layout_page(job,
+			g_ptr_array_index(snapshot->pages, restore_index), restore_index);
+	} else {
+		if (job->index >= job->restore_order->len) {
+			sakura_workspace_restore_job_finalize(job, TRUE);
+			return G_SOURCE_REMOVE;
+		}
+		restore_index = g_array_index(job->restore_order, guint, job->index);
+		step_success = sakura_workspace_restore_tab_record(job,
+			g_ptr_array_index(snapshot->tabs, restore_index), restore_index);
+	}
+	sakura_ui_latency_trace_end(
+		job->index == 0 ? "workspace-restore-selected" :
+		                  "workspace-restore-background",
+		trace_started);
 	if (!step_success) {
 		job->failed = TRUE;
 		sakura_workspace_restore_job_finalize(job, FALSE);
@@ -5076,7 +5453,8 @@ sakura_workspace_restore_job_step(gpointer data)
 	if (job->restore_layout)
 		job->restored++;
 	job->index++;
-	return G_SOURCE_CONTINUE;
+	sakura_workspace_restore_job_schedule(job, 0);
+	return G_SOURCE_REMOVE;
 }
 
 
@@ -5100,6 +5478,7 @@ sakura_workspace_restore_snapshot_async(
 	sakura.show_archived = TRUE;
 	job->layout_records = g_hash_table_new(g_str_hash, g_str_equal);
 	job->tab_records = g_hash_table_new(g_str_hash, g_str_equal);
+	job->restore_order = g_array_new(FALSE, FALSE, sizeof(guint));
 	if (snapshot->layouts != NULL) {
 		for (guint index = 0; index < snapshot->layouts->len; index++) {
 			SakuraSessionLayoutRecord *record =
@@ -5112,8 +5491,44 @@ sakura_workspace_restore_snapshot_async(
 			g_ptr_array_index(snapshot->tabs, index);
 		g_hash_table_insert(job->tab_records, record->terminal_id, record);
 	}
+	{
+		GPtrArray *records = job->restore_layout ? snapshot->pages : snapshot->tabs;
+		gint selected_index = -1;
+
+		for (guint index = 0; index < records->len; index++) {
+			if (job->restore_layout) {
+				SakuraSessionPageRecord *record = g_ptr_array_index(records, index);
+				if (g_strcmp0(record->id, snapshot->selected_page_id) == 0 ||
+				    ((snapshot->selected_page_id == NULL ||
+				      snapshot->selected_page_id[0] == '\0') &&
+				     g_strcmp0(record->active_terminal_id,
+				               snapshot->selected_terminal_id) == 0)) {
+					selected_index = (gint)index;
+					break;
+				}
+			} else {
+				SakuraSessionTabRecord *record = g_ptr_array_index(records, index);
+				if (g_strcmp0(record->terminal_id,
+				              snapshot->selected_terminal_id) == 0 ||
+				    (snapshot->selected_terminal_id == NULL &&
+				     snapshot->selected_terminal == (gint)index)) {
+					selected_index = (gint)index;
+					break;
+				}
+			}
+		}
+		if (selected_index >= 0) {
+			guint value = (guint)selected_index;
+			g_array_append_val(job->restore_order, value);
+		}
+		for (guint index = 0; index < records->len; index++) {
+			guint value = index;
+			if ((gint)index != selected_index)
+				g_array_append_val(job->restore_order, value);
+		}
+	}
 	sakura_workspace_restore_job = job;
-	job->source_id = g_idle_add(sakura_workspace_restore_job_step, job);
+	sakura_workspace_restore_job_schedule(job, 0);
 	return TRUE;
 }
 
@@ -5158,6 +5573,7 @@ sakura_sidebar_toggle_cb (GtkWidget *widget, void *data)
 	sakura.sidebar_visible = gtk_check_menu_item_get_active(GTK_CHECK_MENU_ITEM(widget));
 	if (sakura.sidebar != NULL)
 		gtk_widget_set_visible(sakura.sidebar, sakura.sidebar_visible);
+	sakura_sidebar_update_spinner_timer();
 	sakura_workspace_set_boolean("sidebar_visible", sakura.sidebar_visible);
 	sakura_session_mark_dirty();
 }
@@ -5356,9 +5772,16 @@ sakura_sidebar_init (gboolean restore_session)
 	gtk_tree_view_column_add_attribute(column, status_renderer, "visible",
 	                                  SAKURA_SIDEBAR_COLUMN_STATUS_MARKER_VISIBLE);
 	gtk_tree_view_column_pack_start(column, spinner_renderer, FALSE);
-	gtk_tree_view_column_add_attribute(column, spinner_renderer, "active", SAKURA_SIDEBAR_COLUMN_STATUS_ACTIVE);
-	gtk_tree_view_column_add_attribute(column, spinner_renderer, "visible", SAKURA_SIDEBAR_COLUMN_STATUS_ACTIVE);
-	gtk_tree_view_column_add_attribute(column, spinner_renderer, "pulse", SAKURA_SIDEBAR_COLUMN_STATUS_PULSE);
+	gtk_tree_view_column_add_attribute(column, spinner_renderer, "active",
+	                                  SAKURA_SIDEBAR_COLUMN_STATUS_ACTIVE);
+	gtk_tree_view_column_add_attribute(column, spinner_renderer, "visible",
+	                                  SAKURA_SIDEBAR_COLUMN_STATUS_ACTIVE);
+	gtk_tree_view_column_set_cell_data_func(
+		column, spinner_renderer,
+		(GtkTreeCellDataFunc)sakura_sidebar_spinner_cell_data_cb,
+		NULL, NULL);
+	sakura.sidebar_status_column = column;
+	sakura.sidebar_spinner_renderer = spinner_renderer;
 	gtk_tree_view_column_pack_start(column, text_renderer, TRUE);
 	gtk_tree_view_column_add_attribute(column, text_renderer, "markup", SAKURA_SIDEBAR_COLUMN_MARKUP);
 	gtk_tree_view_append_column(GTK_TREE_VIEW(sakura.sidebar_tree), column);
@@ -5425,6 +5848,8 @@ sakura_sidebar_init (gboolean restore_session)
 	gtk_box_pack_start(GTK_BOX(sidebar_box), toolbar, FALSE, FALSE, 0);
 	gtk_box_pack_start(GTK_BOX(sidebar_box), scrolled, TRUE, TRUE, 0);
 	sakura.sidebar = sidebar_box;
+	g_signal_connect(sidebar_box, "map", G_CALLBACK(sakura_sidebar_map_cb), NULL);
+	g_signal_connect(sidebar_box, "unmap", G_CALLBACK(sakura_sidebar_unmap_cb), NULL);
 
 	sakura.sidebar_root = g_new0(struct sakura_sidebar_node, 1);
 	sakura_workspace_model_set_root(sakura.workspace,
@@ -5586,9 +6011,161 @@ sakura_sidebar_init (gboolean restore_session)
 	if (!sakura.sidebar_visible)
 		gtk_widget_hide(sakura.sidebar);
 	sakura_tab_bar_refresh();
-	sakura.sidebar_spinner_source_id = g_timeout_add(100,
-	                                                 sakura_sidebar_spinner_pulse_cb,
-	                                                 NULL);
+}
+
+
+static void
+sakura_sidebar_spinner_cell_data_cb(GtkTreeViewColumn *column,
+	                                  GtkCellRenderer *renderer,
+	                                  GtkTreeModel *model,
+	                                  GtkTreeIter *iter,
+	                                  gpointer data)
+{
+	(void)column;
+	(void)model;
+	(void)iter;
+	(void)data;
+	g_object_set(renderer, "pulse", sakura.sidebar_spinner_pulse, NULL);
+}
+
+
+static gboolean
+sakura_sidebar_model_has_running(GtkTreeModel *model, GtkTreeIter *parent)
+{
+	GtkTreeIter iter;
+	gboolean valid;
+
+	valid = parent == NULL ? gtk_tree_model_get_iter_first(model, &iter)
+	                       : gtk_tree_model_iter_children(model, &iter, parent);
+	while (valid) {
+		gboolean active = FALSE;
+		gtk_tree_model_get(model, &iter,
+		                   SAKURA_SIDEBAR_COLUMN_STATUS_ACTIVE, &active, -1);
+		if (active || (gtk_tree_model_iter_has_child(model, &iter) &&
+		               sakura_sidebar_model_has_running(model, &iter)))
+			return TRUE;
+		valid = gtk_tree_model_iter_next(model, &iter);
+	}
+	return FALSE;
+}
+
+
+struct sakura_sidebar_spinner_redraw {
+	GtkTreeView *tree;
+	GtkTreePath *start;
+	GtkTreePath *end;
+	GdkRectangle visible;
+};
+
+
+static gboolean
+sakura_sidebar_redraw_running_row(GtkTreeModel *model, GtkTreePath *path,
+	                                GtkTreeIter *iter, gpointer data)
+{
+	struct sakura_sidebar_spinner_redraw *redraw = data;
+	gboolean active = FALSE;
+	GdkRectangle area;
+	gint renderer_x = 0, renderer_width = 0;
+	gint widget_x, widget_y;
+
+	if (gtk_tree_path_compare(path, redraw->start) < 0 ||
+	    gtk_tree_path_compare(path, redraw->end) > 0)
+		return FALSE;
+	gtk_tree_model_get(model, iter,
+	                   SAKURA_SIDEBAR_COLUMN_STATUS_ACTIVE, &active, -1);
+	if (active) {
+		gtk_tree_view_get_cell_area(redraw->tree, path, NULL, &area);
+		if (area.y + area.height <= redraw->visible.y ||
+		    area.y >= redraw->visible.y + redraw->visible.height)
+			return FALSE;
+		if (sakura.sidebar_status_column != NULL &&
+		    sakura.sidebar_spinner_renderer != NULL &&
+		    gtk_tree_view_column_cell_get_position(
+			    sakura.sidebar_status_column,
+			    sakura.sidebar_spinner_renderer,
+			    &renderer_x, &renderer_width) && renderer_width > 0) {
+			area.x += renderer_x;
+			area.width = renderer_width;
+		}
+		gtk_tree_view_convert_tree_to_widget_coords(
+			redraw->tree, area.x, area.y, &widget_x, &widget_y);
+		gtk_widget_queue_draw_area(GTK_WIDGET(redraw->tree),
+		                           widget_x, widget_y, area.width, area.height);
+	}
+	return FALSE;
+}
+
+
+gboolean
+sakura_sidebar_spinner_pulse_cb(gpointer data)
+{
+	GtkTreeModel *model;
+	GtkTreePath *start = NULL, *end = NULL;
+	struct sakura_sidebar_spinner_redraw redraw;
+
+	(void)data;
+	if (sakura.session_shutting_down || sakura.sidebar_model == NULL ||
+	    sakura.sidebar_tree == NULL || sakura.sidebar == NULL ||
+	    !gtk_widget_get_mapped(sakura.sidebar)) {
+		sakura.sidebar_spinner_source_id = 0;
+		return G_SOURCE_REMOVE;
+	}
+	model = GTK_TREE_MODEL(sakura.sidebar_model);
+	if (!sakura_sidebar_model_has_running(model, NULL)) {
+		sakura.sidebar_spinner_source_id = 0;
+		return G_SOURCE_REMOVE;
+	}
+	sakura.sidebar_spinner_pulse++;
+	if (gtk_tree_view_get_visible_range(GTK_TREE_VIEW(sakura.sidebar_tree),
+	                                    &start, &end)) {
+		redraw.tree = GTK_TREE_VIEW(sakura.sidebar_tree);
+		redraw.start = start;
+		redraw.end = end;
+		gtk_tree_view_get_visible_rect(redraw.tree, &redraw.visible);
+		gtk_tree_model_foreach(model, sakura_sidebar_redraw_running_row, &redraw);
+		gtk_tree_path_free(start);
+		gtk_tree_path_free(end);
+	}
+	return G_SOURCE_CONTINUE;
+}
+
+
+void
+sakura_sidebar_spinner_stop(void)
+{
+	if (sakura.sidebar_spinner_source_id != 0) {
+		g_source_remove(sakura.sidebar_spinner_source_id);
+		sakura.sidebar_spinner_source_id = 0;
+	}
+}
+
+
+static void
+sakura_sidebar_update_spinner_timer(void)
+{
+	if (sakura.sidebar_spinner_source_id == 0 && sakura.sidebar_model != NULL &&
+	    sakura.sidebar != NULL && gtk_widget_get_mapped(sakura.sidebar) &&
+	    sakura_sidebar_model_has_running(GTK_TREE_MODEL(sakura.sidebar_model), NULL))
+		sakura.sidebar_spinner_source_id = g_timeout_add(
+			160, sakura_sidebar_spinner_pulse_cb, NULL);
+}
+
+
+static void
+sakura_sidebar_map_cb(GtkWidget *widget, gpointer data)
+{
+	(void)widget;
+	(void)data;
+	sakura_sidebar_update_spinner_timer();
+}
+
+
+static void
+sakura_sidebar_unmap_cb(GtkWidget *widget, gpointer data)
+{
+	(void)widget;
+	(void)data;
+	sakura_sidebar_spinner_stop();
 }
 
 
@@ -5702,52 +6279,6 @@ sakura_cwd_tracking_poll_cb (gpointer data)
 	return G_SOURCE_CONTINUE;
 }
 
-
-
-static void
-sakura_sidebar_pulse_rows(GtkTreeModel *model, GtkTreeIter *parent)
-{
-	GtkTreeIter iter;
-	gboolean valid;
-
-	valid = parent == NULL
-	      ? gtk_tree_model_get_iter_first(model, &iter)
-	      : gtk_tree_model_iter_children(model, &iter, parent);
-	while (valid) {
-		gboolean active;
-
-		gtk_tree_model_get(model, &iter,
-		                   SAKURA_SIDEBAR_COLUMN_STATUS_ACTIVE, &active,
-		                   -1);
-		if (active)
-			gtk_tree_store_set(sakura.sidebar_model, &iter,
-			                   SAKURA_SIDEBAR_COLUMN_STATUS_PULSE,
-			                   sakura.sidebar_spinner_pulse,
-			                   -1);
-		if (gtk_tree_model_iter_has_child(model, &iter))
-			sakura_sidebar_pulse_rows(model, &iter);
-		valid = gtk_tree_model_iter_next(model, &iter);
-	}
-}
-
-
-gboolean
-sakura_sidebar_spinner_pulse_cb(gpointer data)
-{
-	GtkTreeModel *model;
-
-	(void)data;
-	if (sakura.session_shutting_down || sakura.sidebar_model == NULL) {
-		sakura.sidebar_spinner_source_id = 0;
-		return G_SOURCE_REMOVE;
-	}
-
-	sakura.sidebar_spinner_pulse++;
-	model = GTK_TREE_MODEL(sakura.sidebar_model);
-	sakura_sidebar_pulse_rows(model, NULL);
-
-	return G_SOURCE_CONTINUE;
-}
 
 
 static SakuraTabStatus
@@ -5935,11 +6466,11 @@ sakura_sidebar_set_node_row(SakuraSidebarNode *node, GtkTreeIter *iter)
 	                   SAKURA_SIDEBAR_COLUMN_STATUS_MARKER_VISIBLE,
 	                   status_marker_visible,
 	                   SAKURA_SIDEBAR_COLUMN_STATUS_ACTIVE, status_running,
-	                   SAKURA_SIDEBAR_COLUMN_STATUS_PULSE,
-	                   status_running ? sakura.sidebar_spinner_pulse : 0,
+	                   SAKURA_SIDEBAR_COLUMN_STATUS_PULSE, 0,
 	                   SAKURA_SIDEBAR_COLUMN_TOOLTIP, tooltip_markup,
 	                   SAKURA_SIDEBAR_COLUMN_NODE, node,
 	                   -1);
+	sakura_sidebar_update_spinner_timer();
 
 	g_free(escaped_title);
 	g_free(escaped_subtitle);
@@ -6759,9 +7290,11 @@ sakura_sidebar_rebuild_projection(void)
 	GList *group_link;
 	gboolean was_syncing;
 	guint index, remaining, pass;
+	gint64 trace_started;
 
 	if (sakura.sidebar_model == NULL)
 		return;
+	trace_started = sakura_ui_latency_trace_begin();
 	sakura_sidebar_ensure_expansion_state();
 	if (!sakura.sidebar_expansion_initialized && sakura.session_snapshot != NULL &&
 	    sakura.session_snapshot->sidebar_expansion_saved) {
@@ -7013,6 +7546,7 @@ sakura_sidebar_rebuild_projection(void)
 	}
 	sakura.sidebar_syncing = was_syncing;
 	g_free(selected_id);
+	sakura_ui_latency_trace_end("sidebar-projection", trace_started);
 }
 
 

@@ -49,7 +49,7 @@ TERMINAL_TITLES = [f"Stress terminal {index:02d}"
 CODEX_TERMINAL_INDEX = 3
 CODEX_SESSION_ID = "stress-codex-session"
 SELECTED_TERMINAL_INDEX = 3
-CURRENT_SESSION_VERSION = 10
+CURRENT_SESSION_VERSION = 11
 
 
 def workspace_state_file(session_file):
@@ -692,7 +692,11 @@ def start_xvfb():
     process = subprocess.Popen(
         ["Xvfb", "-displayfd", str(write_fd), "-screen", "0", "1600x1000x24",
          "-nolisten", "tcp"],
-        pass_fds=(write_fd,), stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
+        # Xvfb launches xkbcomp repeatedly as clients connect. Leaving stderr
+        # on an unread pipe eventually fills it and deadlocks Xvfb in wait(),
+        # making unrelated xdotool/Xlib calls appear to hang.
+        pass_fds=(write_fd,), stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
         text=True,
     )
     os.close(write_fd)
@@ -701,46 +705,62 @@ def start_xvfb():
     finally:
         os.close(read_fd)
     if not display:
-        error = process.stderr.read() if process.stderr else ""
         process.terminate()
-        raise RuntimeError(f"Xvfb did not provide a display: {error}")
+        raise RuntimeError("Xvfb did not provide a display")
     return process, f":{display}"
 
 
-def find_window(env, timeout=10):
+def find_window(env, process=None, timeout=10):
+    if x11_display is None:
+        raise RuntimeError("python-xlib is required for X11 window discovery")
     deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        result = run(["xdotool", "search", "--onlyvisible", "--class", "sakura"],
-                     env, timeout=2, check=False)
-        windows = [line for line in result.stdout.splitlines() if line.strip()]
-        if windows:
-            # Sakura also creates a small fade window with the same class.
-            # Select the largest visible class window, which is the terminal.
-            candidates = []
-            for window in windows:
-                geometry = run(["xdotool", "getwindowgeometry", "--shell", window],
-                               env, timeout=2, check=False).stdout
-                values = {}
-                for line in geometry.splitlines():
-                    if "=" in line:
-                        key, value = line.split("=", 1)
-                        try:
-                            values[key] = int(value)
-                        except ValueError:
-                            pass
-                candidates.append((values.get("WIDTH", 0) * values.get("HEIGHT", 0),
-                                   window))
-            return max(candidates)[1]
-        time.sleep(0.1)
-    window_ids = run(["xdotool", "search", "--onlyvisible", "--name", ".*"],
-                     env, timeout=2, check=False).stdout.splitlines()
-    names = []
-    for window_id in window_ids:
-        name = run(["xdotool", "getwindowname", window_id], env,
-                   timeout=2, check=False).stdout.strip()
-        names.append(f"{window_id}={name}")
-    raise RuntimeError("Sakura window did not appear; visible windows: "
-                       f"{', '.join(names) or '(none)'}")
+    display = x11_display.Display(env["DISPLAY"])
+    pid_atom = display.intern_atom("_NET_WM_PID")
+
+    def candidates():
+        pending = list(display.screen().root.query_tree().children)
+        found = []
+        while pending:
+            window = pending.pop()
+            try:
+                pending.extend(window.query_tree().children)
+                attributes = window.get_attributes()
+                if attributes.map_state != X11.IsViewable:
+                    continue
+                wm_class = window.get_wm_class() or ()
+                pid_property = window.get_full_property(pid_atom,
+                                                        X11.AnyPropertyType)
+                window_pid = (int(pid_property.value[0])
+                              if pid_property is not None and
+                              len(pid_property.value) else None)
+                pid_matches = (process is not None and
+                               not env.get("SAKURA_STRESS_LAUNCHER") and
+                               window_pid == process.pid)
+                class_matches = any(value.lower() == "sakura"
+                                    for value in wm_class)
+                if not (pid_matches or
+                        (env.get("SAKURA_STRESS_LAUNCHER") and class_matches)):
+                    continue
+                geometry = window.get_geometry()
+                found.append((geometry.width * geometry.height,
+                              str(window.id)))
+            except Exception:
+                continue
+        return found
+
+    try:
+        while time.monotonic() < deadline:
+            display.sync()
+            windows = candidates()
+            if windows:
+                return max(windows)[1]
+            if process is not None and process.poll() is not None:
+                raise RuntimeError(
+                    f"Sakura exited before its window appeared: {process.returncode}")
+            time.sleep(0.1)
+    finally:
+        display.close()
+    raise RuntimeError("Sakura window did not appear")
 
 
 def window_geometry(window, env):
@@ -1433,7 +1453,7 @@ def launch_sakura(binary, config_file, env, log_file):
         env=env, stdout=log_handle, stderr=subprocess.STDOUT,
     )
     log_handle.close()
-    return process, find_window(env)
+    return process, find_window(env, process)
 
 
 def run_failed_restore_case(binary, config_file, session_file, env, log_file):

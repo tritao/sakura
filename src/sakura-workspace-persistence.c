@@ -362,6 +362,8 @@ sakura_workspace_model_snapshot_new(const SakuraWorkspaceModel *model,
 		record->cwd = g_strdup(tab->cwd != NULL ? tab->cwd : "");
 		record->terminal_id = g_strdup(tab->terminal_id != NULL
 		                              ? tab->terminal_id : "");
+		record->page_id = g_strdup(tab->page != NULL ? tab->page->id : NULL);
+		record->order = index;
 		record->kind = tab->kind;
 		record->tool_id = tab->kind == SAKURA_TAB_TOOL
 		               ? g_strdup(sakura_tool_id(tab->tool)) : NULL;

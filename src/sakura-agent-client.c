@@ -137,6 +137,18 @@ typedef struct {
 	gboolean output;
 } SakuraAgentTerminalEvent;
 
+
+static void
+sakura_agent_terminal_event_free(SakuraAgentTerminalEvent *event)
+{
+	if (event == NULL)
+		return;
+	g_free(event->terminal_id);
+	g_free(event->data);
+	g_free(event->message);
+	g_free(event);
+}
+
 typedef enum {
 	SAKURA_AGENT_COMMAND_INPUT,
 	SAKURA_AGENT_COMMAND_RESIZE,
@@ -610,10 +622,9 @@ sakura_agent_apply_event_cb(gpointer data)
 }
 
 
-static gboolean
-sakura_agent_apply_terminal_event_cb(gpointer data)
+static void
+sakura_agent_apply_terminal_event(SakuraAgentTerminalEvent *event)
 {
-	SakuraAgentTerminalEvent *event = data;
 	SakuraTab *tab = NULL;
 
 	if (event->app != NULL && !event->app->session_shutting_down &&
@@ -627,11 +638,86 @@ sakura_agent_apply_terminal_event_cb(gpointer data)
 		else
 			sakura_tab_agent_status(tab, event->status, event->message);
 	}
-	g_free(event->terminal_id);
-	g_free(event->data);
-	g_free(event->message);
-	g_free(event);
+}
+
+
+static gboolean
+sakura_agent_flush_terminal_events_cb(gpointer data)
+{
+	SakuraApp *app = data;
+	GQueue events = G_QUEUE_INIT;
+	SakuraAgentTerminalEvent *pending = NULL;
+	gint64 trace_started;
+
+	if (app == NULL || !app->agent_event_mutex_initialized)
+		return G_SOURCE_REMOVE;
+	trace_started = sakura_ui_latency_trace_begin();
+	g_mutex_lock(&app->agent_event_mutex);
+	while (app->agent_terminal_event_queue != NULL &&
+	       !g_queue_is_empty(app->agent_terminal_event_queue))
+		g_queue_push_tail(&events,
+		                  g_queue_pop_head(app->agent_terminal_event_queue));
+	app->agent_terminal_event_flush_scheduled = FALSE;
+	g_mutex_unlock(&app->agent_event_mutex);
+
+	while (!g_queue_is_empty(&events)) {
+		SakuraAgentTerminalEvent *event = g_queue_pop_head(&events);
+
+		if (pending != NULL && event->output && pending->output &&
+		    g_strcmp0(pending->terminal_id, event->terminal_id) == 0 &&
+		    event->start_offset <= pending->end_offset) {
+			gsize skip = MIN(event->data_length,
+			                 (gsize)(pending->end_offset - event->start_offset));
+			pending->data = g_realloc(pending->data,
+			                          pending->data_length + event->data_length - skip);
+			memcpy(pending->data + pending->data_length,
+			       event->data + skip, event->data_length - skip);
+			pending->data_length += event->data_length - skip;
+			pending->end_offset = MAX(pending->end_offset, event->end_offset);
+			sakura_agent_terminal_event_free(event);
+			continue;
+		}
+		if (pending != NULL) {
+			sakura_agent_apply_terminal_event(pending);
+			sakura_agent_terminal_event_free(pending);
+		}
+		pending = event;
+	}
+	if (pending != NULL) {
+		sakura_agent_apply_terminal_event(pending);
+		sakura_agent_terminal_event_free(pending);
+	}
+	sakura_ui_latency_trace_end("terminal-output-flush", trace_started);
 	return G_SOURCE_REMOVE;
+}
+
+
+static void
+sakura_agent_queue_terminal_event(SakuraApp *app,
+	                              SakuraAgentTerminalEvent *event)
+{
+	gboolean schedule = FALSE;
+
+	if (app == NULL || event == NULL || !app->agent_event_mutex_initialized) {
+		sakura_agent_terminal_event_free(event);
+		return;
+	}
+	g_mutex_lock(&app->agent_event_mutex);
+	if (!app->agent_event_stopping) {
+		g_queue_push_tail(app->agent_terminal_event_queue, event);
+		if (!app->agent_terminal_event_flush_scheduled) {
+			app->agent_terminal_event_flush_scheduled = TRUE;
+			schedule = TRUE;
+		}
+		event = NULL;
+	}
+	g_mutex_unlock(&app->agent_event_mutex);
+	sakura_agent_terminal_event_free(event);
+	if (schedule)
+		/* One half-frame at 60 Hz bounds visible latency while giving bursty PTY
+		 * reads a chance to collapse into one VTE feed and one UI wakeup. */
+		g_timeout_add_full(G_PRIORITY_HIGH_IDLE, 8,
+		                   sakura_agent_flush_terminal_events_cb, app, NULL);
 }
 
 
@@ -744,9 +830,7 @@ sakura_agent_event_thread(gpointer data)
 					terminal_event->output = TRUE;
 					(void)terminal_sequence;
 					(void)final_chunk;
-					g_main_context_invoke(NULL,
-					                     sakura_agent_apply_terminal_event_cb,
-					                     terminal_event);
+					sakura_agent_queue_terminal_event(app, terminal_event);
 					g_clear_pointer(&payload, g_byte_array_unref);
 					continue;
 				}
@@ -758,9 +842,7 @@ sakura_agent_event_thread(gpointer data)
 					payload->data, payload->len, &terminal_sequence,
 					&terminal_event->terminal_id,
 					&terminal_event->status, &terminal_event->message, &error)) {
-					g_main_context_invoke(NULL,
-					                     sakura_agent_apply_terminal_event_cb,
-					                     terminal_event);
+					sakura_agent_queue_terminal_event(app, terminal_event);
 					g_clear_pointer(&payload, g_byte_array_unref);
 					continue;
 				}
@@ -812,6 +894,8 @@ sakura_agent_subscribe_start(SakuraApp *app)
 	g_mutex_init(&app->agent_event_mutex);
 	app->agent_event_mutex_initialized = TRUE;
 	app->agent_event_stopping = FALSE;
+	app->agent_terminal_event_queue = g_queue_new();
+	app->agent_terminal_event_flush_scheduled = FALSE;
 	app->agent_event_thread = g_thread_new("sakura-agent-events",
 	                                      sakura_agent_event_thread, app);
 }
@@ -875,7 +959,12 @@ sakura_agent_event_stop(SakuraApp *app)
 		sakura_control_client_unref(app->agent_event_connection);
 		app->agent_event_connection = NULL;
 	}
+	while (app->agent_terminal_event_queue != NULL &&
+	       !g_queue_is_empty(app->agent_terminal_event_queue))
+		sakura_agent_terminal_event_free(
+			g_queue_pop_head(app->agent_terminal_event_queue));
 	g_mutex_unlock(&app->agent_event_mutex);
+	g_clear_pointer(&app->agent_terminal_event_queue, g_queue_free);
 	g_mutex_clear(&app->agent_event_mutex);
 	app->agent_event_mutex_initialized = FALSE;
 }
@@ -1675,6 +1764,11 @@ sakura_agent_restart_terminal(SakuraApp *app, const gchar *terminal_id,
 	                            const gchar *page_id, const gchar *group_id,
 	                            const gchar *task_id,
 	                            const gchar *cwd, guint cols, guint rows,
+	                            SakuraTabKind kind,
+	                            const gchar *resume_session_id,
+	                            const gchar *reasoning_effort,
+	                            const gchar *tracking_token,
+	                            guint order, gboolean has_order,
 	                            GError **error)
 {
 	GByteArray *request;
@@ -1687,9 +1781,10 @@ sakura_agent_restart_terminal(SakuraApp *app, const gchar *terminal_id,
 		return FALSE;
 	request_id = g_uuid_string_random();
 	request = g_byte_array_new();
-	if (!sakura_control_encode_restart_terminal_request_with_page(
+	if (!sakura_control_encode_restart_terminal_request_with_order(
 			request_id, terminal_id, page_id, group_id, task_id, cwd, cols, rows,
-			request)) {
+			kind, resume_session_id, reasoning_effort, tracking_token,
+			order, has_order, request)) {
 		g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT,
 		                    "could not encode restart terminal request");
 		result = FALSE;
@@ -1809,6 +1904,12 @@ typedef struct {
 	gchar *cwd;
 	guint cols;
 	guint rows;
+	SakuraTabKind kind;
+	gchar *resume_session_id;
+	gchar *reasoning_effort;
+	gchar *tracking_token;
+	guint order;
+	gboolean has_order;
 	SakuraAgentTerminalStartCallback callback;
 	gpointer callback_data;
 } SakuraAgentTerminalStartJob;
@@ -1843,6 +1944,9 @@ sakura_agent_terminal_start_job_free(SakuraAgentTerminalStartJob *job)
 	g_free(job->group_id);
 	g_free(job->task_id);
 	g_free(job->cwd);
+	g_free(job->resume_session_id);
+	g_free(job->reasoning_effort);
+	g_free(job->tracking_token);
 	g_free(job);
 }
 
@@ -1912,12 +2016,14 @@ sakura_agent_terminal_start_worker(gpointer data, gpointer user_data)
 		&result->attached_status, &error);
 	if (!result->attached) {
 		g_clear_error(&error);
-		if (!sakura_agent_create_terminal(
+		if (!sakura_agent_restart_terminal(
 				job->app, job->terminal_id, job->page_id, job->group_id,
-				job->task_id,
-				job->cwd, job->cols, job->rows,
-				&result->created_terminal_id, &error))
+				job->task_id, job->cwd, job->cols, job->rows, job->kind,
+				job->resume_session_id, job->reasoning_effort,
+				job->tracking_token, job->order, job->has_order, &error))
 			result->error = g_steal_pointer(&error);
+		else
+			result->created_terminal_id = g_strdup(job->terminal_id);
 	}
 	g_clear_error(&error);
 
@@ -1944,6 +2050,9 @@ sakura_agent_start_terminal_async(
 	SakuraApp *app, const gchar *terminal_id, const gchar *page_id,
 	const gchar *group_id,
 	const gchar *task_id, const gchar *cwd, guint cols, guint rows,
+	SakuraTabKind kind, const gchar *resume_session_id,
+	const gchar *reasoning_effort, const gchar *tracking_token,
+	guint order, gboolean has_order,
 	SakuraAgentTerminalStartCallback callback, gpointer data, GError **error)
 {
 	SakuraAgentTerminalStartJob *job;
@@ -1975,6 +2084,12 @@ sakura_agent_start_terminal_async(
 	job->cwd = g_strdup(cwd);
 	job->cols = cols;
 	job->rows = rows;
+	job->kind = kind;
+	job->resume_session_id = g_strdup(resume_session_id);
+	job->reasoning_effort = g_strdup(reasoning_effort);
+	job->tracking_token = g_strdup(tracking_token);
+	job->order = order;
+	job->has_order = has_order;
 	job->callback = callback;
 	job->callback_data = data;
 	if (!g_thread_pool_push(app->agent_terminal_start_pool, job, error)) {

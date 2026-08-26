@@ -113,6 +113,9 @@ typedef struct {
 	gboolean execute_on_existing_tabs;
 	gboolean suppress_current_cwd_fallback;
 	gboolean defer_process_start;
+	guint order;
+	gboolean has_order;
+	const gchar *codex_tracking_token;
 	SakuraPage *target_page;
 	SakuraLayoutNode *target_layout;
 	gdouble target_ratio;
@@ -179,6 +182,7 @@ struct sakura_startup {
 	SakuraStartupPhase phase;
 	SakuraStartupOptions options;
 	bool preserve_failed_session;
+	bool selected_terminal_ready_traced;
 	guint pending_terminal_starts;
 	guint restore_source_id;
 	SakuraStartupFinishedCallback finished_callback;
@@ -193,6 +197,8 @@ struct sakura_app {
 	GtkWidget *sidebar;
 	GtkWidget *sidebar_title;
 	GtkWidget *sidebar_tree;
+	GtkTreeViewColumn *sidebar_status_column;
+	GtkCellRenderer *sidebar_spinner_renderer;
 	GtkTreeStore *sidebar_model;
 	GtkTreeSelection *sidebar_selection;
 	SakuraSidebarNode *sidebar_root;
@@ -214,6 +220,21 @@ struct sakura_app {
 	 * that writes a second sidebar selection. */
 	guint focus_tab_source_id;
 	GtkWidget *focus_tab_pending_vte;
+	gchar *focus_tab_pending_terminal_id;
+	gint64 selection_intent_us;
+	gchar *selection_intent_terminal_id;
+	gint64 last_user_interaction_us;
+	gboolean ui_latency_trace_enabled;
+	guint ui_latency_trace_source_id;
+	gint64 ui_latency_trace_last_tick_us;
+	gint64 ui_latency_trace_recent_activity_us;
+	gint64 ui_latency_trace_recent_duration_us;
+	const gchar *ui_latency_trace_recent_cause;
+	GdkFrameClock *ui_latency_trace_frame_clock;
+	gulong ui_latency_trace_after_paint_handler_id;
+	gint64 ui_latency_trace_last_paint_us;
+	gint64 ui_latency_trace_selection_paint_us;
+	gchar *ui_latency_trace_selection_terminal_id;
 	gboolean sidebar_focus_syncing;
 	gboolean sidebar_visible;
 	gint sidebar_width;
@@ -265,7 +286,13 @@ struct sakura_app {
 	bool fullscreen;
 	bool config_modified;            /* Configuration has been modified */
 	bool externally_modified;        /* Configuration file has been modified by another process */
-	bool resized;
+	/* Keep top-level resize requests separate from user-driven resizes. GTK can
+	 * deliver several configure events while a programmatic request settles;
+	 * treating those as user input feeds a rounded-down terminal grid back into
+	 * the next resize and progressively shrinks the window. */
+	bool programmatic_resize;
+	guint programmatic_resize_source_id;
+	guint user_resize_source_id;
 	bool disable_numbered_tabswitch; /* For disabling direct tabswitching key */
 	bool use_fading;                 /* Fade the window when the focus change */
 	bool scrollable_tabs;
@@ -287,10 +314,24 @@ struct sakura_app {
 	bool session_dirty;
 	bool session_new_window;
 	guint session_save_source_id;
+	GThread *session_save_thread;
+	GMutex session_save_mutex;
+	GCond session_save_cond;
+	gboolean session_save_worker_initialized;
+	gboolean session_save_worker_stopping;
+	gboolean session_save_worker_busy;
+	gpointer session_save_pending_job;
+	guint session_save_completion_source_id;
+	guint64 session_change_generation;
+	guint64 session_saved_generation;
 	guint codex_tracking_source_id;
+	GFileMonitor *codex_tracking_monitor;
 	guint cwd_tracking_source_id;
 	guint sidebar_spinner_source_id;
 	guint sidebar_spinner_pulse;
+	guint sidebar_primary_click_source_id;
+	SakuraSidebarNodeType sidebar_primary_click_type;
+	gchar *sidebar_primary_click_id;
 	GSubprocess *codex_name_helper_process;
 	GSubprocess *agent_process;
 	GThreadPool *agent_terminal_start_pool;
@@ -304,6 +345,8 @@ struct sakura_app {
 	GMutex agent_event_mutex;
 	gboolean agent_event_mutex_initialized;
 	gboolean agent_event_stopping;
+	GQueue *agent_terminal_event_queue;
+	gboolean agent_terminal_event_flush_scheduled;
 	GThread *agent_command_thread;
 	SakuraControlClientConnection *agent_command_connection;
 	GCancellable *agent_command_cancellable;
@@ -501,6 +544,7 @@ struct sakura_tab {
 	GtkWidget *tab_button_spinner;
 	GtkWidget *tab_button_close;
 	GtkWidget *vte;      /* Reference to VTE terminal */
+	GtkWidget *terminal_overlay;
 	GtkWidget *runtime_placeholder;
 	GtkWidget *scrollbar;
 	VtePty *agent_pty;  /* VTE's local proxy for an agent-owned PTY */
@@ -515,6 +559,9 @@ struct sakura_tab {
 	gboolean agent_terminal_lost;
 	gboolean runtime_deferred;
 	gboolean runtime_start_pending;
+	guint runtime_start_source_id;
+	guint order;
+	gboolean has_order;
 #ifdef HAVE_WEBKITGTK
 	GtkWidget *browser;
 	GtkWidget *browser_back;
@@ -606,6 +653,7 @@ SakuraTab *sakura_tab_for_vte(VteTerminal *vte);
 SakuraTab *sakura_find_pane_by_terminal_id(const gchar *terminal_id);
 gboolean sakura_tab_start_agent_terminal(SakuraTab *tab, const gchar *cwd);
 gboolean sakura_tab_start_deferred_runtime(SakuraTab *tab);
+void sakura_tab_start_deferred_runtime_async(SakuraTab *tab);
 gboolean sakura_tab_restart_agent_terminal(SakuraTab *tab);
 void sakura_tab_agent_feed_output(SakuraTab *tab, const guint8 *data,
                                   gsize data_length, guint64 start_offset,
@@ -664,6 +712,13 @@ void sakura_focus_tab(SakuraTab *tab);
 void sakura_register_codex_icon(void);
 void sakura_set_size(void);
 void sakura_update_geometry_hints(void);
+void sakura_ui_latency_trace_start(void);
+void sakura_ui_latency_trace_stop(void);
+gint64 sakura_ui_latency_trace_begin(void);
+void sakura_ui_latency_trace_end(const gchar *cause, gint64 started_us);
+void sakura_ui_latency_trace_request_paint(const gchar *terminal_id,
+                                           gint64 selection_us);
+void sakura_ui_latency_trace_milestone(const gchar *name);
 gboolean sakura_term_buttonpressed_cb(GtkWidget *widget, GdkEventButton *event,
                                       gpointer user_data);
 gboolean sakura_term_buttonreleased_cb(GtkWidget *widget, GdkEventButton *event,
@@ -726,10 +781,13 @@ void sakura_resume_codex_cb(GtkWidget *widget, void *data);
 void sakura_attach_codex_cb(GtkWidget *widget, void *data);
 void sakura_refresh_codex_name_cb(GtkWidget *widget, void *data);
 void sakura_rename_codex_session_cb(GtkWidget *widget, void *data);
+GtkWidget *sakura_codex_rename_menu_item_new(SakuraTab *tab);
 void sakura_install_codex_hook_cb(GtkWidget *widget, void *data);
 void sakura_close_tab_cb(GtkWidget *widget, void *data);
 void sakura_sidebar_init(gboolean restore_session);
 void sakura_sidebar_selection_changed_cb(GtkTreeSelection *selection, void *data);
+void sakura_sidebar_primary_click(SakuraSidebarNode *node);
+void sakura_sidebar_cancel_primary_click(void);
 gboolean sakura_sidebar_button_press_cb(GtkWidget *widget, GdkEventButton *event,
                                          void *data);
 GtkWidget *sakura_sidebar_context_menu_new(SakuraSidebarNode *node);
@@ -749,6 +807,8 @@ SakuraSidebarNode *sakura_sidebar_creation_parent_for_context(
                                       SakuraSidebarNode *context);
 gboolean sakura_sidebar_move_page_to_group(SakuraPage *page,
                                             SakuraSidebarNode *group);
+gboolean sakura_sidebar_reorder_page_relative(
+    SakuraPage *source, SakuraPage *target, GtkTreeViewDropPosition position);
 gboolean sakura_sidebar_can_reorder_node_to_group(SakuraSidebarNode *source,
                                                     SakuraSidebarNode *target);
 void sakura_sidebar_sync_projection_links(void);
@@ -802,6 +862,10 @@ gboolean sakura_codex_session_id_is_uuid(const gchar *value);
 gboolean sakura_codex_reasoning_effort_is_valid(const gchar *value);
 const gchar *sakura_codex_reasoning_effort_label(const gchar *value);
 gboolean sakura_codex_tracking_poll_cb(gpointer data);
+void sakura_codex_tracking_changed_cb(GFileMonitor *monitor, GFile *file,
+                                      GFile *other_file,
+                                      GFileMonitorEvent event_type,
+                                      gpointer data);
 gboolean sakura_codex_interrupt_matches_event(const SakuraTab *tab,
                                                const gchar *event_name,
                                                const gchar *turn_id);
@@ -813,6 +877,7 @@ void sakura_codex_resolve_resume_cwd_async(SakuraTab *tab,
                                            const gchar *fallback_cwd);
 void sakura_codex_set_name_async(SakuraTab *tab, const gchar *name);
 SakuraCodexTrackingState sakura_codex_tracking_state(void);
+gboolean sakura_codex_ensure_tracking(GError **error);
 void sakura_codex_tracking_menu_update(GtkWidget *item);
 void sakura_codex_tracking_status_cb(GtkWidget *widget, void *data);
 GtkWidget *sakura_open_here_menu_new(void);
@@ -840,6 +905,8 @@ void sakura_add_tab_with_options(const gchar *restore_cwd,
 void sakura_sidebar_update_tab(SakuraTab *tab);
 void sakura_workspace_start_page_runtime(SakuraPage *page);
 void sakura_sidebar_update_attention_count(void);
+gboolean sakura_sidebar_spinner_pulse_cb(gpointer data);
+void sakura_sidebar_spinner_stop(void);
 gboolean sakura_sidebar_get_iter(SakuraSidebarNode *node, GtkTreeIter *iter);
 void sakura_sidebar_free_node(SakuraSidebarNode *node);
 void sakura_sidebar_insert_node(SakuraSidebarNode *node);
@@ -948,9 +1015,9 @@ void sakura_task_update_row(SakuraTask *task);
 void sakura_task_attach_page(SakuraTask *task, SakuraPage *page);
 void sakura_task_detach_page(SakuraPage *page);
 void sakura_task_free(SakuraTask *task);
-gboolean sakura_sidebar_spinner_pulse_cb(gpointer data);
 void sakura_session_mark_dirty(void);
 void sakura_session_flush(void);
+void sakura_session_save_shutdown(void);
 gboolean sakura_session_write_snapshot(SakuraApp *app,
                                        const SakuraSessionSnapshot *snapshot);
 gboolean sakura_session_load_file(SakuraApp *app, gboolean restore_session);
@@ -986,6 +1053,9 @@ gboolean sakura_agent_start_terminal_async(
 	SakuraApp *app, const gchar *terminal_id, const gchar *page_id,
 	const gchar *group_id,
 	const gchar *task_id, const gchar *cwd, guint cols, guint rows,
+	SakuraTabKind kind, const gchar *resume_session_id,
+	const gchar *reasoning_effort, const gchar *tracking_token,
+	guint order, gboolean has_order,
 	SakuraAgentTerminalStartCallback callback, gpointer data,
 	GError **error);
 void sakura_agent_terminal_start_result_free(
@@ -1047,6 +1117,9 @@ gboolean sakura_agent_restart_terminal(
 	SakuraApp *app, const gchar *terminal_id, const gchar *page_id,
 	const gchar *group_id,
 	const gchar *task_id, const gchar *cwd, guint cols, guint rows,
+	SakuraTabKind kind, const gchar *resume_session_id,
+	const gchar *reasoning_effort, const gchar *tracking_token,
+	guint order, gboolean has_order,
 	GError **error);
 gboolean sakura_agent_attach_terminal(
 	SakuraApp *app, const gchar *terminal_id, guint cols, guint rows,

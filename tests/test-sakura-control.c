@@ -9,6 +9,7 @@
 #include "sakura/control.pb-c.h"
 
 static gchar *test_agent_workspace_id;
+static void test_agent_handshake_on_connection(GSocketConnection *connection);
 
 static SakuraSessionSnapshot *test_load_agent_session(const gchar *session_path);
 static void test_save_agent_session(const gchar *session_path,
@@ -75,11 +76,23 @@ static void
 test_snapshot_response_roundtrip(void)
 {
 	SakuraCoreWorkspace *workspace = test_workspace_new();
+	SakuraCoreTerminal *third = sakura_core_terminal_new(
+		"terminal-third", "/tmp", workspace->root_group, NULL, 80, 24);
+	SakuraCoreTerminal *first = sakura_core_terminal_new(
+		"terminal-first", "/tmp", workspace->root_group, NULL, 80, 24);
+	SakuraCoreTerminal *second = sakura_core_terminal_new(
+		"terminal-second", "/tmp", workspace->root_group, NULL, 80, 24);
 	GByteArray *encoded = g_byte_array_new();
 	SakuraControlResponse response = { 0 };
 	SakuraSessionSnapshot *snapshot = NULL;
 	guint64 sequence = 0;
 	GError *error = NULL;
+	third->order = 2;
+	first->order = 0;
+	second->order = 1;
+	g_assert_true(sakura_core_workspace_add_terminal(workspace, third));
+	g_assert_true(sakura_core_workspace_add_terminal(workspace, first));
+	g_assert_true(sakura_core_workspace_add_terminal(workspace, second));
 
 	g_assert_true(sakura_control_encode_snapshot_response("request-2", 7,
 	                                                     workspace, encoded));
@@ -95,6 +108,13 @@ test_snapshot_response_roundtrip(void)
 	g_assert_nonnull(snapshot);
 	g_assert_nonnull(snapshot->groups);
 	g_assert_cmpuint(snapshot->groups->len, ==, 0);
+	g_assert_cmpuint(snapshot->tabs->len, ==, 3);
+	g_assert_cmpstr(((SakuraSessionTabRecord *)g_ptr_array_index(
+		snapshot->tabs, 0))->terminal_id, ==, "terminal-first");
+	g_assert_cmpstr(((SakuraSessionTabRecord *)g_ptr_array_index(
+		snapshot->tabs, 1))->terminal_id, ==, "terminal-second");
+	g_assert_cmpstr(((SakuraSessionTabRecord *)g_ptr_array_index(
+		snapshot->tabs, 2))->terminal_id, ==, "terminal-third");
 
 	sakura_session_snapshot_free(snapshot);
 	sakura_control_response_clear(&response);
@@ -582,9 +602,9 @@ test_mutation_request_roundtrip(void)
 	sakura_control_request_clear(&request);
 	g_byte_array_set_size(encoded, 0);
 
-	g_assert_true(sakura_control_encode_create_terminal_request_with_page(
+	g_assert_true(sakura_control_encode_create_terminal_request_with_order(
 		"create-terminal", "terminal-1", "page-1", "group-1", "task-1",
-		"/tmp", 100, 40,
+		"/tmp", 100, 40, 7, TRUE,
 		encoded));
 	g_assert_true(sakura_control_decode_request(encoded->data, encoded->len,
 	                                           &request, &error));
@@ -598,6 +618,8 @@ test_mutation_request_roundtrip(void)
 	g_assert_cmpstr(request.cwd, ==, "/tmp");
 	g_assert_cmpuint(request.cols, ==, 100);
 	g_assert_cmpuint(request.rows, ==, 40);
+	g_assert_true(request.has_order);
+	g_assert_cmpuint(request.order, ==, 7);
 	sakura_control_request_clear(&request);
 	g_byte_array_set_size(encoded, 0);
 
@@ -620,9 +642,10 @@ test_mutation_request_roundtrip(void)
 	sakura_control_request_clear(&request);
 	g_byte_array_set_size(encoded, 0);
 
-	g_assert_true(sakura_control_encode_restart_terminal_request_with_page(
+	g_assert_true(sakura_control_encode_restart_terminal_request_with_order(
 		"restart-terminal", "terminal-1", "page-1", "group-1", "task-1",
-		"/tmp", 120, 50, encoded));
+		"/tmp", 120, 50, SAKURA_TAB_CODEX, "resume-restart", "high",
+		"tracking-restart", 9, TRUE, encoded));
 	g_assert_true(sakura_control_decode_request(encoded->data, encoded->len,
 	                                           &request, &error));
 	g_assert_no_error(error);
@@ -635,6 +658,12 @@ test_mutation_request_roundtrip(void)
 	g_assert_cmpstr(request.cwd, ==, "/tmp");
 	g_assert_cmpuint(request.cols, ==, 120);
 	g_assert_cmpuint(request.rows, ==, 50);
+	g_assert_cmpuint(request.terminal_kind, ==, SAKURA_TAB_CODEX);
+	g_assert_cmpstr(request.resume_session_id, ==, "resume-restart");
+	g_assert_cmpstr(request.reasoning_effort, ==, "high");
+	g_assert_cmpstr(request.tracking_token, ==, "tracking-restart");
+	g_assert_true(request.has_order);
+	g_assert_cmpuint(request.order, ==, 9);
 	sakura_control_request_clear(&request);
 	g_byte_array_set_size(encoded, 0);
 

@@ -439,6 +439,8 @@ static void     sakura_destroy_window_cb (GtkWidget *, void *);
 /* Main window callbacks */
 gboolean        sakura_key_press_cb (GtkWidget *, GdkEventKey *, gpointer);
 static gboolean sakura_resized_window_cb (GtkWidget *, GdkEventConfigure *, void *);
+static gboolean sakura_programmatic_resize_settled_cb (gpointer);
+static gboolean sakura_user_resize_settled_cb (gpointer);
 static gboolean sakura_focus_in_cb (GtkWidget *, GdkEvent *, void *);
 static gboolean sakura_focus_out_cb (GtkWidget *, GdkEvent *, void *);
 static void     sakura_conf_changed_cb (GtkWidget *, void *);
@@ -484,7 +486,6 @@ static void     sakura_set_cursor_cb (GtkWidget *, void *);
 static void     sakura_blinking_cursor_cb (GtkWidget *, void *);
 static void     sakura_audible_bell_cb (GtkWidget *, void *);
 static void     sakura_urgent_bell_cb (GtkWidget *, void *);
-gboolean       sakura_sidebar_spinner_pulse_cb (gpointer);
 void            sakura_tab_set_status (struct sakura_tab *, SakuraTabStatus, gboolean);
 void            sakura_tab_clear_attention (struct sakura_tab *);
 SakuraTab *       sakura_find_codex_tab_by_tracking_token (const gchar *);
@@ -593,6 +594,7 @@ sakura_key_press_cb (GtkWidget *widget, GdkEventKey *event, gpointer user_data)
 	struct sakura_tab *current_tab;
 
 	if (event->type != GDK_KEY_PRESS) return FALSE;
+	sakura.last_user_interaction_us = g_get_monotonic_time();
 	if (sakura_key_matches(event, sakura.split_right_accelerator,
 	                       sakura.split_right_key)) {
 		sakura_split_current_cb(NULL, GINT_TO_POINTER(SAKURA_SPLIT_RIGHT));
@@ -784,17 +786,69 @@ sakura_key_press_cb (GtkWidget *widget, GdkEventKey *event, gpointer user_data)
 
 
 static gboolean
+sakura_programmatic_resize_settled_cb (gpointer data)
+{
+	(void)data;
+	sakura.programmatic_resize_source_id = 0;
+	sakura.programmatic_resize = FALSE;
+	return G_SOURCE_REMOVE;
+}
+
+
+static gboolean
+sakura_user_resize_settled_cb (gpointer data)
+{
+	SakuraPage *page;
+	SakuraTab *tab;
+	gint page_index;
+
+	(void)data;
+	sakura.user_resize_source_id = 0;
+	if (sakura.session_shutting_down || sakura.programmatic_resize ||
+	    sakura.notebook == NULL)
+		return G_SOURCE_REMOVE;
+
+	page_index = gtk_notebook_get_current_page(GTK_NOTEBOOK(sakura.notebook));
+	page = sakura_page_at_page(page_index);
+	tab = page != NULL ? page->active_tab : NULL;
+	if (tab == NULL && page_index >= 0)
+		tab = sakura_tab_at_page(page_index);
+	if (tab == NULL || tab->vte == NULL)
+		return G_SOURCE_REMOVE;
+
+	/* Sample the final VTE allocation after the window manager has finished a
+	 * user resize. Do not resize the top-level window from this callback. */
+	sakura.columns = vte_terminal_get_column_count(VTE_TERMINAL(tab->vte));
+	sakura.rows = vte_terminal_get_row_count(VTE_TERMINAL(tab->vte));
+	return G_SOURCE_REMOVE;
+}
+
+
+static gboolean
 sakura_resized_window_cb (GtkWidget *widget, GdkEventConfigure *event, void *data)
 {
+	(void)widget;
+	(void)data;
 	if (sakura.session_shutting_down)
 		return FALSE;
-	if (event->width != sakura.width || event->height != sakura.height) {
-		//SAY("Configure event received. Current w %d h %d ConfigureEvent w %d h %d",
-		//sakura.width, sakura.height, event->width, event->height);
-		if (sakura.fade_window != NULL)
-			gtk_widget_hide(sakura.fade_window);
-		sakura.resized = TRUE;
-	}
+
+	/* Always remember the actual allocation. Window managers may adjust a
+	 * requested size by a few pixels, so the requested dimensions are not a
+	 * reliable baseline for the next configure event. */
+	sakura.width = event->width;
+	sakura.height = event->height;
+	if (sakura.programmatic_resize)
+		return FALSE;
+
+	if (sakura.fade_window != NULL)
+		gtk_widget_hide(sakura.fade_window);
+	if (sakura.user_resize_source_id != 0)
+		g_source_remove(sakura.user_resize_source_id);
+	/* Configure events arrive for every intermediate drag allocation. Sampling
+	 * the terminal grid only after they settle avoids retaining a transient,
+	 * rounded-down row or column count. */
+	sakura.user_resize_source_id = g_timeout_add(
+		150, sakura_user_resize_settled_cb, NULL);
 
 	return FALSE;
 }
@@ -959,6 +1013,8 @@ sakura_delete_event_cb (GtkWidget *widget, void *data)
 		for (i=0; i < npages; i++) {
 
 			sk_tab = sakura_tab_at_page(i);
+			if (sk_tab == NULL || sk_tab->vte == NULL)
+				continue;
 			pty = vte_terminal_get_pty(VTE_TERMINAL(sk_tab->vte));
 			if (pty == NULL)
 				continue;
@@ -1108,7 +1164,7 @@ sakura_color_dialog_cb (GtkWidget *widget, void *data)
 
 	sk_tab = sakura.workspace->active_tab != NULL ? sakura.workspace->active_tab :
 	         sakura_tab_at_page(gtk_notebook_get_current_page(GTK_NOTEBOOK(sakura.notebook)));
-	if (sk_tab == NULL)
+	if (sk_tab == NULL || sk_tab->vte == NULL)
 		return;
 
 	color_dialog = gtk_dialog_new_with_buttons(_("Select colors"), GTK_WINDOW(sakura.main_window),
@@ -1438,7 +1494,7 @@ sakura_audible_bell_cb (GtkWidget *widget, void *data)
 
 	sk_tab = sakura.workspace->active_tab != NULL ? sakura.workspace->active_tab :
 	         sakura_tab_at_page(gtk_notebook_get_current_page(GTK_NOTEBOOK(sakura.notebook)));
-	if (sk_tab == NULL)
+	if (sk_tab == NULL || sk_tab->vte == NULL)
 		return;
 
 	if (gtk_check_menu_item_get_active(GTK_CHECK_MENU_ITEM(widget))) {
@@ -1458,7 +1514,7 @@ sakura_blinking_cursor_cb (GtkWidget *widget, void *data)
 
 	sk_tab = sakura.workspace->active_tab != NULL ? sakura.workspace->active_tab :
 	         sakura_tab_at_page(gtk_notebook_get_current_page(GTK_NOTEBOOK(sakura.notebook)));
-	if (sk_tab == NULL)
+	if (sk_tab == NULL || sk_tab->vte == NULL)
 		return;
 
 	if (gtk_check_menu_item_get_active(GTK_CHECK_MENU_ITEM(widget))) {
@@ -1491,7 +1547,7 @@ sakura_set_cursor_cb (GtkWidget *widget, void *data)
 
 		for (i = sakura.workspace->panes != NULL ? (gint)sakura.workspace->panes->len - 1 : -1; i >= 0; i--) {
 			sk_tab = g_ptr_array_index(sakura.workspace->panes, i);
-			if (sk_tab != NULL)
+			if (sk_tab != NULL && sk_tab->vte != NULL)
 				vte_terminal_set_cursor_shape(VTE_TERMINAL(sk_tab->vte), sakura.cursor_type);
 		}
 
@@ -2620,9 +2676,18 @@ sakura_init()
 		sakura_session_prepare_bash_integration(&sakura);
 		if (!option_new_window)
 			sakura_session_load_file(&sakura, !option_new_session && !option_new_window);
-		sakura.codex_tracking_source_id = g_timeout_add(500,
-		                                                 sakura_codex_tracking_poll_cb,
-		                                                 NULL);
+		{
+			GFile *tracking_directory = g_file_new_for_path(
+				sakura.codex_tracking_dir);
+			sakura.codex_tracking_monitor = g_file_monitor_directory(
+				tracking_directory, G_FILE_MONITOR_NONE, NULL, NULL);
+			g_object_unref(tracking_directory);
+			if (sakura.codex_tracking_monitor != NULL)
+				g_signal_connect(sakura.codex_tracking_monitor, "changed",
+				                 G_CALLBACK(sakura_codex_tracking_changed_cb), NULL);
+			sakura.codex_tracking_source_id = g_timeout_add(
+				100, sakura_codex_tracking_poll_cb, NULL);
+		}
 	}
 
 	/*** Sakura window initialization ***/
@@ -2751,7 +2816,9 @@ sakura_init()
 		sakura_fullscreen_cb(NULL, NULL); /* FIXME: Move to sakura_set_size?? */
 	}
 
-	sakura.resized = FALSE;
+	sakura.programmatic_resize = FALSE;
+	sakura.programmatic_resize_source_id = 0;
+	sakura.user_resize_source_id = 0;
 	sakura.externally_modified = false;
 	sakura.first_run=true;
 
@@ -3272,6 +3339,177 @@ sakura_destroy_cleanup(void)
 }
 
 
+static gboolean
+sakura_ui_latency_trace_tick(gpointer data)
+{
+	SakuraApp *app = data;
+	gint64 now, elapsed, cause_age;
+	const gchar *cause;
+
+	if (app == NULL || !app->ui_latency_trace_enabled ||
+	    app->session_shutting_down) {
+		if (app != NULL)
+			app->ui_latency_trace_source_id = 0;
+		return G_SOURCE_REMOVE;
+	}
+	now = g_get_monotonic_time();
+	elapsed = now - app->ui_latency_trace_last_tick_us;
+	app->ui_latency_trace_last_tick_us = now;
+	if (elapsed >= 16000) {
+		cause_age = app->ui_latency_trace_recent_activity_us != 0
+		          ? now - app->ui_latency_trace_recent_activity_us : -1;
+		cause = app->ui_latency_trace_recent_cause != NULL &&
+		        cause_age >= 0 && cause_age <= 250000 &&
+		        app->ui_latency_trace_recent_duration_us * 2 >= elapsed - 8000
+		      ? app->ui_latency_trace_recent_cause : "unknown";
+		g_message("ui-main-loop-stall-us=%" G_GINT64_FORMAT
+		          " cause=%s cause-age-us=%" G_GINT64_FORMAT,
+		          elapsed, cause, cause_age);
+	}
+	return G_SOURCE_CONTINUE;
+}
+
+
+static void
+sakura_ui_latency_trace_after_paint(GdkFrameClock *clock, gpointer data)
+{
+	SakuraApp *app = data;
+	gint64 now, interval;
+
+	(void)clock;
+	if (app == NULL || !app->ui_latency_trace_enabled)
+		return;
+	now = g_get_monotonic_time();
+	if (app->ui_latency_trace_last_paint_us != 0) {
+		interval = now - app->ui_latency_trace_last_paint_us;
+		g_message("ui-frame-interval-us=%" G_GINT64_FORMAT, interval);
+	}
+	app->ui_latency_trace_last_paint_us = now;
+	if (app->ui_latency_trace_selection_paint_us != 0) {
+		if (app->workspace != NULL && app->workspace->active_tab != NULL &&
+		    g_strcmp0(app->ui_latency_trace_selection_terminal_id,
+		              app->workspace->active_tab->terminal_id) == 0)
+			g_message("selection-paint-latency-us=%" G_GINT64_FORMAT
+			          " terminal=%s",
+			          now - app->ui_latency_trace_selection_paint_us,
+			          app->workspace->active_tab->terminal_id);
+		app->ui_latency_trace_selection_paint_us = 0;
+		g_clear_pointer(&app->ui_latency_trace_selection_terminal_id, g_free);
+	}
+}
+
+
+void
+sakura_ui_latency_trace_start(void)
+{
+	if (g_getenv("SAKURA_LATENCY_TRACE") == NULL ||
+	    sakura.ui_latency_trace_source_id != 0)
+		return;
+	sakura.ui_latency_trace_enabled = TRUE;
+	sakura.ui_latency_trace_last_tick_us = g_get_monotonic_time();
+	sakura.ui_latency_trace_source_id = g_timeout_add_full(
+		G_PRIORITY_HIGH_IDLE, 8, sakura_ui_latency_trace_tick, &sakura, NULL);
+}
+
+
+void
+sakura_ui_latency_trace_stop(void)
+{
+	if (sakura.ui_latency_trace_source_id != 0) {
+		g_source_remove(sakura.ui_latency_trace_source_id);
+		sakura.ui_latency_trace_source_id = 0;
+	}
+	if (sakura.ui_latency_trace_frame_clock != NULL) {
+		gdk_frame_clock_end_updating(sakura.ui_latency_trace_frame_clock);
+		if (sakura.ui_latency_trace_after_paint_handler_id != 0)
+			g_signal_handler_disconnect(
+				sakura.ui_latency_trace_frame_clock,
+				sakura.ui_latency_trace_after_paint_handler_id);
+		g_clear_object(&sakura.ui_latency_trace_frame_clock);
+	}
+	sakura.ui_latency_trace_after_paint_handler_id = 0;
+	sakura.ui_latency_trace_last_paint_us = 0;
+	sakura.ui_latency_trace_selection_paint_us = 0;
+	g_clear_pointer(&sakura.ui_latency_trace_selection_terminal_id, g_free);
+	sakura.ui_latency_trace_enabled = FALSE;
+}
+
+
+gint64
+sakura_ui_latency_trace_begin(void)
+{
+	return sakura.ui_latency_trace_enabled ? g_get_monotonic_time() : 0;
+}
+
+
+void
+sakura_ui_latency_trace_end(const gchar *cause, gint64 started_us)
+{
+	gint64 now, duration, recent_age;
+
+	if (!sakura.ui_latency_trace_enabled || started_us == 0 || cause == NULL)
+		return;
+	now = g_get_monotonic_time();
+	duration = now - started_us;
+	recent_age = sakura.ui_latency_trace_recent_activity_us != 0
+	           ? now - sakura.ui_latency_trace_recent_activity_us : G_MAXINT64;
+	/* Preserve a recently completed expensive operation long enough for the
+	 * delayed heartbeat to observe it. Tiny follow-up callbacks must not steal
+	 * attribution from the work that actually blocked the main loop. */
+	if (recent_age > 250000 ||
+	    duration >= sakura.ui_latency_trace_recent_duration_us) {
+		sakura.ui_latency_trace_recent_activity_us = now;
+		sakura.ui_latency_trace_recent_duration_us = duration;
+		sakura.ui_latency_trace_recent_cause = cause;
+	}
+	g_message("ui-activity-us=%" G_GINT64_FORMAT " cause=%s",
+	          duration, cause);
+}
+
+
+void
+sakura_ui_latency_trace_request_paint(const gchar *terminal_id,
+                                      gint64 selection_us)
+{
+	GdkFrameClock *clock;
+
+	if (!sakura.ui_latency_trace_enabled || sakura.main_window == NULL ||
+	    terminal_id == NULL || selection_us == 0)
+		return;
+	clock = gtk_widget_get_frame_clock(sakura.main_window);
+	if (clock == NULL)
+		return;
+	if (sakura.ui_latency_trace_frame_clock != clock) {
+		if (sakura.ui_latency_trace_frame_clock != NULL) {
+			gdk_frame_clock_end_updating(sakura.ui_latency_trace_frame_clock);
+			if (sakura.ui_latency_trace_after_paint_handler_id != 0)
+				g_signal_handler_disconnect(
+					sakura.ui_latency_trace_frame_clock,
+					sakura.ui_latency_trace_after_paint_handler_id);
+			g_clear_object(&sakura.ui_latency_trace_frame_clock);
+		}
+		sakura.ui_latency_trace_frame_clock = g_object_ref(clock);
+		sakura.ui_latency_trace_after_paint_handler_id = g_signal_connect(
+			clock, "after-paint",
+			G_CALLBACK(sakura_ui_latency_trace_after_paint), &sakura);
+		gdk_frame_clock_begin_updating(clock);
+	}
+	sakura.ui_latency_trace_selection_paint_us = selection_us;
+	g_free(sakura.ui_latency_trace_selection_terminal_id);
+	sakura.ui_latency_trace_selection_terminal_id = g_strdup(terminal_id);
+	gdk_frame_clock_request_phase(clock, GDK_FRAME_CLOCK_PHASE_AFTER_PAINT);
+}
+
+
+void
+sakura_ui_latency_trace_milestone(const gchar *name)
+{
+	if (sakura.ui_latency_trace_enabled && name != NULL)
+		g_message("startup-milestone-us=%" G_GINT64_FORMAT " name=%s",
+		          g_get_monotonic_time(), name);
+}
+
+
 void
 sakura_destroy()
 {
@@ -3291,7 +3529,9 @@ sakura_destroy()
 		if (sakura.session_ready)
 			sakura_session_flush();
 	}
+	sakura_session_save_shutdown();
 	sakura.session_shutting_down = TRUE;
+	sakura_ui_latency_trace_stop();
 	if (sakura.workspace->panes != NULL) {
 		for (guint index = 0; index < sakura.workspace->panes->len; index++)
 			sakura_tab_disconnect_exit_handler(g_ptr_array_index(sakura.workspace->panes, index));
@@ -3305,14 +3545,22 @@ sakura_destroy()
 		g_source_remove(sakura.codex_tracking_source_id);
 		sakura.codex_tracking_source_id = 0;
 	}
+	g_clear_object(&sakura.codex_tracking_monitor);
 	if (sakura.cwd_tracking_source_id != 0) {
 		g_source_remove(sakura.cwd_tracking_source_id);
 		sakura.cwd_tracking_source_id = 0;
 	}
-	if (sakura.sidebar_spinner_source_id != 0) {
-		g_source_remove(sakura.sidebar_spinner_source_id);
-		sakura.sidebar_spinner_source_id = 0;
+	sakura_sidebar_spinner_stop();
+	sakura_sidebar_cancel_primary_click();
+	if (sakura.programmatic_resize_source_id != 0) {
+		g_source_remove(sakura.programmatic_resize_source_id);
+		sakura.programmatic_resize_source_id = 0;
 	}
+	if (sakura.user_resize_source_id != 0) {
+		g_source_remove(sakura.user_resize_source_id);
+		sakura.user_resize_source_id = 0;
+	}
+	sakura.programmatic_resize = FALSE;
 	sakura_startup_stop();
 	sakura_sidebar_cancel_pending_selection();
 	sakura_focus_tab_cancel_pending();
@@ -3344,7 +3592,7 @@ sakura_show_scrollbar (void)
 	/* Toggle/Untoggle the scrollbar for all tabs */
 	for (i = sakura.workspace->panes != NULL ? (gint)sakura.workspace->panes->len - 1 : -1; i >= 0; i--) {
 		sk_tab = g_ptr_array_index(sakura.workspace->panes, i);
-		if (sk_tab == NULL)
+		if (sk_tab == NULL || sk_tab->vte == NULL)
 			continue;
 		if (!sakura.show_scrollbar)
 			gtk_widget_hide(sk_tab->scrollbar);
@@ -3365,6 +3613,7 @@ sakura_update_geometry_hints(void)
 	gint char_width, char_height;
 	gboolean split;
 	guint index;
+	gint64 trace_started;
 
 	if (sakura.main_window == NULL || sakura.notebook == NULL)
 		return;
@@ -3375,6 +3624,7 @@ sakura_update_geometry_hints(void)
 		tab = sakura_tab_at_page(page_index);
 	if (tab == NULL || tab->vte == NULL)
 		return;
+	trace_started = sakura_ui_latency_trace_begin();
 
 	split = page != NULL && page->panes != NULL && page->panes->len > 1;
 	if (split) {
@@ -3392,6 +3642,7 @@ sakura_update_geometry_hints(void)
 				                            char_width * SAKURA_DEFAULT_MIN_WIDTH_CHARS,
 				                            char_height * SAKURA_DEFAULT_MIN_HEIGHT_CHARS);
 		}
+		sakura_ui_latency_trace_end("geometry-update", trace_started);
 		return;
 	}
 
@@ -3409,6 +3660,7 @@ sakura_update_geometry_hints(void)
 	                              &hints,
 	                              GDK_HINT_RESIZE_INC | GDK_HINT_MIN_SIZE |
 	                              GDK_HINT_BASE_SIZE);
+	sakura_ui_latency_trace_end("geometry-update", trace_started);
 }
 
 
@@ -3433,13 +3685,18 @@ sakura_set_size (void)
 	if (sk_tab == NULL || sk_tab->vte == NULL)
 		return;
 	sakura_update_geometry_hints();
-	/* Mayhaps an user resize happened. Check if row and columns have changed */
-	if (sakura.resized) {
-		sakura.columns = vte_terminal_get_column_count(VTE_TERMINAL(sk_tab->vte));
-		sakura.rows = vte_terminal_get_row_count(VTE_TERMINAL(sk_tab->vte));
-		sakura.resized = FALSE;
+	/* A configure-event has identified an external/user resize and its final
+	 * terminal grid has not settled yet. Workspace reconciliation, status
+	 * changes, or other internal layout work must not snap the top-level window
+	 * back to the previously stored rows and columns during that interval. */
+	if (sakura.user_resize_source_id != 0) {
+		if (current_page != NULL && current_page->panes != NULL) {
+			for (guint index = 0; index < current_page->panes->len; index++)
+				sakura_tab_sync_agent_size(g_ptr_array_index(
+					current_page->panes, index));
+		}
+		return;
 	}
-
 	gtk_style_context_get_padding(gtk_widget_get_style_context(sk_tab->vte),
 		gtk_widget_get_state_flags(sk_tab->vte),
 		&sk_tab->padding);
@@ -3487,7 +3744,29 @@ sakura_set_size (void)
 			                                             index));
 	}
 
-	gtk_window_resize(GTK_WINDOW(sakura.main_window), sakura.width, sakura.height);
+	{
+		gint current_width, current_height;
+
+		gtk_window_get_size(GTK_WINDOW(sakura.main_window),
+		                    &current_width, &current_height);
+		if (current_width == (gint)sakura.width &&
+		    current_height == (gint)sakura.height)
+			return;
+
+		/* Configure events caused by this request are not user resizes. Keep the
+		 * guard alive briefly because GTK/window managers can emit more than one
+		 * allocation while decorations and geometry increments settle. */
+		if (sakura.user_resize_source_id != 0) {
+			g_source_remove(sakura.user_resize_source_id);
+			sakura.user_resize_source_id = 0;
+		}
+		if (sakura.programmatic_resize_source_id != 0)
+			g_source_remove(sakura.programmatic_resize_source_id);
+		sakura.programmatic_resize = TRUE;
+		sakura.programmatic_resize_source_id = g_timeout_add(
+			250, sakura_programmatic_resize_settled_cb, NULL);
+		gtk_window_resize(GTK_WINDOW(sakura.main_window), sakura.width, sakura.height);
+	}
 }
 
 
@@ -3500,7 +3779,7 @@ sakura_set_font()
 	/* Set the font for all tabs */
 	for (i = sakura.workspace->panes != NULL ? (gint)sakura.workspace->panes->len - 1 : -1; i >= 0; i--) {
 		sk_tab = g_ptr_array_index(sakura.workspace->panes, i);
-		if (sk_tab == NULL)
+		if (sk_tab == NULL || sk_tab->vte == NULL)
 			continue;
 		vte_terminal_set_font(VTE_TERMINAL(sk_tab->vte), sakura.font);
 		vte_terminal_set_cell_height_scale(VTE_TERMINAL(sk_tab->vte), sakura.line_height);
@@ -3544,6 +3823,8 @@ sakura_set_colors ()
 		if (sk_tab == NULL)
 			continue;
 		window_opacity = sakura.backcolors[sk_tab->colorset].alpha;
+		if (sk_tab->vte == NULL)
+			continue;
 
 		/* Set fore, back, cursor color and palette for the terminal's colorset */
 		vte_terminal_set_colors(VTE_TERMINAL(sk_tab->vte),
@@ -4032,6 +4313,7 @@ sakura_run(int argc, char **argv)
 	/* Init stuff */
 	gtk_init(&nargc, &nargv); g_strfreev(nargv);
 	sakura_init();
+	sakura_ui_latency_trace_start();
 	{
 		SakuraStartupOptions startup_options = {
 			.codex_session = option_codex_session,

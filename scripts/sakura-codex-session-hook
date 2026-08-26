@@ -12,6 +12,15 @@ import tempfile
 
 HOOK_MARKER = "sakura-codex-session-hook"
 TOKEN_RE = re.compile(r"^[A-Za-z0-9_.-]+$")
+REQUIRED_EVENTS = (
+    "SessionStart",
+    "UserPromptSubmit",
+    "PreToolUse",
+    "PermissionRequest",
+    "SubagentStart",
+    "SubagentStop",
+    "Stop",
+)
 STATE_BY_EVENT = {
     "SessionStart": "idle",
     "UserPromptSubmit": "running",
@@ -28,6 +37,40 @@ STATE_BY_EVENT = {
 
 def codex_home() -> Path:
     return Path(os.environ.get("CODEX_HOME", Path.home() / ".codex"))
+
+
+def tracking_status() -> str:
+    hooks_path = codex_home() / "hooks.json"
+    try:
+        config = json.loads(hooks_path.read_text())
+    except (FileNotFoundError, OSError, json.JSONDecodeError):
+        return "missing"
+    if not isinstance(config, dict) or not isinstance(config.get("hooks"), dict):
+        return "missing"
+
+    found = 0
+    for event_name in REQUIRED_EVENTS:
+        event_hooks = config["hooks"].get(event_name)
+        if not isinstance(event_hooks, list):
+            continue
+        event_found = False
+        for matcher_group in event_hooks:
+            handlers = matcher_group.get("hooks", []) if isinstance(matcher_group, dict) else []
+            if any(
+                isinstance(handler, dict)
+                and HOOK_MARKER in str(handler.get("command", ""))
+                for handler in handlers if isinstance(handlers, list)
+            ):
+                event_found = True
+                break
+        if event_found:
+            found += 1
+
+    if found == len(REQUIRED_EVENTS):
+        return "enabled"
+    if found:
+        return "partial"
+    return "missing"
 
 
 def install() -> int:
@@ -176,4 +219,7 @@ def record_session() -> int:
 if __name__ == "__main__":
     if len(sys.argv) == 2 and sys.argv[1] == "--install":
         raise SystemExit(install())
+    if len(sys.argv) == 2 and sys.argv[1] == "--status":
+        print(tracking_status())
+        raise SystemExit(0)
     raise SystemExit(record_session())
