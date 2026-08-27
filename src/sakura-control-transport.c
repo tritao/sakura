@@ -95,6 +95,7 @@ sakura_control_request_clear(SakuraControlRequest *request)
 	g_clear_pointer(&request->model, g_free);
 	g_clear_pointer(&request->reasoning_effort, g_free);
 	g_clear_pointer(&request->resume_session_id, g_free);
+	g_clear_pointer(&request->session_name, g_free);
 	g_clear_pointer(&request->tracking_token, g_free);
 	g_clear_pointer(&request->provider, g_free);
 	g_clear_pointer(&request->external_id, g_free);
@@ -891,6 +892,19 @@ sakura_control_encode_create_codex_request_with_model(
 	const gchar *reasoning_effort, const gchar *resume_session_id,
 	GByteArray *payload)
 {
+	return sakura_control_encode_create_codex_request_with_identity(
+		request_id, terminal_id, page_id, group_id, task_id, cwd, cols, rows,
+		model, reasoning_effort, resume_session_id, NULL, payload);
+}
+
+gboolean
+sakura_control_encode_create_codex_request_with_identity(
+	const gchar *request_id, const gchar *terminal_id, const gchar *page_id,
+	const gchar *group_id, const gchar *task_id, const gchar *cwd,
+	guint cols, guint rows, const gchar *model,
+	const gchar *reasoning_effort, const gchar *resume_session_id,
+	const gchar *session_name, GByteArray *payload)
+{
 	Sakura__Control__V1__CreateCodexRequest create_codex =
 		SAKURA__CONTROL__V1__CREATE_CODEX_REQUEST__INIT;
 	Sakura__Control__V1__Request request =
@@ -910,6 +924,7 @@ sakura_control_encode_create_codex_request_with_model(
 		(gchar *)sakura_control_string(reasoning_effort);
 	create_codex.resume_session_id =
 		(gchar *)sakura_control_string(resume_session_id);
+	create_codex.session_name = (gchar *)sakura_control_string(session_name);
 	request.request_id = (gchar *)request_id;
 	request.body_case = SAKURA__CONTROL__V1__REQUEST__BODY_CREATE_CODEX;
 	request.create_codex = &create_codex;
@@ -1427,6 +1442,7 @@ sakura_control_decode_request(const guint8 *payload,
 			request->model = g_strdup(decoded->create_codex->model);
 			request->resume_session_id = g_strdup(
 				decoded->create_codex->resume_session_id);
+			request->session_name = g_strdup(decoded->create_codex->session_name);
 			request->tracking_token = g_strdup(
 				decoded->create_codex->tracking_token);
 			request->order = decoded->create_codex->order;

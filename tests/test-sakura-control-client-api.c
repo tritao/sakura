@@ -34,6 +34,12 @@ main(void)
 	    error == NULL)
 		return 1;
 	g_clear_error(&error);
+	if (sakura_control_client_create_codex_terminal_with_identity(
+		    NULL, NULL, NULL, NULL, NULL, NULL, 80, 24,
+		    "gpt-5.6-luna", "xhigh", NULL, "collision", &terminal_id,
+		    &error) || error == NULL)
+		return 1;
+	g_clear_error(&error);
 	if (sakura_control_client_delete_page(NULL, "page", &error) ||
 	    error == NULL)
 		return 1;

@@ -405,6 +405,20 @@ sakura_control_client_create_codex_terminal_with_model(
 	const gchar *reasoning_effort, const gchar *resume_session_id,
 	gchar **created_terminal_id, GError **error)
 {
+	return sakura_control_client_create_codex_terminal_with_identity(
+		connection, terminal_id, page_id, group_id, task_id, cwd, cols, rows,
+		model, reasoning_effort, resume_session_id, NULL, created_terminal_id,
+		error);
+}
+
+gboolean
+sakura_control_client_create_codex_terminal_with_identity(
+	SakuraControlClientConnection *connection, const gchar *terminal_id,
+	const gchar *page_id, const gchar *group_id, const gchar *task_id,
+	const gchar *cwd, guint cols, guint rows, const gchar *model,
+	const gchar *reasoning_effort, const gchar *resume_session_id,
+	const gchar *session_name, gchar **created_terminal_id, GError **error)
+{
 	GByteArray *request = g_byte_array_new();
 	SakuraControlResponse response = { 0 };
 	gchar *request_id = g_uuid_string_random();
@@ -412,9 +426,10 @@ sakura_control_client_create_codex_terminal_with_model(
 
 	if (created_terminal_id != NULL)
 		*created_terminal_id = NULL;
-	if (!sakura_control_encode_create_codex_request_with_model(
+	if (!sakura_control_encode_create_codex_request_with_identity(
 		    request_id, terminal_id, page_id, group_id, task_id, cwd, cols,
-		    rows, model, reasoning_effort, resume_session_id, request) ||
+		    rows, model, reasoning_effort, resume_session_id, session_name,
+		    request) ||
 	    !sakura_control_client_request_terminal(connection, request_id, request,
 	                                            &response, error))
 		goto out;

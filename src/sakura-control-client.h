@@ -153,6 +153,12 @@ gboolean sakura_control_client_create_codex_terminal_with_model(
 	const gchar *cwd, guint cols, guint rows, const gchar *model,
 	const gchar *reasoning_effort, const gchar *resume_session_id,
 	gchar **created_terminal_id, GError **error);
+gboolean sakura_control_client_create_codex_terminal_with_identity(
+	SakuraControlClientConnection *connection, const gchar *terminal_id,
+	const gchar *page_id, const gchar *group_id, const gchar *task_id,
+	const gchar *cwd, guint cols, guint rows, const gchar *model,
+	const gchar *reasoning_effort, const gchar *resume_session_id,
+	const gchar *session_name, gchar **created_terminal_id, GError **error);
 gboolean sakura_control_client_attach_terminal(
 	SakuraControlClientConnection *connection, const gchar *terminal_id,
 	guint cols, guint rows, SakuraControlTerminalAttachment *attachment,

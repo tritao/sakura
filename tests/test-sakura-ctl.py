@@ -52,6 +52,7 @@ def main():
         manifest.write_text(
             "sessions:\n"
             "  - title: \"Tony · Manifest\"\n"
+            "    session_name: collision\n"
             "    working_directory: /tmp\n"
             f"    prompt_file: {prompt}\n"
             "    model: gpt-5.6-luna\n"
@@ -110,6 +111,11 @@ def main():
                 args.ctl, "codex", "apply", *target, "--group-name", "Tony",
                 "--manifest", str(manifest), "--print", "json",
             )
+            planned = run(
+                args.ctl, "codex", "apply", *target, "--group-name", "Tony",
+                "--manifest", str(manifest), "--dry-run", "--print", "json",
+            )
+            assert json.loads(planned.stdout)["status"] == "reuse"
             second = run(
                 args.ctl, "codex", "apply", *target, "--group-name", "Tony",
                 "--manifest", str(manifest), "--print", "json",
@@ -126,7 +132,7 @@ def main():
             ]
             paused = run(
                 args.ctl, "goal", "pause", *target, "--group-name", "Tony",
-                "--title", "Tony · Manifest",
+                "--session-name", "collision",
             )
             assert json.loads(paused.stdout)["goal"]["status"] == "paused"
             resumed = run(
@@ -144,6 +150,43 @@ def main():
                 "--manifest", str(manifest), "--print", "json",
             )
             assert json.loads(restarted_goal.stdout)["status"] == "reused"
+            renamed_manifest = root / "renamed-manifest.yml"
+            renamed_manifest.write_text(
+                manifest.read_text(encoding="utf-8").replace(
+                    "Tony · Manifest", "Display title changed"
+                ),
+                encoding="utf-8",
+            )
+            renamed_reuse = run(
+                args.ctl, "codex", "apply", *target, "--group-name", "Tony",
+                "--manifest", str(renamed_manifest), "--print", "json",
+            )
+            assert json.loads(renamed_reuse.stdout)["status"] == "reused"
+            duplicate_manifest = root / "duplicate-manifest.yml"
+            duplicate_manifest.write_text(
+                manifest.read_text(encoding="utf-8") +
+                manifest.read_text(encoding="utf-8").split("sessions:\n", 1)[1],
+                encoding="utf-8",
+            )
+            duplicate = subprocess.run([
+                args.ctl, "codex", "apply", *target, "--group-name", "Tony",
+                "--manifest", str(duplicate_manifest), "--dry-run",
+            ], text=True, capture_output=True)
+            assert duplicate.returncode != 0
+            assert "duplicate session_name 'collision'" in duplicate.stderr
+            conflict_manifest = root / "conflict-manifest.yml"
+            conflict_manifest.write_text(
+                manifest.read_text(encoding="utf-8").replace(
+                    "gpt-5.6-luna", "gpt-5.6-terra"
+                ),
+                encoding="utf-8",
+            )
+            conflict = subprocess.run([
+                args.ctl, "codex", "apply", *target, "--group-name", "Tony",
+                "--manifest", str(conflict_manifest), "--dry-run", "--print", "json",
+            ], text=True, capture_output=True)
+            assert conflict.returncode != 0
+            assert json.loads(conflict.stdout)["status"] == "conflict"
             saved = configparser.ConfigParser()
             saved.read(workspace, encoding="utf-8")
             assert saved["Session"].getint("page_count") == 2, dict(saved["Session"])
@@ -180,6 +223,10 @@ def main():
             page = saved["Page0"]
             assert page["title"] == "Tony · Camera"
             assert page.getboolean("title_set_by_user")
+            manifest_pages = [saved[f"Page{index}"] for index in range(2)
+                              if saved[f"Page{index}"]["title"] == "Tony · Manifest"]
+            assert len(manifest_pages) == 1
+            assert not manifest_pages[0].getboolean("title_set_by_user")
             terminals = [saved[f"Terminal{index}"] for index in range(2)]
             assert all(item["kind"] == "codex" for item in terminals)
             assert all(item["codex_model"] == "gpt-5.6-luna"
@@ -189,6 +236,8 @@ def main():
             assert all(item.getint("cols") == 132 for item in terminals)
             assert all(item.getint("rows") == 41 for item in terminals)
             assert all(item["codex_session_id"] for item in terminals)
+            assert sum(item.get("codex_session_name") == "collision"
+                       for item in terminals) == 1
             assert all(item.getboolean("resume_on_start") for item in terminals)
 
             run(
@@ -230,7 +279,7 @@ def main():
                 time.sleep(0.02)
             launches = [json.loads(line) for line in
                         arguments_log.read_text(encoding="utf-8").splitlines()]
-            assert len(launches) == 18
+            assert len(launches) == 19
             assert launches[1] == ["app-server", "--stdio", "--enable", "goals"]
             tui_launches = [launch for launch in launches
                             if launch[:1] != ["app-server"]]

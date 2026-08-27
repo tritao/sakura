@@ -633,9 +633,10 @@ test_mutation_request_roundtrip(void)
 	sakura_control_request_clear(&request);
 	g_byte_array_set_size(encoded, 0);
 
-	g_assert_true(sakura_control_encode_create_codex_request_with_model(
+	g_assert_true(sakura_control_encode_create_codex_request_with_identity(
 		"create-codex", "codex-1", "page-1", "group-1", "task-1",
-		"/tmp", 120, 50, "gpt-5.6-luna", "high", "resume-1", encoded));
+		"/tmp", 120, 50, "gpt-5.6-luna", "high", "resume-1",
+		"collision", encoded));
 	g_assert_true(sakura_control_decode_request(encoded->data, encoded->len,
 	                                           &request, &error));
 	g_assert_no_error(error);
@@ -648,6 +649,7 @@ test_mutation_request_roundtrip(void)
 	g_assert_cmpstr(request.model, ==, "gpt-5.6-luna");
 	g_assert_cmpstr(request.reasoning_effort, ==, "high");
 	g_assert_cmpstr(request.resume_session_id, ==, "resume-1");
+	g_assert_cmpstr(request.session_name, ==, "collision");
 	g_assert_cmpuint(request.cols, ==, 120);
 	g_assert_cmpuint(request.rows, ==, 50);
 	sakura_control_request_clear(&request);

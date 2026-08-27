@@ -249,6 +249,7 @@ message CreateCodexRequest {
   uint32 order = 11;
   bool has_order = 12;
   string model = 13;
+  string session_name = 14;
 }
 
 message TerminalInput {

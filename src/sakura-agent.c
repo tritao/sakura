@@ -1429,6 +1429,7 @@ sakura_agent_create_terminal_with_kind(SakuraAgent *agent,
 	create.core->kind = codex ? SAKURA_TAB_CODEX : SAKURA_TAB_SHELL;
 	create.core->resume_on_start = codex;
 	create.core->codex_session_id = g_strdup(request->resume_session_id);
+	create.core->codex_session_name = g_strdup(request->session_name);
 	create.core->codex_model = g_strdup(request->model);
 	create.core->codex_reasoning_effort = g_strdup(request->reasoning_effort);
 	create.core->tracking_token = codex ? g_strdup(tracking_token) : NULL;
