@@ -1264,6 +1264,7 @@ sakura_tab_add_with_options (const gchar *restore_cwd,
                               SakuraToolKind restore_tool,
                               const gchar *restore_codex_session_id,
                               const gchar *restore_codex_session_name,
+                              gboolean restore_codex_session_name_set_by_user,
                               const gchar *restore_codex_model,
                               const gchar *restore_codex_reasoning_effort,
                               const gchar *restore_tool_target,
@@ -1339,6 +1340,8 @@ sakura_tab_add_with_options (const gchar *restore_cwd,
 	               ? SAKURA_TAB_STATUS_IDLE : SAKURA_TAB_STATUS_NONE;
 	sk_tab->codex_session_id = g_strdup(restore_codex_session_id);
 	sk_tab->codex_session_name = g_strdup(restore_codex_session_name);
+	sk_tab->codex_session_name_set_by_user =
+		restore_codex_session_name_set_by_user;
 	sk_tab->codex_model = g_strdup(restore_codex_model);
 	sk_tab->codex_reasoning_effort = sakura_codex_reasoning_effort_is_valid(
 		restore_codex_reasoning_effort) ? g_strdup(restore_codex_reasoning_effort) : NULL;
@@ -1626,6 +1629,11 @@ sakura_tab_add_with_options (const gchar *restore_cwd,
 		sk_tab->label_set_byuser = true;
 	} else if (restore_kind == SAKURA_TAB_TOOL) {
 		default_label_text = (gchar *)sakura_tool_label(restore_tool);
+		sk_tab->label_set_byuser = false;
+	} else if (restore_kind == SAKURA_TAB_CODEX) {
+		default_label_text = (gchar *)(sk_tab->codex_session_name_set_by_user &&
+		                             sk_tab->codex_session_name != NULL
+		                           ? sk_tab->codex_session_name : _("Codex"));
 		sk_tab->label_set_byuser = false;
 	} else {
 		sk_tab->label_set_byuser=false;
@@ -2864,9 +2872,14 @@ sakura_tab_title_changed_cb(GtkWidget *widget, void *data)
 
 	/* User-set values override terminal-provided titles. */
 	if (!tab->label_set_byuser && tab->kind != SAKURA_TAB_TOOL) {
-		sakura_set_tab_label_text(title, page);
+		const gchar *display_title = tab->kind == SAKURA_TAB_CODEX
+			? tab->codex_session_name_set_by_user &&
+			  tab->codex_session_name != NULL && tab->codex_session_name[0] != '\0'
+			  ? tab->codex_session_name : _("Codex")
+			: title;
+		sakura_set_tab_label_text(display_title, page);
 		if (!sakura.main_title && tab == sakura.workspace->active_tab)
-			sakura_set_window_title(title);
+			sakura_set_window_title(display_title);
 	}
 }
 

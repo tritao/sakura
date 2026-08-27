@@ -384,6 +384,8 @@ sakura_workspace_model_snapshot_new(const SakuraWorkspaceModel *model,
 		                        ? g_strdup(tab->codex_session_id) : NULL;
 		record->codex_session_name = tab->kind == SAKURA_TAB_CODEX
 		                          ? g_strdup(tab->codex_session_name) : NULL;
+		record->codex_session_name_set_by_user = tab->kind == SAKURA_TAB_CODEX &&
+			tab->codex_session_name_set_by_user;
 		record->codex_model = tab->kind == SAKURA_TAB_CODEX
 		                    ? g_strdup(tab->codex_model) : NULL;
 		record->codex_reasoning_effort = tab->kind == SAKURA_TAB_CODEX

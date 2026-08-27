@@ -134,6 +134,7 @@ test_workspace_restore_snapshot(void)
 	tab->kind = SAKURA_TAB_CODEX;
 	tab->codex_session_id = g_strdup("session-a");
 	tab->codex_session_name = g_strdup("Agent session");
+	tab->codex_session_name_set_by_user = TRUE;
 	tab->codex_model = g_strdup("gpt-5.6-luna");
 	tab->codex_reasoning_effort = g_strdup("xhigh");
 	tab->codex_tracking_token = g_strdup("tracking-a");
@@ -166,6 +167,7 @@ test_workspace_restore_snapshot(void)
 	g_assert_true(restored_terminal->resume_on_start);
 	g_assert_cmpstr(restored_terminal->codex_session_id, ==, "session-a");
 	g_assert_cmpstr(restored_terminal->codex_session_name, ==, "Agent session");
+	g_assert_true(restored_terminal->codex_session_name_set_by_user);
 	g_assert_cmpstr(restored_terminal->codex_model, ==, "gpt-5.6-luna");
 	g_assert_cmpstr(restored_terminal->codex_reasoning_effort, ==, "xhigh");
 	g_assert_cmpstr(restored_terminal->tracking_token, ==, "tracking-a");
@@ -179,6 +181,7 @@ test_workspace_restore_snapshot(void)
 	g_assert_cmpstr(tab->page_id, ==, "page-a");
 	g_assert_cmpstr(tab->parent_id, ==, "task-a");
 	g_assert_cmpstr(tab->codex_session_name, ==, "Agent session");
+	g_assert_true(tab->codex_session_name_set_by_user);
 	g_assert_cmpuint(tab->runtime_status, ==, SAKURA_TERMINAL_EXITED);
 	g_assert_true(tab->resume_on_start);
 	g_assert_cmpuint(tab->cols, ==, 156);

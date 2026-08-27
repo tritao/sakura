@@ -1107,8 +1107,11 @@ sakura_codex_set_name_query_complete(struct sakura_codex_name_query *query,
 	    g_strcmp0(sk_tab->codex_session_id, query->session_id) == 0) {
 		g_free(sk_tab->codex_session_name);
 		sk_tab->codex_session_name = g_strdup(query->new_name);
-		if (!sk_tab->label_set_byuser)
+		sk_tab->codex_session_name_set_by_user = TRUE;
+		if (!sk_tab->label_set_byuser) {
+			sakura_set_tab_label_text(query->new_name, sakura_page_for_tab(sk_tab));
 			sakura_sidebar_update_tab(sk_tab);
+		}
 		sakura_session_mark_dirty();
 	}
 }
@@ -1936,6 +1939,8 @@ sakura_attach_codex_cb (GtkWidget *widget, void *data)
 			g_free(tab->codex_session_name);
 			tab->codex_session_name = sakura_codex_session_id_is_uuid(session)
 			                         ? NULL : g_strdup(session);
+			tab->codex_session_name_set_by_user =
+				!sakura_codex_session_id_is_uuid(session);
 			tab->kind = SAKURA_TAB_CODEX;
 			sakura_sidebar_update_tab(tab);
 			sakura_codex_sync_name(tab);

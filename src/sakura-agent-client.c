@@ -649,7 +649,8 @@ sakura_agent_materialize_snapshot_terminals(const SakuraSessionSnapshot *snapsho
 			record->cwd, parent, page_record->title,
 			page_record->title_set_by_user, record->kind,
 			sakura_tool_from_id(record->tool_id), record->codex_session_id,
-			record->codex_session_name, record->codex_model,
+			record->codex_session_name,
+			record->codex_session_name_set_by_user, record->codex_model,
 			record->codex_reasoning_effort, record->tool_target,
 			record->terminal_id, record->colorset, &config);
 		tab = sakura_find_pane_by_terminal_id(record->terminal_id);

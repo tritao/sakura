@@ -589,6 +589,7 @@ struct sakura_tab {
 	gchar *tool_target;
 	gchar *codex_session_id;
 	gchar *codex_session_name;
+	gboolean codex_session_name_set_by_user;
 	gchar *codex_model;
 	gchar *codex_reasoning_effort;
 	gchar *codex_resume_cwd;
@@ -861,6 +862,7 @@ void sakura_tab_add_with_options(const gchar *restore_cwd,
                                  SakuraToolKind restore_tool,
                                  const gchar *restore_codex_session_id,
                                  const gchar *restore_codex_session_name,
+                                 gboolean restore_codex_session_name_set_by_user,
                                  const gchar *restore_codex_model,
                                  const gchar *restore_codex_reasoning_effort,
                                  const gchar *restore_tool_target,

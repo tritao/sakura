@@ -1714,6 +1714,8 @@ sakura_agent_create_terminal_with_kind(SakuraAgent *agent,
 	create.core->resume_on_start = codex;
 	create.core->codex_session_id = g_strdup(request->resume_session_id);
 	create.core->codex_session_name = g_strdup(request->session_name);
+	create.core->codex_session_name_set_by_user =
+		request->session_name != NULL && request->session_name[0] != '\0';
 	create.core->codex_model = g_strdup(request->model);
 	create.core->codex_reasoning_effort = g_strdup(request->reasoning_effort);
 	create.core->tracking_token = codex ? g_strdup(tracking_token) : NULL;
@@ -2006,6 +2008,7 @@ sakura_agent_restart_terminal(SakuraAgent *agent,
 	gchar *reasoning_effort = NULL;
 	gchar *tracking_token = NULL;
 	gchar *session_name = NULL;
+	gboolean session_name_set_by_user = FALSE;
 	gchar *restart_cwd = NULL;
 	gchar *restart_page_id = NULL;
 	guint logical_order = G_MAXUINT;
@@ -2054,6 +2057,7 @@ sakura_agent_restart_terminal(SakuraAgent *agent,
 		restart_request.reasoning_effort = reasoning_effort;
 		restart_request.tracking_token = tracking_token;
 		session_name = g_strdup(logical_terminal->codex_session_name);
+		session_name_set_by_user = logical_terminal->codex_session_name_set_by_user;
 	}
 	else if (request->has_order)
 		logical_order = request->order;
@@ -2117,6 +2121,7 @@ sakura_agent_restart_terminal(SakuraAgent *agent,
 			replacement->order = logical_order;
 			g_free(replacement->codex_session_name);
 			replacement->codex_session_name = g_strdup(session_name);
+			replacement->codex_session_name_set_by_user = session_name_set_by_user;
 		}
 	}
 	g_free(resume_session_id);

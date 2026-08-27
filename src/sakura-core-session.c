@@ -793,6 +793,10 @@ sakura_session_snapshot_load_into(GKeyFile *key_file,
 	                                                "codex_session_id", NULL);
 		tab->codex_session_name = g_key_file_get_string(key_file, section,
 		                                                  "codex_session_name", NULL);
+		tab->codex_session_name_set_by_user = version < 13
+			? tab->codex_session_name != NULL && tab->codex_session_name[0] != '\0'
+			: g_key_file_get_boolean(key_file, section,
+			                         "codex_session_name_set_by_user", NULL);
 		tab->codex_model = g_key_file_get_string(key_file, section,
 		                                         "codex_model", NULL);
 		tab->codex_reasoning_effort = g_key_file_get_string(key_file, section,
@@ -1067,6 +1071,8 @@ sakura_session_snapshot_save(const SakuraSessionSnapshot *snapshot,
 			g_key_file_set_string(key_file, section, "codex_session_id", tab->codex_session_id);
 		if (tab->codex_session_name != NULL && tab->codex_session_name[0] != '\0')
 			g_key_file_set_string(key_file, section, "codex_session_name", tab->codex_session_name);
+		g_key_file_set_boolean(key_file, section, "codex_session_name_set_by_user",
+		                       tab->codex_session_name_set_by_user);
 		if (tab->codex_model != NULL && tab->codex_model[0] != '\0')
 			g_key_file_set_string(key_file, section, "codex_model", tab->codex_model);
 		if (tab->codex_reasoning_effort != NULL && tab->codex_reasoning_effort[0] != '\0')

@@ -1185,6 +1185,8 @@ sakura_core_workspace_from_snapshot(const SakuraSessionSnapshot *snapshot,
 			terminal->kind = record->kind;
 			terminal->codex_session_id = g_strdup(record->codex_session_id);
 			terminal->codex_session_name = g_strdup(record->codex_session_name);
+			terminal->codex_session_name_set_by_user =
+				record->codex_session_name_set_by_user;
 			terminal->resume_on_start = record->resume_on_start;
 			terminal->codex_model = g_strdup(record->codex_model);
 			terminal->codex_reasoning_effort = g_strdup(
@@ -1321,6 +1323,8 @@ sakura_core_workspace_sync_snapshot(const SakuraCoreWorkspace *workspace,
 		            ? model_terminal->activity_status : SAKURA_TAB_STATUS_IDLE;
 		tab->codex_session_id = g_strdup(model_terminal->codex_session_id);
 		tab->codex_session_name = g_strdup(model_terminal->codex_session_name);
+		tab->codex_session_name_set_by_user =
+			model_terminal->codex_session_name_set_by_user;
 		tab->codex_model = g_strdup(model_terminal->codex_model);
 		tab->codex_reasoning_effort = g_strdup(
 			model_terminal->codex_reasoning_effort);

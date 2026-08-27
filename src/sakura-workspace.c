@@ -4867,6 +4867,7 @@ sakura_workspace_restore_layout_subtree(SakuraPage *page,
 		                            sakura_tool_from_id(second_tab_record->tool_id),
 		                            second_tab_record->codex_session_id,
 		                            second_tab_record->codex_session_name,
+		                            second_tab_record->codex_session_name_set_by_user,
 		                            second_tab_record->codex_model,
 		                            second_tab_record->codex_reasoning_effort,
 		                            second_tab_record->tool_target,
@@ -4947,6 +4948,7 @@ sakura_workspace_restore_layout_snapshot(SakuraSessionSnapshot *snapshot)
 		                            sakura_tool_from_id(tab_record->tool_id),
 		                            tab_record->codex_session_id,
 		                            tab_record->codex_session_name,
+		                            tab_record->codex_session_name_set_by_user,
 		                            tab_record->codex_model,
 		                            tab_record->codex_reasoning_effort,
 		                            tab_record->tool_target,
@@ -5103,6 +5105,8 @@ sakura_workspace_restore_snapshot (SakuraSessionSnapshot *snapshot)
 		                            title_set, tab_kind, tool_kind,
 		                            tab_kind == SAKURA_TAB_CODEX ? record->codex_session_id : NULL,
 		                            tab_kind == SAKURA_TAB_CODEX ? record->codex_session_name : NULL,
+		                            tab_kind == SAKURA_TAB_CODEX &&
+		                            record->codex_session_name_set_by_user,
 		                            tab_kind == SAKURA_TAB_CODEX ? record->codex_model : NULL,
 		                            tab_kind == SAKURA_TAB_CODEX ? record->codex_reasoning_effort : NULL,
 		                            tab_kind == SAKURA_TAB_TOOL ? record->tool_target : NULL,
@@ -5240,6 +5244,7 @@ sakura_workspace_restore_layout_page(SakuraWorkspaceRestoreJob *job,
 	                            sakura_tool_from_id(tab_record->tool_id),
 	                            tab_record->codex_session_id,
 	                            tab_record->codex_session_name,
+	                            tab_record->codex_session_name_set_by_user,
 	                            tab_record->codex_model,
 	                            tab_record->codex_reasoning_effort,
 	                            tab_record->tool_target,
@@ -5319,6 +5324,8 @@ sakura_workspace_restore_tab_record(SakuraWorkspaceRestoreJob *job,
 	                            ? record->codex_session_id : NULL,
 	                            tab_kind == SAKURA_TAB_CODEX
 	                            ? record->codex_session_name : NULL,
+	                            tab_kind == SAKURA_TAB_CODEX &&
+	                            record->codex_session_name_set_by_user,
 	                            tab_kind == SAKURA_TAB_CODEX
 	                            ? record->codex_model : NULL,
 	                            tab_kind == SAKURA_TAB_CODEX
@@ -7862,7 +7869,8 @@ sakura_sidebar_update_tab(SakuraTab *tab)
 		title = g_strdup(gtk_label_get_text(GTK_LABEL(tab->label)));
 		g_strstrip(title);
 	} else if (tab->kind == SAKURA_TAB_CODEX) {
-		title = tab->codex_session_name != NULL && tab->codex_session_name[0] != '\0'
+		title = tab->codex_session_name_set_by_user &&
+		        tab->codex_session_name != NULL && tab->codex_session_name[0] != '\0'
 		       ? g_strdup(tab->codex_session_name) : g_strdup(_("Codex"));
 	} else if (tab->kind == SAKURA_TAB_TOOL &&
 	           (tab->tool == SAKURA_TOOL_GH_DASH || tab->tool == SAKURA_TOOL_GH_PR)) {
