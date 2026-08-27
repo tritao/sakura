@@ -15,7 +15,21 @@ typedef struct {
 	gchar *reasoning;
 	gchar *goal_file;
 	gchar *goal_policy;
+	gboolean dynamic_title;
 } SakuraCtlManifestEntry;
+
+typedef enum {
+	SAKURA_MANIFEST_REUSE,
+	SAKURA_MANIFEST_CREATE,
+	SAKURA_MANIFEST_RECOVER,
+	SAKURA_MANIFEST_CONFLICT
+} SakuraCtlManifestAction;
+
+typedef struct {
+	SakuraCtlManifestEntry *entry;
+	SakuraCtlManifestAction action;
+	SakuraSessionTabRecord *match;
+} SakuraCtlManifestPlan;
 
 static void
 manifest_entry_free(SakuraCtlManifestEntry *entry)
@@ -99,6 +113,19 @@ parse_manifest(const gchar *path, GError **error)
 			current->goal_file = g_steal_pointer(&value);
 		else if (strcmp(key, "goal_policy") == 0 || strcmp(key, "goal-policy") == 0)
 			current->goal_policy = g_steal_pointer(&value);
+		else if (strcmp(key, "dynamic_title") == 0 ||
+		         strcmp(key, "dynamic-title") == 0) {
+			if (g_ascii_strcasecmp(value, "true") == 0 || strcmp(value, "1") == 0 ||
+			    g_ascii_strcasecmp(value, "yes") == 0)
+				current->dynamic_title = TRUE;
+			else if (g_ascii_strcasecmp(value, "false") != 0 &&
+			         strcmp(value, "0") != 0 && g_ascii_strcasecmp(value, "no") != 0) {
+				g_set_error(error, G_IO_ERROR, G_IO_ERROR_INVALID_DATA,
+				            "manifest session has invalid dynamic_title '%s'", value);
+				g_ptr_array_unref(entries);
+				return NULL;
+			}
+		}
 	}
 	for (guint i = 0; i < entries->len; i++) {
 		SakuraCtlManifestEntry *entry = g_ptr_array_index(entries, i);
@@ -106,6 +133,12 @@ parse_manifest(const gchar *path, GError **error)
 		    entry->working_directory == NULL || entry->working_directory[0] == '\0') {
 			g_set_error(error, G_IO_ERROR, G_IO_ERROR_INVALID_DATA,
 			            "manifest session %u requires title and working_directory", i + 1);
+			g_ptr_array_unref(entries);
+			return NULL;
+		}
+		if (entry->session_name == NULL || entry->session_name[0] == '\0') {
+			g_set_error(error, G_IO_ERROR, G_IO_ERROR_INVALID_DATA,
+			            "manifest session %u requires session_name", i + 1);
 			g_ptr_array_unref(entries);
 			return NULL;
 		}
@@ -573,59 +606,114 @@ find_goal_sessions(SakuraSessionSnapshot *snapshot, const gchar *group_id,
 static gboolean
 apply_manifest(SakuraControlClientConnection *connection,
                const gchar *manifest_path, const gchar *workspace_id,
-               const gchar *group_id, const gchar *group_name,
-               const gchar *print_format, gboolean dry_run, GError **error)
+               const gchar *socket_path, const gchar *group_id,
+               const gchar *group_name, const gchar *print_format,
+               gboolean dry_run, gboolean recover_stale, GError **error)
 {
 	g_autoptr(GPtrArray) entries = parse_manifest(manifest_path, error);
 	g_autofree gchar *self = g_file_read_link("/proc/self/exe", error);
+	g_autoptr(GPtrArray) plans = g_ptr_array_new_with_free_func(g_free);
+	SakuraSessionSnapshot *preflight = NULL;
 	gboolean had_conflict = FALSE;
 
 	if (entries == NULL || self == NULL)
 		return FALSE;
+	if (!request_snapshot(connection, &preflight, error))
+		return FALSE;
+
+	/* Classify every entry against one authoritative snapshot before mutating. */
 	for (guint i = 0; i < entries->len; i++) {
 		SakuraCtlManifestEntry *entry = g_ptr_array_index(entries, i);
-		SakuraSessionSnapshot *snapshot = NULL;
 		g_autoptr(GPtrArray) identity_matches = NULL;
-		SakuraSessionTabRecord *match = NULL;
+		g_autoptr(GHashTable) recovery_ids = g_hash_table_new(g_str_hash,
+		                                                    g_str_equal);
+		SakuraCtlManifestPlan *plan = g_new0(SakuraCtlManifestPlan, 1);
+		SakuraSessionTabRecord *recovery = NULL;
+		guint visible = 0, healthy = 0, recoverable = 0;
+
+		plan->entry = entry;
+		plan->action = SAKURA_MANIFEST_CREATE;
+		identity_matches = find_manifest_identity_matches(preflight, group_id, entry);
+		for (guint j = 0; j < identity_matches->len; j++) {
+			SakuraSessionTabRecord *candidate = g_ptr_array_index(identity_matches, j);
+			SakuraSessionPageRecord *page = snapshot_page_for_tab(preflight, candidate);
+
+			if (page != NULL && !page->archived) {
+				visible++;
+				if (manifest_terminal_is_healthy(preflight, candidate, entry)) {
+					healthy++;
+					plan->match = candidate;
+				}
+			}
+			if (candidate->codex_session_id != NULL &&
+			    candidate->codex_session_id[0] != '\0') {
+				if (g_hash_table_add(recovery_ids, candidate->codex_session_id)) {
+					recoverable++;
+					recovery = candidate;
+				}
+			}
+		}
+		if (healthy == 1)
+			plan->action = SAKURA_MANIFEST_REUSE;
+		else if (healthy > 1 || visible > 0 || identity_matches->len > 0) {
+			if (recover_stale && healthy == 0 && recoverable == 1) {
+				plan->action = SAKURA_MANIFEST_RECOVER;
+				plan->match = recovery;
+			} else {
+				plan->action = SAKURA_MANIFEST_CONFLICT;
+				had_conflict = TRUE;
+			}
+		}
+		g_ptr_array_add(plans, plan);
+	}
+
+	for (guint i = 0; i < plans->len; i++) {
+		SakuraCtlManifestPlan *plan = g_ptr_array_index(plans, i);
+		SakuraCtlManifestEntry *entry = plan->entry;
+		const gchar *status = plan->action == SAKURA_MANIFEST_REUSE ? "reuse" :
+		                      plan->action == SAKURA_MANIFEST_CREATE ? "create" :
+		                      plan->action == SAKURA_MANIFEST_RECOVER ? "recover" :
+		                      "conflict";
+
+		if (dry_run || plan->action == SAKURA_MANIFEST_CONFLICT) {
+			if (print_format != NULL && strcmp(print_format, "json") == 0) {
+				g_autofree gchar *j_title = json_escape(entry->title);
+				g_autofree gchar *j_name = json_escape(entry->session_name);
+				g_print("{\"status\":\"%s\",\"title\":\"%s\","
+				        "\"session_name\":\"%s\"}\n", status, j_title, j_name);
+			} else
+				g_print("%s\t%s\t%s\n", status, entry->session_name, entry->title);
+		}
+	}
+	if (had_conflict) {
+		sakura_session_snapshot_free(preflight);
+		g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_FAILED,
+		                    "manifest preflight found conflicts");
+		return FALSE;
+	}
+	if (dry_run) {
+		sakura_session_snapshot_free(preflight);
+		return TRUE;
+	}
+
+	for (guint i = 0; i < plans->len; i++) {
+		SakuraCtlManifestPlan *plan = g_ptr_array_index(plans, i);
+		SakuraCtlManifestEntry *entry = plan->entry;
+		SakuraSessionTabRecord *match = plan->match;
 		GPtrArray *args;
 		g_autofree gchar *stdout_text = NULL;
 		g_autofree gchar *stderr_text = NULL;
 		g_autofree gchar *prepared_session_id = NULL;
 		gint wait_status = 0;
 
-		if (!request_snapshot(connection, &snapshot, error))
-			return FALSE;
-		identity_matches = find_manifest_identity_matches(snapshot, group_id, entry);
-		if (identity_matches->len == 1)
-			match = g_ptr_array_index(identity_matches, 0);
-		if (identity_matches->len > 1 ||
-		    (match != NULL && !manifest_terminal_is_healthy(snapshot, match, entry))) {
-			if (print_format != NULL && strcmp(print_format, "json") == 0) {
-				g_autofree gchar *j_title = json_escape(entry->title);
-				g_autofree gchar *j_name = json_escape(entry->session_name);
-				g_print("{\"status\":\"conflict\",\"title\":\"%s\","
-				        "\"session_name\":\"%s\"}\n", j_title, j_name);
-			} else
-				g_print("conflict\t%s\t%s\n", entry->session_name != NULL
-				        ? entry->session_name : "-", entry->title);
-			had_conflict = TRUE;
-			sakura_session_snapshot_free(snapshot);
-			if (dry_run)
-				continue;
-			g_set_error(error, G_IO_ERROR, G_IO_ERROR_FAILED,
-			            "manifest identity '%s' is ambiguous or stale",
-			            entry->session_name != NULL ? entry->session_name
-			                                        : entry->title);
-			return FALSE;
-		}
-		if (match != NULL) {
-			if (!dry_run && entry->goal_file != NULL && entry->goal_file[0] != '\0') {
+		if (plan->action == SAKURA_MANIFEST_REUSE) {
+			if (entry->goal_file != NULL && entry->goal_file[0] != '\0') {
 				g_autofree gchar *goal_output = run_codex_goal(
 					match->codex_session_id, entry->goal_policy,
 					entry->goal_file, entry->title, error);
 
 				if (goal_output == NULL) {
-					sakura_session_snapshot_free(snapshot);
+					sakura_session_snapshot_free(preflight);
 					return FALSE;
 				}
 			}
@@ -634,39 +722,32 @@ apply_manifest(SakuraControlClientConnection *connection,
 				g_autofree gchar *j_terminal = json_escape(match->terminal_id);
 				g_print("{\"status\":\"%s\",\"title\":\"%s\","
 				        "\"terminal_id\":\"%s\"}\n",
-				        dry_run ? "reuse" : "reused", j_title, j_terminal);
+				        "reused", j_title, j_terminal);
 			} else
-				g_print("%s\t%s\t%s\n", dry_run ? "reuse" : "reused",
-				        entry->title, match->terminal_id);
-			sakura_session_snapshot_free(snapshot);
+				g_print("reused\t%s\t%s\n", entry->title, match->terminal_id);
 			continue;
 		}
-		if (dry_run) {
-			if (print_format != NULL && strcmp(print_format, "json") == 0) {
-				g_autofree gchar *j_title = json_escape(entry->title);
-				g_autofree gchar *j_name = json_escape(entry->session_name);
-				g_print("{\"status\":\"create\",\"title\":\"%s\","
-				        "\"session_name\":\"%s\"}\n", j_title, j_name);
-			} else
-				g_print("create\t%s\t%s\n", entry->session_name != NULL
-				        ? entry->session_name : "-", entry->title);
-			sakura_session_snapshot_free(snapshot);
-			continue;
-		}
-		sakura_session_snapshot_free(snapshot);
 		args = g_ptr_array_new_with_free_func(g_free);
 		g_ptr_array_add(args, g_strdup(self));
 		g_ptr_array_add(args, g_strdup("codex"));
 		g_ptr_array_add(args, g_strdup("--workspace"));
 		g_ptr_array_add(args, g_strdup(workspace_id));
+		if (socket_path != NULL && socket_path[0] != '\0') {
+			g_ptr_array_add(args, g_strdup("--socket"));
+			g_ptr_array_add(args, g_strdup(socket_path));
+		}
 		g_ptr_array_add(args, g_strdup("--group"));
 		g_ptr_array_add(args, g_strdup(group_id));
 		g_ptr_array_add(args, g_strdup("--title"));
 		g_ptr_array_add(args, g_strdup(entry->title));
-		g_ptr_array_add(args, g_strdup("--dynamic-title"));
+		if (entry->dynamic_title)
+			g_ptr_array_add(args, g_strdup("--dynamic-title"));
 		g_ptr_array_add(args, g_strdup("--working-directory"));
 		g_ptr_array_add(args, g_strdup(entry->working_directory));
-		if (entry->prompt_file != NULL && entry->prompt_file[0] != '\0') {
+		if (plan->action == SAKURA_MANIFEST_RECOVER) {
+			g_ptr_array_add(args, g_strdup("--resume"));
+			g_ptr_array_add(args, g_strdup(match->codex_session_id));
+		} else if (entry->prompt_file != NULL && entry->prompt_file[0] != '\0') {
 			prepared_session_id = prepare_codex_thread(entry, error);
 			if (prepared_session_id == NULL) {
 				g_ptr_array_unref(args);
@@ -705,16 +786,24 @@ apply_manifest(SakuraControlClientConnection *connection,
 		g_ptr_array_unref(args);
 		if (entry->goal_file != NULL && entry->goal_file[0] != '\0') {
 			SakuraSessionSnapshot *created_snapshot = NULL;
-			SakuraSessionTabRecord *created_match;
+			SakuraSessionTabRecord *created_match = NULL;
+			guint healthy_matches = 0;
 
-			if (!request_snapshot(connection, &created_snapshot, error))
+			if (!request_snapshot(connection, &created_snapshot, error)) {
+				sakura_session_snapshot_free(preflight);
 				return FALSE;
+			}
 			g_autoptr(GPtrArray) created_matches =
 				find_manifest_identity_matches(created_snapshot, group_id, entry);
-			created_match = created_matches->len == 1
-			              ? g_ptr_array_index(created_matches, 0) : NULL;
-			if (created_match == NULL ||
-			    !manifest_terminal_is_healthy(created_snapshot, created_match, entry)) {
+			for (guint j = 0; j < created_matches->len; j++) {
+				SakuraSessionTabRecord *candidate = g_ptr_array_index(created_matches, j);
+
+				if (manifest_terminal_is_healthy(created_snapshot, candidate, entry)) {
+					healthy_matches++;
+					created_match = candidate;
+				}
+			}
+			if (healthy_matches != 1) {
 				sakura_session_snapshot_free(created_snapshot);
 				g_set_error(error, G_IO_ERROR, G_IO_ERROR_NOT_FOUND,
 				            "created session '%s' was not found for goal setup",
@@ -730,11 +819,7 @@ apply_manifest(SakuraControlClientConnection *connection,
 		}
 	}
 	(void)group_name;
-	if (dry_run && had_conflict) {
-		g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_FAILED,
-		                    "manifest dry-run found conflicts");
-		return FALSE;
-	}
+	sakura_session_snapshot_free(preflight);
 	return TRUE;
 }
 
@@ -813,7 +898,7 @@ main(int argc, char **argv)
 	SakuraSessionGroupRecord *resolved_group = NULL;
 	const gchar *command, *goal_action = NULL;
 	gboolean codex, goal, success, apply = FALSE, create_group_if_missing = FALSE;
-	gboolean dynamic_title = FALSE, dry_run = FALSE;
+	gboolean dynamic_title = FALSE, dry_run = FALSE, recover_stale = FALSE;
 	gboolean created_resource = FALSE;
 	int result = EXIT_FAILURE;
 	GOptionEntry entries[] = {
@@ -849,6 +934,8 @@ main(int argc, char **argv)
 		  "Set an initial page title without locking dynamic updates", NULL },
 		{ "dry-run", 0, 0, G_OPTION_ARG_NONE, &dry_run,
 		  "Plan manifest changes without mutating the workspace", NULL },
+		{ "recover-stale", 0, 0, G_OPTION_ARG_NONE, &recover_stale,
+		  "Resume one known stale manifest thread into a new page", NULL },
 		{ "session-name", 0, 0, G_OPTION_ARG_STRING, &session_name,
 		  "Set the Codex session name once its ID is available", "NAME" },
 		{ "prompt-file", 0, 0, G_OPTION_ARG_FILENAME, &prompt_file,
@@ -1080,6 +1167,11 @@ main(int argc, char **argv)
 		                    "--dry-run is only valid with 'codex apply'");
 		goto out;
 	}
+	if (recover_stale && !apply) {
+		g_set_error_literal(&error, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT,
+		                    "--recover-stale is only valid with 'codex apply'");
+		goto out;
+	}
 	if (dynamic_title && (title == NULL || title[0] == '\0')) {
 		g_set_error_literal(&error, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT,
 		                    "--dynamic-title requires --title");
@@ -1195,7 +1287,8 @@ main(int argc, char **argv)
 			goto out;
 		}
 		if (!apply_manifest(connection, manifest, endpoint->workspace_id,
-		                    group_id, group_name, print_format, dry_run, &error))
+		                    endpoint->socket_path, group_id, group_name,
+		                    print_format, dry_run, recover_stale, &error))
 			goto out;
 		result = EXIT_SUCCESS;
 		goto out;

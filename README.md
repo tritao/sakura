@@ -86,10 +86,12 @@ sakura-ctl codex apply --group-name Tony --create-group \
   --manifest ~/dev/OpenTony-shared/sessions/manifest.yml --print json
 ```
 
-The manifest uses a `sessions` list. A page is reused only when its group,
-title, canonical working directory, model, reasoning effort, running state,
-and Codex session identity match. An incomplete or stale matching page is
-replaced instead of duplicated:
+The manifest uses a `sessions` list and requires a unique `session_name` for
+each entry. That stable name, scoped to the selected group, is the managed
+identity; `title` is only the preferred display label. A page is reused when
+exactly one visible session with that identity is healthy and its canonical
+working directory, model, and reasoning effort match. Archived pages remain
+history and do not conflict with a healthy visible session:
 
 ```yaml
 sessions:
@@ -99,12 +101,21 @@ sessions:
     prompt_file: /home/joao/dev/OpenTony-shared/sessions/camera.md
     model: gpt-5.6-luna
     reasoning: xhigh
+    dynamic_title: false
 ```
 
 `model` and `reasoning` are independent per-session Codex overrides. Omitting
 either keeps the corresponding value from the user's Codex configuration.
-Creation waits for Codex readiness before sending the initial prompt. If
-startup fails before readiness, the new page and terminal are rolled back.
+Titles are compact and locked by default; set `dynamic_title: true` only when
+terminal-driven title changes are desired. `codex apply --dry-run` preflights
+the complete manifest and reports `reuse`, `create`, `recover`, or `conflict`
+without changing the workspace. A normal apply also preflights every entry
+before creating anything. Stale identities remain conflicts unless
+`--recover-stale` is given, in which case one unambiguous known Codex thread is
+resumed into a new page without deleting its history. Creation waits for Codex
+readiness before sending the initial prompt. If startup fails before readiness,
+the new page and terminal are rolled back; an interrupted apply is safe to run
+again.
 Use `sakura-ctl delete-page --page ID` to explicitly remove a page and all of
 its terminals.
 

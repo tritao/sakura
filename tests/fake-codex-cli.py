@@ -82,6 +82,8 @@ if sys.argv[1:3] == ["app-server", "--stdio"]:
 
 tracking_dir = os.environ.get("SAKURA_CODEX_TRACKING_DIR")
 tracking_token = os.environ.get("SAKURA_CODEX_TAB_TOKEN")
+if "slow-session" in sys.argv:
+    time.sleep(2)
 if tracking_dir and tracking_token and "no-session" not in sys.argv:
     session_id = str(uuid.uuid5(uuid.NAMESPACE_URL, tracking_token))
     tracking_path = Path(tracking_dir)

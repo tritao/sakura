@@ -187,6 +187,42 @@ def main():
             ], text=True, capture_output=True)
             assert conflict.returncode != 0
             assert json.loads(conflict.stdout)["status"] == "conflict"
+            preflight_manifest = root / "preflight-manifest.yml"
+            preflight_manifest.write_text(
+                "sessions:\n"
+                "  - title: preflight-new\n"
+                "    session_name: preflight-new\n"
+                "    working_directory: /tmp\n"
+                "    model: gpt-5.6-luna\n"
+                "    reasoning: xhigh\n" +
+                conflict_manifest.read_text(encoding="utf-8").split(
+                    "sessions:\n", 1
+                )[1],
+                encoding="utf-8",
+            )
+            before_preflight = configparser.ConfigParser()
+            before_preflight.read(workspace, encoding="utf-8")
+            rejected = subprocess.run([
+                args.ctl, "codex", "apply", *target, "--group-name", "Tony",
+                "--manifest", str(preflight_manifest), "--print", "json",
+            ], text=True, capture_output=True)
+            assert rejected.returncode != 0
+            after_preflight = configparser.ConfigParser()
+            after_preflight.read(workspace, encoding="utf-8")
+            assert after_preflight["Session"].getint("page_count") == \
+                before_preflight["Session"].getint("page_count")
+            missing_identity = root / "missing-identity.yml"
+            missing_identity.write_text(
+                "sessions:\n  - title: legacy\n"
+                "    working_directory: /tmp\n",
+                encoding="utf-8",
+            )
+            missing = subprocess.run([
+                args.ctl, "codex", "apply", *target, "--group-name", "Tony",
+                "--manifest", str(missing_identity), "--dry-run",
+            ], text=True, capture_output=True)
+            assert missing.returncode != 0
+            assert "requires session_name" in missing.stderr
             saved = configparser.ConfigParser()
             saved.read(workspace, encoding="utf-8")
             assert saved["Session"].getint("page_count") == 2, dict(saved["Session"])
@@ -226,7 +262,7 @@ def main():
             manifest_pages = [saved[f"Page{index}"] for index in range(2)
                               if saved[f"Page{index}"]["title"] == "Tony · Manifest"]
             assert len(manifest_pages) == 1
-            assert not manifest_pages[0].getboolean("title_set_by_user")
+            assert manifest_pages[0].getboolean("title_set_by_user")
             terminals = [saved[f"Terminal{index}"] for index in range(2)]
             assert all(item["kind"] == "codex" for item in terminals)
             assert all(item["codex_model"] == "gpt-5.6-luna"
@@ -290,6 +326,86 @@ def main():
             assert "9f328589-2569-5184-a037-0d4415dbb70d" in tui_launches[1]
             assert tui_launches[4][tui_launches[4].index("--model") + 1] == "exit-immediately"
             assert tui_launches[5][tui_launches[5].index("--model") + 1] == "no-session"
+
+            recovered_stale = run(
+                args.ctl, "codex", "apply", *target, "--group-name", "Tony",
+                "--manifest", str(conflict_manifest), "--recover-stale",
+                "--print", "json",
+            )
+            assert json.loads(recovered_stale.stdout)["page_id"]
+            original_still_reusable = run(
+                args.ctl, "codex", "apply", *target, "--group-name", "Tony",
+                "--manifest", str(manifest), "--dry-run", "--print", "json",
+            )
+            assert json.loads(original_still_reusable.stdout)["status"] == "reuse"
+
+            interrupted_manifest = root / "interrupted-manifest.yml"
+            interrupted_manifest.write_text(
+                "sessions:\n"
+                "  - title: interrupt-one\n"
+                "    session_name: interrupt-one\n"
+                "    working_directory: /tmp\n"
+                "    model: gpt-5.6-luna\n"
+                "    reasoning: xhigh\n"
+                "  - title: interrupt-two\n"
+                "    session_name: interrupt-two\n"
+                "    working_directory: /tmp\n"
+                "    model: slow-session\n"
+                "    reasoning: xhigh\n",
+                encoding="utf-8",
+            )
+            saved.read(workspace, encoding="utf-8")
+            before_interrupt = saved["Session"].getint("page_count")
+            applying = subprocess.Popen([
+                args.ctl, "codex", "apply", *target, "--group-name", "Tony",
+                "--manifest", str(interrupted_manifest),
+            ], env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            deadline = time.monotonic() + 5
+            while time.monotonic() < deadline:
+                saved.read(workspace, encoding="utf-8")
+                if saved["Session"].getint("page_count") >= before_interrupt + 2:
+                    break
+                time.sleep(0.02)
+            assert saved["Session"].getint("page_count") >= before_interrupt + 2
+            applying.terminate()
+            applying.wait(timeout=3)
+            time.sleep(2.2)
+            repeated = run(
+                args.ctl, "codex", "apply", *target, "--group-name", "Tony",
+                "--manifest", str(interrupted_manifest), "--print", "json",
+            )
+            repeated_statuses = [json.loads(line)["status"] for line in
+                                 repeated.stdout.splitlines()]
+            assert repeated_statuses == ["reused", "reused"]
+
+            stop_agent(agent)
+            archived = configparser.ConfigParser()
+            archived.read(workspace, encoding="utf-8")
+            for index in range(archived["Session"].getint("page_count")):
+                page_section = archived[f"Page{index}"]
+                page_id = page_section["id"]
+                matching = [archived[f"Terminal{terminal_index}"] for terminal_index
+                            in range(archived["Session"].getint("terminal_count"))
+                            if archived[f"Terminal{terminal_index}"]["page_id"] == page_id]
+                if (matching and matching[0].get("codex_session_name") == "collision" and
+                        matching[0].get("codex_model") == "gpt-5.6-luna"):
+                    page_section["archived"] = "true"
+            with workspace.open("w", encoding="utf-8") as output:
+                archived.write(output)
+            socket.unlink(missing_ok=True)
+            agent = subprocess.Popen([
+                args.agent, "--socket", str(socket), "--workspace-file",
+                str(workspace), "--session", str(session),
+                "--workspace-id", "ctl-integration",
+            ], env=env)
+            deadline = time.monotonic() + 5
+            while not socket.exists() and time.monotonic() < deadline:
+                time.sleep(0.02)
+            archived_history = run(
+                args.ctl, "codex", "apply", *target, "--group-name", "Tony",
+                "--manifest", str(conflict_manifest), "--dry-run", "--print", "json",
+            )
+            assert json.loads(archived_history.stdout)["status"] == "reuse"
         finally:
             stop_agent(agent)
 
