@@ -62,6 +62,22 @@ message Page {
   string active_terminal_id = 8;
 }
 
+message Job {
+  string name = 1;
+  string session_name = 2;
+  string schedule = 3;
+  string timezone = 4;
+  string prompt_file = 5;
+  string overlap_policy = 6;
+  string missed_run_policy = 7;
+  bool enabled = 8;
+  bool running = 9;
+  int64 next_run_unix = 10;
+  int64 last_run_unix = 11;
+  string last_status = 12;
+  string last_error = 13;
+}
+
 message WorkspaceSnapshot {
   repeated Group groups = 1;
   repeated Task tasks = 2;
@@ -72,7 +88,20 @@ message WorkspaceSnapshot {
   repeated Terminal terminals = 7;
   repeated Page pages = 8;
   uint64 workspace_revision = 9;
+  repeated Job jobs = 10;
 }
+
+message UpsertJobRequest {
+  Job job = 1;
+}
+
+message SetJobEnabledRequest {
+  string name = 1;
+  bool enabled = 2;
+}
+
+message DeleteJobRequest { string name = 1; }
+message RunJobRequest { string name = 1; }
 
 message EntityRef {
   string kind = 1;
@@ -334,6 +363,10 @@ message Request {
     ListFilesRequest list_files = 26;
     ReadFileRequest read_file = 27;
     WriteFileRequest write_file = 28;
+    UpsertJobRequest upsert_job = 34;
+    SetJobEnabledRequest set_job_enabled = 35;
+    DeleteJobRequest delete_job = 36;
+    RunJobRequest run_job = 37;
   }
   uint64 expected_revision = 23;
   bool has_expected_revision = 24;

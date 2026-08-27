@@ -15,6 +15,12 @@ typedef struct {
 	gchar *reasoning;
 	gchar *goal_file;
 	gchar *goal_policy;
+	gchar *job_name;
+	gchar *schedule;
+	gchar *timezone;
+	gchar *scheduled_prompt_file;
+	gchar *overlap_policy;
+	gchar *missed_run_policy;
 	gboolean dynamic_title;
 } SakuraCtlManifestEntry;
 
@@ -44,6 +50,12 @@ manifest_entry_free(SakuraCtlManifestEntry *entry)
 	g_free(entry->reasoning);
 	g_free(entry->goal_file);
 	g_free(entry->goal_policy);
+	g_free(entry->job_name);
+	g_free(entry->schedule);
+	g_free(entry->timezone);
+	g_free(entry->scheduled_prompt_file);
+	g_free(entry->overlap_policy);
+	g_free(entry->missed_run_policy);
 	g_free(entry);
 }
 
@@ -70,6 +82,7 @@ parse_manifest(const gchar *path, GError **error)
 	g_auto(GStrv) lines = NULL;
 	GPtrArray *entries;
 	g_autoptr(GHashTable) session_names = g_hash_table_new(g_str_hash, g_str_equal);
+	g_autoptr(GHashTable) job_names = g_hash_table_new(g_str_hash, g_str_equal);
 	SakuraCtlManifestEntry *current = NULL;
 
 	if (!g_file_get_contents(path, &contents, NULL, error))
@@ -113,6 +126,19 @@ parse_manifest(const gchar *path, GError **error)
 			current->goal_file = g_steal_pointer(&value);
 		else if (strcmp(key, "goal_policy") == 0 || strcmp(key, "goal-policy") == 0)
 			current->goal_policy = g_steal_pointer(&value);
+		else if (strcmp(key, "job_name") == 0 || strcmp(key, "job-name") == 0)
+			current->job_name = g_steal_pointer(&value);
+		else if (strcmp(key, "schedule") == 0)
+			current->schedule = g_steal_pointer(&value);
+		else if (strcmp(key, "timezone") == 0)
+			current->timezone = g_steal_pointer(&value);
+		else if (strcmp(key, "scheduled_prompt_file") == 0 ||
+		         strcmp(key, "scheduled-prompt-file") == 0)
+			current->scheduled_prompt_file = g_steal_pointer(&value);
+		else if (strcmp(key, "overlap_policy") == 0 || strcmp(key, "overlap-policy") == 0)
+			current->overlap_policy = g_steal_pointer(&value);
+		else if (strcmp(key, "missed_run_policy") == 0 || strcmp(key, "missed-run-policy") == 0)
+			current->missed_run_policy = g_steal_pointer(&value);
 		else if (strcmp(key, "dynamic_title") == 0 ||
 		         strcmp(key, "dynamic-title") == 0) {
 			if (g_ascii_strcasecmp(value, "true") == 0 || strcmp(value, "1") == 0 ||
@@ -166,6 +192,27 @@ parse_manifest(const gchar *path, GError **error)
 				return NULL;
 			}
 		}
+		if (entry->job_name != NULL || entry->schedule != NULL ||
+		    entry->scheduled_prompt_file != NULL) {
+			if (entry->job_name == NULL || entry->job_name[0] == '\0' ||
+			    entry->schedule == NULL || entry->schedule[0] == '\0' ||
+			    entry->scheduled_prompt_file == NULL ||
+			    entry->scheduled_prompt_file[0] == '\0') {
+				g_set_error(error, G_IO_ERROR, G_IO_ERROR_INVALID_DATA,
+				            "manifest session %u schedule requires job_name, schedule, and scheduled_prompt_file", i + 1);
+				g_ptr_array_unref(entries); return NULL;
+			}
+			if (!g_path_is_absolute(entry->scheduled_prompt_file)) {
+				g_autofree gchar *directory = g_path_get_dirname(path);
+				gchar *resolved = g_canonicalize_filename(entry->scheduled_prompt_file, directory);
+				g_free(entry->scheduled_prompt_file); entry->scheduled_prompt_file = resolved;
+			}
+			if (!g_file_test(entry->scheduled_prompt_file, G_FILE_TEST_IS_REGULAR)) {
+				g_set_error(error, G_IO_ERROR, G_IO_ERROR_NOT_FOUND,
+				            "scheduled prompt file was not found: %s", entry->scheduled_prompt_file);
+				g_ptr_array_unref(entries); return NULL;
+			}
+		}
 		if (entry->session_name != NULL && entry->session_name[0] != '\0' &&
 		    !g_hash_table_add(session_names, entry->session_name)) {
 			g_set_error(error, G_IO_ERROR, G_IO_ERROR_INVALID_DATA,
@@ -173,6 +220,12 @@ parse_manifest(const gchar *path, GError **error)
 			            entry->session_name);
 			g_ptr_array_unref(entries);
 			return NULL;
+		}
+		if (entry->job_name != NULL && entry->job_name[0] != '\0' &&
+		    !g_hash_table_add(job_names, entry->job_name)) {
+			g_set_error(error, G_IO_ERROR, G_IO_ERROR_INVALID_DATA,
+			            "manifest contains duplicate job_name '%s'", entry->job_name);
+			g_ptr_array_unref(entries); return NULL;
 		}
 	}
 	if (entries->len == 0) {
@@ -604,6 +657,29 @@ find_goal_sessions(SakuraSessionSnapshot *snapshot, const gchar *group_id,
 }
 
 static gboolean
+apply_manifest_job(SakuraControlClientConnection *connection,
+	                const SakuraCtlManifestEntry *entry, GError **error)
+{
+	SakuraSessionJobRecord job = { 0 };
+
+	if (entry->job_name == NULL || entry->job_name[0] == '\0')
+		return TRUE;
+	job.name = entry->job_name;
+	job.session_name = entry->session_name;
+	job.schedule = entry->schedule;
+	job.timezone = entry->timezone != NULL && entry->timezone[0] != '\0'
+	             ? entry->timezone : "UTC";
+	job.prompt_file = entry->scheduled_prompt_file;
+	job.overlap_policy = entry->overlap_policy != NULL && entry->overlap_policy[0] != '\0'
+	                   ? entry->overlap_policy : "skip";
+	job.missed_run_policy = entry->missed_run_policy != NULL && entry->missed_run_policy[0] != '\0'
+	                      ? entry->missed_run_policy : "run-once";
+	job.enabled = TRUE;
+	return sakura_control_client_upsert_job(connection, &job, error);
+}
+
+
+static gboolean
 apply_manifest(SakuraControlClientConnection *connection,
                const gchar *manifest_path, const gchar *workspace_id,
                const gchar *socket_path, const gchar *group_id,
@@ -717,6 +793,10 @@ apply_manifest(SakuraControlClientConnection *connection,
 					return FALSE;
 				}
 			}
+			if (!apply_manifest_job(connection, entry, error)) {
+				sakura_session_snapshot_free(preflight);
+				return FALSE;
+			}
 			if (print_format != NULL && strcmp(print_format, "json") == 0) {
 				g_autofree gchar *j_title = json_escape(entry->title);
 				g_autofree gchar *j_terminal = json_escape(match->terminal_id);
@@ -817,6 +897,10 @@ apply_manifest(SakuraControlClientConnection *connection,
 			if (goal_output == NULL)
 				return FALSE;
 		}
+		if (!apply_manifest_job(connection, entry, error)) {
+			sakura_session_snapshot_free(preflight);
+			return FALSE;
+		}
 	}
 	(void)group_name;
 	sakura_session_snapshot_free(preflight);
@@ -884,6 +968,8 @@ main(int argc, char **argv)
 	gchar *model = NULL, *reasoning = NULL, *resume = NULL, *title = NULL;
 	gchar *session_name = NULL, *prompt_file = NULL, *print_format = NULL;
 	gchar *goal_file = NULL;
+	gchar *job_name = NULL, *schedule = NULL, *timezone = NULL;
+	gchar *overlap_policy = NULL, *missed_run_policy = NULL;
 	gchar *manifest = NULL, *delete_page_id = NULL, *terminal_target = NULL;
 	gchar **arguments = NULL;
 	gint columns = -1, rows = -1;
@@ -896,7 +982,7 @@ main(int argc, char **argv)
 	g_autofree gchar *codex_session_id = NULL;
 	SakuraSessionSnapshot *snapshot = NULL;
 	SakuraSessionGroupRecord *resolved_group = NULL;
-	const gchar *command, *goal_action = NULL;
+	const gchar *command, *goal_action = NULL, *job_action = NULL;
 	gboolean codex, goal, success, apply = FALSE, create_group_if_missing = FALSE;
 	gboolean dynamic_title = FALSE, dry_run = FALSE, recover_stale = FALSE;
 	gboolean created_resource = FALSE;
@@ -942,6 +1028,16 @@ main(int argc, char **argv)
 		  "Send this file as the initial Codex request", "PATH" },
 		{ "file", 0, 0, G_OPTION_ARG_FILENAME, &goal_file,
 		  "Goal objective file", "PATH" },
+		{ "job-name", 0, 0, G_OPTION_ARG_STRING, &job_name,
+		  "Stable scheduled job name", "NAME" },
+		{ "schedule", 0, 0, G_OPTION_ARG_STRING, &schedule,
+		  "Five-field cron schedule", "CRON" },
+		{ "timezone", 0, 0, G_OPTION_ARG_STRING, &timezone,
+		  "IANA time zone for the schedule", "ZONE" },
+		{ "overlap-policy", 0, 0, G_OPTION_ARG_STRING, &overlap_policy,
+		  "Overlap policy (skip)", "POLICY" },
+		{ "missed-run-policy", 0, 0, G_OPTION_ARG_STRING, &missed_run_policy,
+		  "Restart policy (run-once or skip)", "POLICY" },
 		{ "print", 0, 0, G_OPTION_ARG_STRING, &print_format,
 		  "Output format: id or json", "FORMAT" },
 		{ "manifest", 0, 0, G_OPTION_ARG_FILENAME, &manifest,
@@ -964,6 +1060,7 @@ main(int argc, char **argv)
 		"  new          Open a shell page\n"
 		"  codex        Open a Codex page\n"
 		"  goal         Manage a Codex session goal\n"
+		"  jobs         Manage scheduled Codex prompts\n"
 		"  input        Send --prompt-file to --terminal\n"
 		"  archive-page Archive a page and disable startup resume\n"
 		"  unarchive-page Restore an archived page\n"
@@ -976,7 +1073,8 @@ main(int argc, char **argv)
 	    (g_strv_length(arguments) == 2 &&
 	     !((strcmp(arguments[0], "codex") == 0 &&
 	        strcmp(arguments[1], "apply") == 0) ||
-	       strcmp(arguments[0], "goal") == 0))) {
+	       strcmp(arguments[0], "goal") == 0 ||
+	       strcmp(arguments[0], "jobs") == 0))) {
 		g_set_error_literal(&error, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT,
 		                    "exactly one command is required: list, groups, new, codex, goal, input, archive-page, unarchive-page, or delete-page");
 		goto out;
@@ -984,6 +1082,8 @@ main(int argc, char **argv)
 	command = arguments[0];
 	apply = g_strv_length(arguments) == 2 && strcmp(command, "codex") == 0;
 	goal = strcmp(command, "goal") == 0;
+	if (strcmp(command, "jobs") == 0)
+		job_action = arguments[1];
 	if (goal)
 		goal_action = arguments[1];
 	if (goal && (goal_action == NULL ||
@@ -996,9 +1096,18 @@ main(int argc, char **argv)
 		                    "goal requires start, status, pause, resume, or clear");
 		goto out;
 	}
+	if (job_action != NULL && strcmp(job_action, "list") != 0 &&
+	    strcmp(job_action, "add") != 0 && strcmp(job_action, "pause") != 0 &&
+	    strcmp(job_action, "resume") != 0 && strcmp(job_action, "run") != 0 &&
+	    strcmp(job_action, "remove") != 0) {
+		g_set_error_literal(&error, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT,
+		                    "jobs requires list, add, pause, resume, run, or remove");
+		goto out;
+	}
 	if (strcmp(command, "list") != 0 && strcmp(command, "groups") != 0 &&
 	    strcmp(command, "new") != 0 &&
 	    strcmp(command, "codex") != 0 && strcmp(command, "goal") != 0 &&
+	    strcmp(command, "jobs") != 0 &&
 	    strcmp(command, "input") != 0 &&
 	    strcmp(command, "archive-page") != 0 &&
 	    strcmp(command, "unarchive-page") != 0 &&
@@ -1121,6 +1230,61 @@ main(int argc, char **argv)
 			goto out;
 		result = EXIT_SUCCESS;
 		goto out;
+	}
+	if (job_action != NULL) {
+		if (strcmp(job_action, "list") == 0) {
+			if (!request_snapshot(connection, &snapshot, &error)) goto out;
+			for (guint i = 0; snapshot->jobs != NULL && i < snapshot->jobs->len; i++) {
+				SakuraSessionJobRecord *job = g_ptr_array_index(snapshot->jobs, i);
+				g_autofree gchar *j_name = json_escape(job->name);
+				g_autofree gchar *j_session = json_escape(job->session_name);
+				g_autofree gchar *j_schedule = json_escape(job->schedule);
+				g_autofree gchar *j_status = json_escape(job->last_status);
+				if (print_format != NULL && strcmp(print_format, "json") == 0)
+					g_print("{\"name\":\"%s\",\"session_name\":\"%s\","
+					        "\"schedule\":\"%s\",\"enabled\":%s,"
+					        "\"next_run_unix\":%"G_GINT64_FORMAT","
+					        "\"last_status\":\"%s\"}\n", j_name, j_session,
+					        j_schedule, job->enabled ? "true" : "false",
+					        job->next_run_unix, j_status);
+				else
+					g_print("%s\t%s\t%s\t%s\n", job->name, job->session_name,
+					        job->schedule, job->enabled ? "enabled" : "paused");
+			}
+			result = EXIT_SUCCESS; goto out;
+		}
+		if (job_name == NULL || job_name[0] == '\0') {
+			g_set_error_literal(&error, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT,
+			                    "jobs action requires --job-name"); goto out;
+		}
+		if (strcmp(job_action, "add") == 0) {
+			SakuraSessionJobRecord job = { 0 };
+			if (session_name == NULL || session_name[0] == '\0' ||
+			    schedule == NULL || schedule[0] == '\0' ||
+			    prompt_file == NULL || prompt_file[0] == '\0') {
+				g_set_error_literal(&error, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT,
+				                    "jobs add requires --session-name, --schedule, and --prompt-file");
+				goto out;
+			}
+			if (!g_file_test(prompt_file, G_FILE_TEST_IS_REGULAR)) {
+				g_set_error(&error, G_IO_ERROR, G_IO_ERROR_NOT_FOUND,
+				            "prompt file was not found: %s", prompt_file); goto out;
+			}
+			job.name = job_name; job.session_name = session_name;
+			job.schedule = schedule; job.timezone = timezone != NULL ? timezone : "UTC";
+			job.prompt_file = prompt_file;
+			job.overlap_policy = overlap_policy != NULL ? overlap_policy : "skip";
+			job.missed_run_policy = missed_run_policy != NULL ? missed_run_policy : "run-once";
+			job.enabled = TRUE;
+			if (!sakura_control_client_upsert_job(connection, &job, &error)) goto out;
+		} else if (strcmp(job_action, "pause") == 0 || strcmp(job_action, "resume") == 0) {
+			if (!sakura_control_client_set_job_enabled(connection, job_name,
+				strcmp(job_action, "resume") == 0, &error)) goto out;
+		} else if (strcmp(job_action, "run") == 0) {
+			if (!sakura_control_client_run_job(connection, job_name, &error)) goto out;
+		} else if (!sakura_control_client_delete_job(connection, job_name, &error))
+			goto out;
+		g_print("%s\n", job_name); result = EXIT_SUCCESS; goto out;
 	}
 	if (group_id != NULL && group_name != NULL) {
 		g_set_error_literal(&error, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT,
@@ -1418,6 +1582,8 @@ out:
 	g_free(group_id); g_free(group_name); g_free(task_id); g_free(model);
 	g_free(reasoning);
 	g_free(resume); g_free(title); g_free(session_name); g_free(prompt_file);
+	g_free(job_name); g_free(schedule); g_free(timezone);
+	g_free(overlap_policy); g_free(missed_run_policy);
 	g_free(print_format); g_free(manifest);
 	g_free(goal_file);
 	g_free(delete_page_id);

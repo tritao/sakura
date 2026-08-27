@@ -202,6 +202,8 @@ TARGET_LINK_LIBRARIES (sakura-agent PRIVATE
 	PkgConfig::GLIB
 	PkgConfig::GIO_UNIX
 	PkgConfig::PROTOBUF_C)
+TARGET_COMPILE_DEFINITIONS (sakura-agent PRIVATE
+	SAKURA_CODEX_APP_SERVER_HELPER_BUILD_PATH="${CMAKE_CURRENT_SOURCE_DIR}/scripts/sakura-codex-app-server")
 ADD_DEPENDENCIES (sakura sakura-agent sakura-proto-generated)
 ADD_DEPENDENCIES (sakura-agent sakura-proto-generated)
 

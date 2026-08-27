@@ -3,7 +3,7 @@
 
 #include <glib.h>
 
-#define SAKURA_SESSION_VERSION 11
+#define SAKURA_SESSION_VERSION 12
 #define NUM_COLORSETS 6
 
 /* The domain layer owns these bounds. GTK rendering and persistence must
@@ -69,6 +69,22 @@ typedef struct sakura_core_group SakuraCoreGroup;
 typedef struct sakura_core_task SakuraCoreTask;
 typedef struct sakura_core_page SakuraCorePage;
 typedef struct sakura_core_terminal SakuraCoreTerminal;
+
+typedef struct {
+	gchar *name;
+	gchar *session_name;
+	gchar *schedule;
+	gchar *timezone;
+	gchar *prompt_file;
+	gchar *overlap_policy;
+	gchar *missed_run_policy;
+	gboolean enabled;
+	gboolean running;
+	gint64 next_run_unix;
+	gint64 last_run_unix;
+	gchar *last_status;
+	gchar *last_error;
+} SakuraSessionJobRecord;
 
 typedef struct {
 	gchar *id;
@@ -159,6 +175,7 @@ struct sakura_session_snapshot {
 	GPtrArray *pages;
 	GPtrArray *layouts;
 	GPtrArray *expanded_sidebar_nodes;
+	GPtrArray *jobs;
 	gchar *workspace_id;
 	gint selected_terminal;
 	gchar *selected_terminal_id;
@@ -236,6 +253,7 @@ struct sakura_core_workspace {
 	GPtrArray *tasks;  /* SakuraCoreTask *, owned. */
 	GPtrArray *pages;  /* SakuraCorePage *, owned. */
 	GPtrArray *terminals; /* SakuraCoreTerminal *, owned. */
+	GPtrArray *jobs; /* SakuraSessionJobRecord *, owned. */
 	SakuraCoreGroup *active_group; /* Borrowed. */
 	SakuraCoreTask *active_task; /* Borrowed. */
 };
@@ -247,6 +265,9 @@ gboolean sakura_session_snapshot_load(GKeyFile *key_file,
                                       GError **error);
 void sakura_session_snapshot_save(const SakuraSessionSnapshot *snapshot,
                                   GKeyFile *key_file);
+SakuraSessionJobRecord *sakura_session_job_record_copy(
+	const SakuraSessionJobRecord *record);
+void sakura_session_job_record_free(SakuraSessionJobRecord *record);
 
 SakuraCoreWorkspace *sakura_core_workspace_new(void);
 void sakura_core_workspace_free(SakuraCoreWorkspace *workspace);

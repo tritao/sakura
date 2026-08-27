@@ -554,6 +554,60 @@ out:
 
 
 gboolean
+sakura_control_client_upsert_job(SakuraControlClientConnection *connection,
+	                              const SakuraSessionJobRecord *job,
+	                              GError **error)
+{
+	GByteArray *request = g_byte_array_new();
+	SakuraControlResponse response = { 0 };
+	gchar *request_id = g_uuid_string_random();
+	gboolean success = sakura_control_encode_upsert_job_request(
+		request_id, job, request) && sakura_control_client_call(
+		connection, request_id, request, &response, error);
+	if (success && !response.has_snapshot) {
+		g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_INVALID_DATA,
+		                    "Sakura agent did not return the updated workspace");
+		success = FALSE;
+	}
+	sakura_control_response_clear(&response); g_byte_array_unref(request);
+	g_free(request_id); return success;
+}
+
+static gboolean
+sakura_control_client_job_action(SakuraControlClientConnection *connection,
+	                              const gchar *name, gint action,
+	                              gboolean enabled, GError **error)
+{
+	GByteArray *request = g_byte_array_new();
+	SakuraControlResponse response = { 0 };
+	gchar *request_id = g_uuid_string_random();
+	gboolean encoded = action == 0
+		? sakura_control_encode_set_job_enabled_request(request_id, name, enabled, request)
+		: action == 1 ? sakura_control_encode_delete_job_request(request_id, name, request)
+		              : sakura_control_encode_run_job_request(request_id, name, request);
+	gboolean success = encoded && sakura_control_client_call(
+		connection, request_id, request, &response, error);
+	if (success && !response.has_snapshot) {
+		g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_INVALID_DATA,
+		                    "Sakura agent did not return the updated workspace");
+		success = FALSE;
+	}
+	sakura_control_response_clear(&response); g_byte_array_unref(request);
+	g_free(request_id); return success;
+}
+
+gboolean sakura_control_client_set_job_enabled(SakuraControlClientConnection *c,
+	const gchar *n, gboolean e, GError **error)
+{ return sakura_control_client_job_action(c, n, 0, e, error); }
+gboolean sakura_control_client_delete_job(SakuraControlClientConnection *c,
+	const gchar *n, GError **error)
+{ return sakura_control_client_job_action(c, n, 1, FALSE, error); }
+gboolean sakura_control_client_run_job(SakuraControlClientConnection *c,
+	const gchar *n, GError **error)
+{ return sakura_control_client_job_action(c, n, 2, FALSE, error); }
+
+
+gboolean
 sakura_control_client_set_page_archived(
 	SakuraControlClientConnection *connection, const gchar *page_id,
 	gboolean archived, GError **error)

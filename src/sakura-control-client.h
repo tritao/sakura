@@ -2,9 +2,10 @@
 #define SAKURA_CONTROL_CLIENT_H
 
 #include <gio/gio.h>
+#include "sakura-core.h"
 
 #define SAKURA_CONTROL_CLIENT_API_VERSION 1
-#define SAKURA_CONTROL_PROTOCOL_VERSION 2
+#define SAKURA_CONTROL_PROTOCOL_VERSION 3
 #define SAKURA_CONTROL_MAX_FRAME (1024 * 1024)
 #define SAKURA_CONTROL_CAPABILITY_WORKSPACE G_GUINT64_CONSTANT(1)
 #define SAKURA_CONTROL_CAPABILITY_TERMINALS G_GUINT64_CONSTANT(2)
@@ -182,6 +183,16 @@ gboolean sakura_control_client_delete_page(
 gboolean sakura_control_client_set_page_archived(
 	SakuraControlClientConnection *connection, const gchar *page_id,
 	gboolean archived, GError **error);
+gboolean sakura_control_client_upsert_job(
+	SakuraControlClientConnection *connection, const SakuraSessionJobRecord *job,
+	GError **error);
+gboolean sakura_control_client_set_job_enabled(
+	SakuraControlClientConnection *connection, const gchar *name,
+	gboolean enabled, GError **error);
+gboolean sakura_control_client_delete_job(
+	SakuraControlClientConnection *connection, const gchar *name, GError **error);
+gboolean sakura_control_client_run_job(
+	SakuraControlClientConnection *connection, const gchar *name, GError **error);
 gboolean sakura_control_client_read_event(
 	SakuraControlClientConnection *connection, SakuraControlClientEvent *event,
 	GCancellable *cancellable, GError **error);

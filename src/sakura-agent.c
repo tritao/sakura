@@ -64,6 +64,12 @@ typedef struct {
 	gboolean reader_started;
 } SakuraTerminalCreate;
 
+typedef struct {
+	SakuraAgent *agent;
+	SakuraSessionJobRecord *job;
+	GSubprocess *process;
+} SakuraAgentJobRun;
+
 #define SAKURA_AGENT_OUTPUT_BUFFER_SIZE (1024 * 1024)
 #define SAKURA_AGENT_OUTPUT_BATCH_SIZE (32 * 1024)
 #define SAKURA_AGENT_MAX_QUEUED_MESSAGES 1000
@@ -91,18 +97,238 @@ struct _SakuraAgent {
 	GPtrArray *subscribers; /* SakuraAgentConnection *, state_mutex protected. */
 	GPtrArray *connections; /* SakuraAgentConnection *, state_mutex protected. */
 	GPtrArray *terminals; /* SakuraAgentTerminal *, owned. */
+	GPtrArray *job_runs; /* SakuraAgentJobRun *, completed asynchronously. */
 	gboolean stopping;
 	guint64 sequence;
 	guint64 workspace_revision;
 	gchar *socket_path;
 	gchar *workspace_path;
 	gchar *tracking_dir;
+	guint jobs_timer_id;
 };
 
 
 static void sakura_agent_broadcast_event(SakuraAgent *agent);
 static void sakura_agent_broadcast_payload(SakuraAgent *agent,
 	                                        GByteArray *payload);
+static gboolean sakura_agent_persist_workspace(SakuraAgent *agent,
+	GError **error);
+static gboolean sakura_agent_error(GError **error, const gchar *message);
+
+static SakuraSessionJobRecord *
+sakura_agent_find_job(SakuraAgent *agent, const gchar *name)
+{
+	for (guint i = 0; agent != NULL && agent->workspace != NULL &&
+	                 agent->workspace->jobs != NULL &&
+	                 i < agent->workspace->jobs->len; i++) {
+		SakuraSessionJobRecord *job = g_ptr_array_index(agent->workspace->jobs, i);
+		if (job != NULL && g_strcmp0(job->name, name) == 0)
+			return job;
+	}
+	return NULL;
+}
+
+static gboolean
+sakura_cron_field_matches(const gchar *field, gint value, gint minimum,
+	                        gint maximum)
+{
+	g_auto(GStrv) parts = NULL;
+
+	if (field == NULL || field[0] == '\0')
+		return FALSE;
+	parts = g_strsplit(field, ",", -1);
+	for (guint i = 0; parts[i] != NULL; i++) {
+		gchar *part = parts[i], *slash = strchr(part, '/');
+		gint step = 1, start = minimum, end = maximum;
+		if (slash != NULL) {
+			*slash = '\0';
+			step = (gint)g_ascii_strtoll(slash + 1, NULL, 10);
+			if (step <= 0) continue;
+		}
+		if (strcmp(part, "*") != 0) {
+			gchar *dash = strchr(part, '-');
+			start = (gint)g_ascii_strtoll(part, NULL, 10);
+			end = dash != NULL ? (gint)g_ascii_strtoll(dash + 1, NULL, 10) : start;
+		}
+		if (start >= minimum && end <= maximum && start <= end &&
+		    value >= start && value <= end && (value - start) % step == 0)
+			return TRUE;
+	}
+	return FALSE;
+}
+
+static gboolean
+sakura_cron_matches(const gchar *schedule, GDateTime *time)
+{
+	g_auto(GStrv) fields = g_strsplit_set(schedule != NULL ? schedule : "", " \t", -1);
+	const gchar *used[5]; guint count = 0;
+	for (guint i = 0; fields[i] != NULL; i++)
+		if (fields[i][0] != '\0' && count < 5) used[count++] = fields[i];
+	if (count != 5)
+		return FALSE;
+	{
+		gboolean dom = sakura_cron_field_matches(
+			used[2], g_date_time_get_day_of_month(time), 1, 31);
+		gint weekday = g_date_time_get_day_of_week(time) % 7;
+		gboolean dow = sakura_cron_field_matches(used[4], weekday, 0, 7) ||
+		               (weekday == 0 && sakura_cron_field_matches(used[4], 7, 0, 7));
+		gboolean day = strcmp(used[2], "*") != 0 && strcmp(used[4], "*") != 0
+		             ? dom || dow : dom && dow;
+		return sakura_cron_field_matches(used[0], g_date_time_get_minute(time), 0, 59) &&
+		       sakura_cron_field_matches(used[1], g_date_time_get_hour(time), 0, 23) &&
+		       sakura_cron_field_matches(used[3], g_date_time_get_month(time), 1, 12) && day;
+	}
+}
+
+static gint64
+sakura_job_next_run(const SakuraSessionJobRecord *job, gint64 after_unix)
+{
+	g_autoptr(GTimeZone) zone = g_time_zone_new_identifier(
+		job->timezone != NULL && job->timezone[0] != '\0' ? job->timezone : "UTC");
+	g_autoptr(GDateTime) cursor = NULL;
+	if (zone == NULL) return 0;
+	cursor = g_date_time_new_from_unix_utc(after_unix + 60);
+	for (guint i = 0; cursor != NULL && i < 60 * 24 * 366; i++) {
+		g_autoptr(GDateTime) local = g_date_time_to_timezone(cursor, zone);
+		if (sakura_cron_matches(job->schedule, local))
+			return g_date_time_to_unix(cursor) / 60 * 60;
+		GDateTime *next = g_date_time_add_minutes(cursor, 1);
+		g_date_time_unref(cursor); cursor = next;
+	}
+	return 0;
+}
+
+static gboolean
+sakura_agent_job_finished_idle(gpointer data)
+{
+	SakuraAgentJobRun *run = data;
+	gboolean success = g_subprocess_get_successful(run->process);
+
+	run->job->running = FALSE;
+	g_free(run->job->last_status);
+	run->job->last_status = g_strdup(success ? "completed" : "error");
+	if (success)
+		g_clear_pointer(&run->job->last_error, g_free);
+	else {
+		g_free(run->job->last_error);
+		run->job->last_error = g_strdup("Codex app-server job failed");
+	}
+	run->agent->workspace_revision++;
+	run->agent->sequence++;
+	sakura_agent_persist_workspace(run->agent, NULL);
+	sakura_agent_broadcast_event(run->agent);
+	g_ptr_array_remove(run->agent->job_runs, run);
+	g_object_unref(run->process);
+	g_free(run);
+	return G_SOURCE_REMOVE;
+}
+
+static void
+sakura_agent_job_waited(GObject *source, GAsyncResult *result, gpointer data)
+{
+	SakuraAgentJobRun *run = data;
+	GError *error = NULL;
+	(void)source;
+	if (!g_subprocess_wait_finish(run->process, result, &error)) {
+		g_free(run->job->last_error);
+		run->job->last_error = g_strdup(error != NULL ? error->message : "job wait failed");
+		g_clear_error(&error);
+	}
+	g_idle_add(sakura_agent_job_finished_idle, run);
+}
+
+static gboolean
+sakura_agent_submit_job(SakuraAgent *agent, SakuraSessionJobRecord *job,
+	                      GError **error)
+{
+	SakuraAgentTerminal *runtime = NULL;
+	g_autofree gchar *helper = NULL;
+	GSubprocess *process;
+	SakuraAgentJobRun *run;
+
+	for (guint i = 0; i < agent->terminals->len; i++) {
+		SakuraAgentTerminal *candidate = g_ptr_array_index(agent->terminals, i);
+		if (candidate != NULL && candidate->core != NULL &&
+		    g_strcmp0(candidate->core->codex_session_name, job->session_name) == 0) {
+			runtime = candidate; break;
+		}
+	}
+	if (runtime == NULL || runtime->stopping || runtime->master_fd < 0) {
+		g_set_error(error, G_IO_ERROR, G_IO_ERROR_NOT_FOUND,
+		            "job %s has no running Codex session named %s", job->name,
+		            job->session_name);
+		return FALSE;
+	}
+	if ((job->running || runtime->core->activity_status == SAKURA_TAB_STATUS_RUNNING) &&
+	    g_strcmp0(job->overlap_policy, "skip") == 0) {
+		g_free(job->last_status); job->last_status = g_strdup("skipped-overlap");
+		return TRUE;
+	}
+	if (runtime->core->codex_session_id == NULL ||
+	    runtime->core->codex_session_id[0] == '\0')
+		return sakura_agent_error(error, "scheduled Codex session has no thread ID");
+	helper = g_find_program_in_path("sakura-codex-app-server");
+#ifdef SAKURA_CODEX_APP_SERVER_HELPER_BUILD_PATH
+	if (helper == NULL && g_file_test(SAKURA_CODEX_APP_SERVER_HELPER_BUILD_PATH,
+	                                  G_FILE_TEST_IS_EXECUTABLE))
+		helper = g_strdup(SAKURA_CODEX_APP_SERVER_HELPER_BUILD_PATH);
+#endif
+	if (helper == NULL)
+		return sakura_agent_error(error, "sakura-codex-app-server was not found");
+	{
+		const gchar *argv[] = { helper, "--submit-turn", "--thread-id",
+			runtime->core->codex_session_id, "--prompt-file", job->prompt_file,
+			NULL };
+		process = g_subprocess_newv(argv,
+			G_SUBPROCESS_FLAGS_STDOUT_SILENCE | G_SUBPROCESS_FLAGS_STDERR_SILENCE,
+			error);
+	}
+	if (process == NULL) return FALSE;
+	job->last_run_unix = g_get_real_time() / G_USEC_PER_SEC;
+	job->running = TRUE;
+	g_free(job->last_status); job->last_status = g_strdup("running");
+	g_clear_pointer(&job->last_error, g_free);
+	run = g_new0(SakuraAgentJobRun, 1);
+	run->agent = agent; run->job = job; run->process = process;
+	g_ptr_array_add(agent->job_runs, run);
+	g_subprocess_wait_async(process, NULL, sakura_agent_job_waited, run);
+	return TRUE;
+}
+
+static gboolean
+sakura_agent_jobs_tick(gpointer data)
+{
+	SakuraAgent *agent = data;
+	gint64 now = g_get_real_time() / G_USEC_PER_SEC;
+	gboolean changed = FALSE;
+
+	for (guint i = 0; agent->workspace->jobs != NULL &&
+	                 i < agent->workspace->jobs->len; i++) {
+		SakuraSessionJobRecord *job = g_ptr_array_index(agent->workspace->jobs, i);
+		GError *error = NULL;
+		if (job == NULL || !job->enabled) continue;
+		if (job->next_run_unix <= 0)
+			job->next_run_unix = sakura_job_next_run(job, now - 60);
+		if (job->next_run_unix > 0 && job->next_run_unix <= now) {
+			if (now - job->next_run_unix > 60 &&
+			    g_strcmp0(job->missed_run_policy, "skip") == 0) {
+				g_free(job->last_status); job->last_status = g_strdup("skipped-missed");
+			} else if (!sakura_agent_submit_job(agent, job, &error)) {
+				g_free(job->last_status); job->last_status = g_strdup("error");
+				g_free(job->last_error); job->last_error = g_strdup(error->message);
+				g_clear_error(&error);
+			}
+			job->next_run_unix = sakura_job_next_run(job, now);
+			changed = TRUE;
+		}
+	}
+	if (changed) {
+		agent->workspace_revision++;
+		sakura_agent_persist_workspace(agent, NULL);
+		sakura_agent_broadcast_event(agent);
+	}
+	return G_SOURCE_CONTINUE;
+}
 
 
 static void
@@ -2421,6 +2647,79 @@ sakura_agent_handle_filesystem_request(
 
 
 static gboolean
+sakura_agent_upsert_job(SakuraAgent *agent, const SakuraControlRequest *request,
+	                     GError **error)
+{
+	SakuraSessionJobRecord *job;
+	gint64 now = g_get_real_time() / G_USEC_PER_SEC;
+
+	if (request->title == NULL || request->title[0] == '\0' ||
+	    request->session_name == NULL || request->session_name[0] == '\0' ||
+	    request->schedule == NULL || request->schedule[0] == '\0' ||
+	    request->prompt_file == NULL || request->prompt_file[0] == '\0')
+		return sakura_agent_error(error, "job requires name, session, schedule, and prompt file");
+	if (request->overlap_policy != NULL && request->overlap_policy[0] != '\0' &&
+	    g_strcmp0(request->overlap_policy, "skip") != 0)
+		return sakura_agent_error(error, "only overlap_policy=skip is currently supported");
+	if (request->missed_run_policy != NULL && request->missed_run_policy[0] != '\0' &&
+	    g_strcmp0(request->missed_run_policy, "run-once") != 0 &&
+	    g_strcmp0(request->missed_run_policy, "skip") != 0)
+		return sakura_agent_error(error, "missed_run_policy must be run-once or skip");
+	if (!g_file_test(request->prompt_file, G_FILE_TEST_IS_REGULAR)) {
+		g_set_error(error, G_IO_ERROR, G_IO_ERROR_NOT_FOUND,
+		            "job prompt file was not found: %s", request->prompt_file);
+		return FALSE;
+	}
+	job = sakura_agent_find_job(agent, request->title);
+	if (job == NULL) {
+		job = g_new0(SakuraSessionJobRecord, 1);
+		job->name = g_strdup(request->title);
+		job->last_status = g_strdup("never");
+		g_ptr_array_add(agent->workspace->jobs, job);
+	}
+	g_free(job->session_name); job->session_name = g_strdup(request->session_name);
+	g_free(job->schedule); job->schedule = g_strdup(request->schedule);
+	g_free(job->timezone); job->timezone = g_strdup(
+		request->timezone != NULL && request->timezone[0] != '\0' ? request->timezone : "UTC");
+	g_free(job->prompt_file); job->prompt_file = g_strdup(request->prompt_file);
+	g_free(job->overlap_policy); job->overlap_policy = g_strdup(
+		request->overlap_policy != NULL && request->overlap_policy[0] != '\0'
+		? request->overlap_policy : "skip");
+	g_free(job->missed_run_policy); job->missed_run_policy = g_strdup(
+		request->missed_run_policy != NULL && request->missed_run_policy[0] != '\0'
+		? request->missed_run_policy : "run-once");
+	job->enabled = request->enabled;
+	job->next_run_unix = job->enabled ? sakura_job_next_run(job, now - 60) : 0;
+	if (job->enabled && job->next_run_unix == 0)
+		return sakura_agent_error(error, "invalid cron schedule or timezone");
+	return TRUE;
+}
+
+static gboolean
+sakura_agent_manage_job(SakuraAgent *agent, const SakuraControlRequest *request,
+	                     GError **error)
+{
+	SakuraSessionJobRecord *job = sakura_agent_find_job(agent, request->title);
+	if (job == NULL) {
+		g_set_error(error, G_IO_ERROR, G_IO_ERROR_NOT_FOUND,
+		            "job %s was not found", request->title);
+		return FALSE;
+	}
+	if (request->kind == SAKURA_CONTROL_REQUEST_DELETE_JOB)
+		if (job->running)
+			return sakura_agent_error(error, "cannot remove a running job");
+	if (request->kind == SAKURA_CONTROL_REQUEST_DELETE_JOB)
+		return g_ptr_array_remove(agent->workspace->jobs, job);
+	if (request->kind == SAKURA_CONTROL_REQUEST_SET_JOB_ENABLED) {
+		job->enabled = request->enabled;
+		job->next_run_unix = job->enabled
+			? sakura_job_next_run(job, g_get_real_time() / G_USEC_PER_SEC - 60) : 0;
+		return TRUE;
+	}
+	return sakura_agent_submit_job(agent, job, error);
+}
+
+static gboolean
 sakura_agent_apply_request(SakuraAgent *agent,
 	                         const SakuraControlRequest *request,
 	                         gchar **accepted_id,
@@ -2430,6 +2729,14 @@ sakura_agent_apply_request(SakuraAgent *agent,
 	gboolean changed = FALSE;
 
 	switch (request->kind) {
+	case SAKURA_CONTROL_REQUEST_UPSERT_JOB:
+		changed = sakura_agent_upsert_job(agent, request, error);
+		break;
+	case SAKURA_CONTROL_REQUEST_SET_JOB_ENABLED:
+	case SAKURA_CONTROL_REQUEST_DELETE_JOB:
+	case SAKURA_CONTROL_REQUEST_RUN_JOB:
+		changed = sakura_agent_manage_job(agent, request, error);
+		break;
 	case SAKURA_CONTROL_REQUEST_CREATE_GROUP:
 		changed = sakura_agent_create_group(agent, request, error);
 		break;
@@ -2558,6 +2865,10 @@ sakura_agent_request_changes_workspace(SakuraControlRequestKind kind)
 	case SAKURA_CONTROL_REQUEST_CREATE_CODEX:
 	case SAKURA_CONTROL_REQUEST_CLOSE_TERMINAL:
 	case SAKURA_CONTROL_REQUEST_RESTART_TERMINAL:
+	case SAKURA_CONTROL_REQUEST_UPSERT_JOB:
+	case SAKURA_CONTROL_REQUEST_SET_JOB_ENABLED:
+	case SAKURA_CONTROL_REQUEST_DELETE_JOB:
+	case SAKURA_CONTROL_REQUEST_RUN_JOB:
 		return TRUE;
 	default:
 		return FALSE;
@@ -3109,6 +3420,7 @@ main(int argc, char **argv)
 	agent.connections = g_ptr_array_new();
 	agent.terminals = g_ptr_array_new_with_free_func(
 		(GDestroyNotify)sakura_agent_terminal_free);
+	agent.job_runs = g_ptr_array_new();
 	agent.socket_path = socket_path;
 	agent.workspace_path = workspace_path;
 	agent.tracking_dir = session_path != NULL
@@ -3123,6 +3435,7 @@ main(int argc, char **argv)
 		g_clear_pointer(&agent.subscribers, g_ptr_array_unref);
 		g_clear_pointer(&agent.connections, g_ptr_array_unref);
 		g_clear_pointer(&agent.terminals, g_ptr_array_unref);
+		g_clear_pointer(&agent.job_runs, g_ptr_array_unref);
 		g_cond_clear(&agent.connections_drained);
 		g_mutex_clear(&agent.state_mutex);
 		g_object_unref(service);
@@ -3140,6 +3453,8 @@ main(int argc, char **argv)
 	g_unix_signal_add(SIGINT, sakura_agent_quit_cb, loop);
 	g_unix_signal_add(SIGTERM, sakura_agent_quit_cb, loop);
 	g_socket_service_start(service);
+	agent.jobs_timer_id = g_timeout_add_seconds(15, sakura_agent_jobs_tick, &agent);
+	sakura_agent_jobs_tick(&agent);
 	if (!sakura_control_workspace_publish(agent.workspace_id, socket_path,
 	                                     session_path, &error)) {
 		g_warning("Could not publish Sakura workspace endpoint: %s",
@@ -3147,6 +3462,14 @@ main(int argc, char **argv)
 		g_clear_error(&error);
 	}
 	g_main_loop_run(loop);
+	if (agent.jobs_timer_id != 0)
+		g_source_remove(agent.jobs_timer_id);
+	for (guint index = 0; index < agent.job_runs->len; index++) {
+		SakuraAgentJobRun *run = g_ptr_array_index(agent.job_runs, index);
+		g_subprocess_force_exit(run->process);
+	}
+	while (agent.job_runs->len != 0)
+		g_main_context_iteration(NULL, TRUE);
 	g_socket_service_stop(service);
 	sakura_control_workspace_unpublish(agent.workspace_id);
 	g_main_loop_unref(loop);
@@ -3169,6 +3492,7 @@ main(int argc, char **argv)
 	g_clear_pointer(&agent.subscribers, g_ptr_array_unref);
 	g_clear_pointer(&agent.connections, g_ptr_array_unref);
 	g_clear_pointer(&agent.terminals, g_ptr_array_unref);
+	g_clear_pointer(&agent.job_runs, g_ptr_array_unref);
 	g_cond_clear(&agent.connections_drained);
 	g_mutex_clear(&agent.state_mutex);
 	sakura_core_workspace_free(workspace);

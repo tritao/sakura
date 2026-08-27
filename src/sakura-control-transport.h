@@ -36,7 +36,11 @@ typedef enum {
 	SAKURA_CONTROL_REQUEST_SET_TASK_STATUS,
 	SAKURA_CONTROL_REQUEST_LIST_FILES,
 	SAKURA_CONTROL_REQUEST_READ_FILE,
-	SAKURA_CONTROL_REQUEST_WRITE_FILE
+	SAKURA_CONTROL_REQUEST_WRITE_FILE,
+	SAKURA_CONTROL_REQUEST_UPSERT_JOB,
+	SAKURA_CONTROL_REQUEST_SET_JOB_ENABLED,
+	SAKURA_CONTROL_REQUEST_DELETE_JOB,
+	SAKURA_CONTROL_REQUEST_RUN_JOB
 } SakuraControlRequestKind;
 
 typedef struct {
@@ -65,6 +69,11 @@ typedef struct {
 	gchar *reasoning_effort;
 	gchar *resume_session_id;
 	gchar *session_name;
+	gchar *schedule;
+	gchar *timezone;
+	gchar *prompt_file;
+	gchar *overlap_policy;
+	gchar *missed_run_policy;
 	gchar *tracking_token;
 	guint terminal_kind;
 	guint order;
@@ -78,6 +87,7 @@ typedef struct {
 	gchar *path;
 	gchar *expected_file_version;
 	gboolean archived;
+	gboolean enabled;
 	gboolean after;
 	gboolean title_set_by_user;
 	guint protocol_version;
@@ -225,6 +235,16 @@ gboolean sakura_control_encode_set_task_archived_request(
 	GByteArray *payload);
 gboolean sakura_control_encode_delete_task_request(
 	const gchar *request_id, const gchar *task_id, GByteArray *payload);
+gboolean sakura_control_encode_upsert_job_request(
+	const gchar *request_id, const SakuraSessionJobRecord *job,
+	GByteArray *payload);
+gboolean sakura_control_encode_set_job_enabled_request(
+	const gchar *request_id, const gchar *name, gboolean enabled,
+	GByteArray *payload);
+gboolean sakura_control_encode_delete_job_request(
+	const gchar *request_id, const gchar *name, GByteArray *payload);
+gboolean sakura_control_encode_run_job_request(
+	const gchar *request_id, const gchar *name, GByteArray *payload);
 gboolean sakura_control_encode_create_terminal_request(
 	const gchar *request_id, const gchar *terminal_id, const gchar *group_id,
 	const gchar *task_id, const gchar *cwd, guint cols, guint rows,

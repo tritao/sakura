@@ -1,6 +1,9 @@
 #include "sakura-control-transport.h"
 #include "sakura/control.pb-c.h"
 
+static void sakura_control_fill_job(Sakura__Control__V1__Job *message,
+	const SakuraSessionJobRecord *job);
+
 #include <string.h>
 
 
@@ -96,6 +99,11 @@ sakura_control_request_clear(SakuraControlRequest *request)
 	g_clear_pointer(&request->reasoning_effort, g_free);
 	g_clear_pointer(&request->resume_session_id, g_free);
 	g_clear_pointer(&request->session_name, g_free);
+	g_clear_pointer(&request->schedule, g_free);
+	g_clear_pointer(&request->timezone, g_free);
+	g_clear_pointer(&request->prompt_file, g_free);
+	g_clear_pointer(&request->overlap_policy, g_free);
+	g_clear_pointer(&request->missed_run_policy, g_free);
 	g_clear_pointer(&request->tracking_token, g_free);
 	g_clear_pointer(&request->provider, g_free);
 	g_clear_pointer(&request->external_id, g_free);
@@ -107,6 +115,7 @@ sakura_control_request_clear(SakuraControlRequest *request)
 	g_clear_pointer(&request->expected_file_version, g_free);
 	request->kind = SAKURA_CONTROL_REQUEST_NONE;
 	request->archived = FALSE;
+	request->enabled = FALSE;
 	request->after = FALSE;
 	request->title_set_by_user = FALSE;
 	request->protocol_version = 0;
@@ -1201,6 +1210,76 @@ sakura_control_encode_restart_terminal_request(const gchar *request_id,
 
 
 gboolean
+sakura_control_encode_upsert_job_request(const gchar *request_id,
+	                                       const SakuraSessionJobRecord *job,
+	                                       GByteArray *payload)
+{
+	Sakura__Control__V1__Job wire = SAKURA__CONTROL__V1__JOB__INIT;
+	Sakura__Control__V1__UpsertJobRequest upsert =
+		SAKURA__CONTROL__V1__UPSERT_JOB_REQUEST__INIT;
+	Sakura__Control__V1__Request request = SAKURA__CONTROL__V1__REQUEST__INIT;
+
+	if (request_id == NULL || job == NULL || job->name == NULL ||
+	    job->name[0] == '\0' || payload == NULL)
+		return FALSE;
+	sakura_control_fill_job(&wire, job);
+	upsert.job = &wire;
+	request.request_id = (gchar *)request_id;
+	request.body_case = SAKURA__CONTROL__V1__REQUEST__BODY_UPSERT_JOB;
+	request.upsert_job = &upsert;
+	return sakura_control_pack_message(&request.base, payload);
+}
+
+
+gboolean
+sakura_control_encode_set_job_enabled_request(const gchar *request_id,
+	                                            const gchar *name,
+	                                            gboolean enabled,
+	                                            GByteArray *payload)
+{
+	Sakura__Control__V1__SetJobEnabledRequest set =
+		SAKURA__CONTROL__V1__SET_JOB_ENABLED_REQUEST__INIT;
+	Sakura__Control__V1__Request request = SAKURA__CONTROL__V1__REQUEST__INIT;
+	if (request_id == NULL || name == NULL || name[0] == '\0' || payload == NULL)
+		return FALSE;
+	set.name = (gchar *)name; set.enabled = enabled;
+	request.request_id = (gchar *)request_id;
+	request.body_case = SAKURA__CONTROL__V1__REQUEST__BODY_SET_JOB_ENABLED;
+	request.set_job_enabled = &set;
+	return sakura_control_pack_message(&request.base, payload);
+}
+
+
+static gboolean
+sakura_control_encode_job_name_request(const gchar *request_id,
+	                                     const gchar *name, gboolean run,
+	                                     GByteArray *payload)
+{
+	Sakura__Control__V1__DeleteJobRequest remove =
+		SAKURA__CONTROL__V1__DELETE_JOB_REQUEST__INIT;
+	Sakura__Control__V1__RunJobRequest execute =
+		SAKURA__CONTROL__V1__RUN_JOB_REQUEST__INIT;
+	Sakura__Control__V1__Request request = SAKURA__CONTROL__V1__REQUEST__INIT;
+	if (request_id == NULL || name == NULL || name[0] == '\0' || payload == NULL)
+		return FALSE;
+	remove.name = (gchar *)name; execute.name = (gchar *)name;
+	request.request_id = (gchar *)request_id;
+	request.body_case = run ? SAKURA__CONTROL__V1__REQUEST__BODY_RUN_JOB
+	                        : SAKURA__CONTROL__V1__REQUEST__BODY_DELETE_JOB;
+	if (run) request.run_job = &execute; else request.delete_job = &remove;
+	return sakura_control_pack_message(&request.base, payload);
+}
+
+gboolean sakura_control_encode_delete_job_request(const gchar *request_id,
+	const gchar *name, GByteArray *payload)
+{ return sakura_control_encode_job_name_request(request_id, name, FALSE, payload); }
+
+gboolean sakura_control_encode_run_job_request(const gchar *request_id,
+	const gchar *name, GByteArray *payload)
+{ return sakura_control_encode_job_name_request(request_id, name, TRUE, payload); }
+
+
+gboolean
 sakura_control_encode_subscribe_events_request(const gchar *request_id,
 	                                             guint64 after_sequence,
 	                                             GByteArray *payload)
@@ -1239,6 +1318,39 @@ sakura_control_decode_request(const guint8 *payload,
 	request->has_expected_revision = decoded->has_expected_revision;
 	request->expected_revision = decoded->expected_revision;
 	switch (decoded->body_case) {
+	case SAKURA__CONTROL__V1__REQUEST__BODY_UPSERT_JOB:
+		if (decoded->upsert_job != NULL && decoded->upsert_job->job != NULL) {
+			Sakura__Control__V1__Job *job = decoded->upsert_job->job;
+			request->kind = SAKURA_CONTROL_REQUEST_UPSERT_JOB;
+			request->title = g_strdup(job->name);
+			request->session_name = g_strdup(job->session_name);
+			request->schedule = g_strdup(job->schedule);
+			request->timezone = g_strdup(job->timezone);
+			request->prompt_file = g_strdup(job->prompt_file);
+			request->overlap_policy = g_strdup(job->overlap_policy);
+			request->missed_run_policy = g_strdup(job->missed_run_policy);
+			request->enabled = job->enabled;
+		}
+		break;
+	case SAKURA__CONTROL__V1__REQUEST__BODY_SET_JOB_ENABLED:
+		if (decoded->set_job_enabled != NULL) {
+			request->kind = SAKURA_CONTROL_REQUEST_SET_JOB_ENABLED;
+			request->title = g_strdup(decoded->set_job_enabled->name);
+			request->enabled = decoded->set_job_enabled->enabled;
+		}
+		break;
+	case SAKURA__CONTROL__V1__REQUEST__BODY_DELETE_JOB:
+		if (decoded->delete_job != NULL) {
+			request->kind = SAKURA_CONTROL_REQUEST_DELETE_JOB;
+			request->title = g_strdup(decoded->delete_job->name);
+		}
+		break;
+	case SAKURA__CONTROL__V1__REQUEST__BODY_RUN_JOB:
+		if (decoded->run_job != NULL) {
+			request->kind = SAKURA_CONTROL_REQUEST_RUN_JOB;
+			request->title = g_strdup(decoded->run_job->name);
+		}
+		break;
 	case SAKURA__CONTROL__V1__REQUEST__BODY_GET_SNAPSHOT:
 		if (decoded->get_snapshot != NULL)
 			request->kind = SAKURA_CONTROL_REQUEST_GET_SNAPSHOT;
@@ -1605,6 +1717,27 @@ sakura_control_fill_terminal(Sakura__Control__V1__Terminal *message,
 
 
 static void
+sakura_control_fill_job(Sakura__Control__V1__Job *message,
+                        const SakuraSessionJobRecord *job)
+{
+	sakura__control__v1__job__init(message);
+	message->name = (gchar *)sakura_control_string(job->name);
+	message->session_name = (gchar *)sakura_control_string(job->session_name);
+	message->schedule = (gchar *)sakura_control_string(job->schedule);
+	message->timezone = (gchar *)sakura_control_string(job->timezone);
+	message->prompt_file = (gchar *)sakura_control_string(job->prompt_file);
+	message->overlap_policy = (gchar *)sakura_control_string(job->overlap_policy);
+	message->missed_run_policy = (gchar *)sakura_control_string(job->missed_run_policy);
+	message->enabled = job->enabled;
+	message->running = job->running;
+	message->next_run_unix = job->next_run_unix;
+	message->last_run_unix = job->last_run_unix;
+	message->last_status = (gchar *)sakura_control_string(job->last_status);
+	message->last_error = (gchar *)sakura_control_string(job->last_error);
+}
+
+
+static void
 sakura_control_fill_page(Sakura__Control__V1__Page *message,
                          const SakuraCorePage *page)
 {
@@ -1715,6 +1848,17 @@ sakura_control_fill_snapshot(
 	}
 	if (pages != workspace->pages)
 		g_ptr_array_unref(pages);
+	if (workspace->jobs != NULL && workspace->jobs->len != 0) {
+		snapshot->jobs = g_new0(Sakura__Control__V1__Job *, workspace->jobs->len);
+		for (guint index = 0; index < workspace->jobs->len; index++) {
+			Sakura__Control__V1__Job *job_message = g_new0(
+				Sakura__Control__V1__Job, 1);
+			sakura_control_fill_job(job_message,
+			                        g_ptr_array_index(workspace->jobs, index));
+			snapshot->jobs[index] = job_message;
+		}
+		snapshot->n_jobs = workspace->jobs->len;
+	}
 
 	snapshot->active_group_id = (gchar *)sakura_control_string(
 		workspace->active_group != NULL ? workspace->active_group->id : "root");
@@ -1739,10 +1883,13 @@ sakura_control_free_snapshot_messages(
 		g_free(snapshot->terminals[index]);
 	for (gsize index = 0; index < snapshot->n_pages; index++)
 		g_free(snapshot->pages[index]);
+	for (gsize index = 0; index < snapshot->n_jobs; index++)
+		g_free(snapshot->jobs[index]);
 	g_free(snapshot->groups);
 	g_free(snapshot->tasks);
 	g_free(snapshot->terminals);
 	g_free(snapshot->pages);
+	g_free(snapshot->jobs);
 }
 
 
@@ -2351,6 +2498,24 @@ sakura_control_decode_workspace_snapshot(
 		page->root_layout_id = g_strdup(wire_page->root_layout_id);
 		page->active_terminal_id = g_strdup(wire_page->active_terminal_id);
 		g_ptr_array_add(decoded_snapshot->pages, page);
+	}
+	for (gsize index = 0; index < wire_snapshot->n_jobs; index++) {
+		Sakura__Control__V1__Job *wire_job = wire_snapshot->jobs[index];
+		SakuraSessionJobRecord *job = g_new0(SakuraSessionJobRecord, 1);
+		job->name = g_strdup(wire_job->name);
+		job->session_name = g_strdup(wire_job->session_name);
+		job->schedule = g_strdup(wire_job->schedule);
+		job->timezone = g_strdup(wire_job->timezone);
+		job->prompt_file = g_strdup(wire_job->prompt_file);
+		job->overlap_policy = g_strdup(wire_job->overlap_policy);
+		job->missed_run_policy = g_strdup(wire_job->missed_run_policy);
+		job->enabled = wire_job->enabled;
+		job->running = wire_job->running;
+		job->next_run_unix = wire_job->next_run_unix;
+		job->last_run_unix = wire_job->last_run_unix;
+		job->last_status = g_strdup(wire_job->last_status);
+		job->last_error = g_strdup(wire_job->last_error);
+		g_ptr_array_add(decoded_snapshot->jobs, job);
 	}
 	(void)sequence;
 	*snapshot = decoded_snapshot;

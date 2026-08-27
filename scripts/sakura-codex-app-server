@@ -57,6 +57,7 @@ def main():
     parser.add_argument("--reasoning")
     parser.add_argument("--session-name")
     parser.add_argument("--thread-id")
+    parser.add_argument("--submit-turn", action="store_true")
     parser.add_argument("--goal-action",
                         choices=("start", "start-if-none", "status", "pause",
                                  "resume", "clear"))
@@ -65,7 +66,10 @@ def main():
     parser.add_argument("--timeout", type=float, default=3600)
     args = parser.parse_args()
 
-    if args.goal_action:
+    if args.submit_turn:
+        if not args.thread_id or not args.prompt_file:
+            parser.error("--submit-turn requires --thread-id and --prompt-file")
+    elif args.goal_action:
         if not args.thread_id:
             parser.error("--goal-action requires --thread-id")
         if args.goal_action in ("start", "start-if-none") and not args.goal_file:
@@ -94,6 +98,32 @@ def main():
             "clientInfo": {"name": "sakura", "title": "Sakura", "version": "1"}
         }, deadline)
         send(process, {"method": "initialized"})
+        if args.submit_turn:
+            request(process, messages, 2, "thread/resume", {
+                "threadId": args.thread_id,
+                "approvalPolicy": "never",
+                "sandbox": "danger-full-access",
+            }, deadline)
+            prompt = open(args.prompt_file, encoding="utf-8").read()
+            started = request(process, messages, 3, "turn/start", {
+                "threadId": args.thread_id,
+                "input": [{"type": "text", "text": prompt}],
+                "approvalPolicy": "never",
+            }, deadline)
+            turn_id = started["turn"]["id"]
+            while True:
+                message = receive(process, messages, deadline)
+                if message.get("method") != "turn/completed":
+                    continue
+                params = message.get("params", {})
+                turn = params.get("turn", {})
+                if params.get("threadId") != args.thread_id or turn.get("id") != turn_id:
+                    continue
+                status = turn.get("status", "completed")
+                print(json.dumps({"thread_id": args.thread_id,
+                                  "turn_id": turn_id, "status": status},
+                                 separators=(",", ":")))
+                return 0 if status == "completed" else 1
         if args.goal_action:
             goal_params = {"threadId": args.thread_id}
             action = args.goal_action

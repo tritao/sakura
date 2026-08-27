@@ -58,7 +58,13 @@ def main():
             "    model: gpt-5.6-luna\n"
             "    reasoning: xhigh\n"
             f"    goal_file: {goal}\n"
-            "    goal_policy: start-if-none\n",
+            "    goal_policy: start-if-none\n"
+            "    job_name: tony-nightly-review\n"
+            "    schedule: \"0 2 * * *\"\n"
+            "    timezone: Europe/Lisbon\n"
+            f"    scheduled_prompt_file: {prompt}\n"
+            "    overlap_policy: skip\n"
+            "    missed_run_policy: run-once\n",
             encoding="utf-8",
         )
         env = os.environ.copy()
@@ -122,6 +128,20 @@ def main():
             )
             assert json.loads(first.stdout)["page_id"]
             assert json.loads(second.stdout)["status"] == "reused"
+            jobs = run(args.ctl, "jobs", "list", *target, "--print", "json")
+            listed_job = json.loads(jobs.stdout)
+            assert listed_job["name"] == "tony-nightly-review"
+            assert listed_job["session_name"] == "collision"
+            assert listed_job["schedule"] == "0 2 * * *"
+            run(args.ctl, "jobs", "pause", *target,
+                "--job-name", "tony-nightly-review")
+            paused_jobs = run(args.ctl, "jobs", "list", *target,
+                              "--print", "json")
+            assert not json.loads(paused_jobs.stdout)["enabled"]
+            run(args.ctl, "jobs", "resume", *target,
+                "--job-name", "tony-nightly-review")
+            run(args.ctl, "jobs", "run", *target,
+                "--job-name", "tony-nightly-review")
             goal_status = run(
                 args.ctl, "goal", "status", *target, "--group-name", "Tony",
                 "--title", "Tony · Manifest",
@@ -243,6 +263,7 @@ def main():
             restored.read(workspace, encoding="utf-8")
             assert restored["Session"].getint("page_count") == 2, dict(restored["Session"])
             assert restored["Session"].getint("terminal_count") == 2, dict(restored["Session"])
+            assert restored["Session"].getint("job_count") == 1
             recovered = run(
                 args.ctl, "codex", "apply", *target, "--group-name", "Tony",
                 "--manifest", str(manifest), "--print", "json",
@@ -315,7 +336,7 @@ def main():
                 time.sleep(0.02)
             launches = [json.loads(line) for line in
                         arguments_log.read_text(encoding="utf-8").splitlines()]
-            assert len(launches) == 19
+            assert len(launches) == 20
             assert launches[1] == ["app-server", "--stdio", "--enable", "goals"]
             tui_launches = [launch for launch in launches
                             if launch[:1] != ["app-server"]]

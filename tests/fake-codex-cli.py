@@ -42,6 +42,9 @@ if sys.argv[1:3] == ["app-server", "--stdio"]:
             result = {"userAgent": "fake-codex"}
         elif method == "thread/start":
             result = {"thread": {"id": thread_id}}
+        elif method == "thread/resume":
+            thread_id = message["params"]["threadId"]
+            result = {"thread": {"id": thread_id}}
         elif method == "thread/name/set":
             result = {}
         elif method == "turn/start":

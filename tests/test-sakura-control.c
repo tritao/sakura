@@ -87,6 +87,16 @@ test_snapshot_response_roundtrip(void)
 	SakuraSessionSnapshot *snapshot = NULL;
 	guint64 sequence = 0;
 	GError *error = NULL;
+	SakuraSessionJobRecord *job = g_new0(SakuraSessionJobRecord, 1);
+	job->name = g_strdup("nightly");
+	job->session_name = g_strdup("overseer");
+	job->schedule = g_strdup("0 2 * * *");
+	job->timezone = g_strdup("Europe/Lisbon");
+	job->prompt_file = g_strdup("/tmp/nightly.md");
+	job->overlap_policy = g_strdup("skip");
+	job->missed_run_policy = g_strdup("run-once");
+	job->enabled = TRUE;
+	g_ptr_array_add(workspace->jobs, job);
 	third->order = 2;
 	first->order = 0;
 	second->order = 1;
@@ -126,6 +136,9 @@ test_snapshot_response_roundtrip(void)
 		snapshot->tabs, 1))->status, ==, SAKURA_TAB_STATUS_RUNNING);
 	g_assert_cmpstr(((SakuraSessionTabRecord *)g_ptr_array_index(
 		snapshot->tabs, 2))->terminal_id, ==, "terminal-third");
+	g_assert_cmpuint(snapshot->jobs->len, ==, 1);
+	g_assert_cmpstr(((SakuraSessionJobRecord *)g_ptr_array_index(
+		snapshot->jobs, 0))->name, ==, "nightly");
 
 	sakura_session_snapshot_free(snapshot);
 	sakura_control_response_clear(&response);

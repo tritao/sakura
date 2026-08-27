@@ -55,6 +55,8 @@ sakura_core_workspace_new(void)
 		(GDestroyNotify)sakura_core_page_free);
 	workspace->terminals = g_ptr_array_new_with_free_func(
 		(GDestroyNotify)sakura_core_terminal_free);
+	workspace->jobs = g_ptr_array_new_with_free_func(
+		(GDestroyNotify)sakura_session_job_record_free);
 	return workspace;
 }
 
@@ -65,6 +67,7 @@ sakura_core_workspace_free(SakuraCoreWorkspace *workspace)
 	if (workspace == NULL)
 		return;
 	g_clear_pointer(&workspace->terminals, g_ptr_array_unref);
+	g_clear_pointer(&workspace->jobs, g_ptr_array_unref);
 	g_clear_pointer(&workspace->pages, g_ptr_array_unref);
 	g_clear_pointer(&workspace->tasks, g_ptr_array_unref);
 	g_clear_pointer(&workspace->groups, g_ptr_array_unref);
@@ -1193,6 +1196,11 @@ sakura_core_workspace_from_snapshot(const SakuraSessionSnapshot *snapshot,
 				sakura_core_terminal_free(terminal);
 		}
 	}
+	if (snapshot->jobs != NULL) {
+		for (guint index = 0; index < snapshot->jobs->len; index++)
+			g_ptr_array_add(workspace->jobs, sakura_session_job_record_copy(
+				g_ptr_array_index(snapshot->jobs, index)));
+	}
 	workspace->active_group = sakura_core_workspace_find_group(
 		workspace, snapshot->active_group_id);
 	if (workspace->active_group == NULL)
@@ -1212,12 +1220,13 @@ sakura_core_workspace_sync_snapshot(const SakuraCoreWorkspace *workspace,
 
 	if (workspace == NULL || snapshot == NULL || snapshot->groups == NULL ||
 	    snapshot->tasks == NULL || snapshot->pages == NULL ||
-	    snapshot->tabs == NULL)
+	    snapshot->tabs == NULL || snapshot->jobs == NULL)
 		return FALSE;
 	g_ptr_array_set_size(snapshot->groups, 0);
 	g_ptr_array_set_size(snapshot->tasks, 0);
 	g_ptr_array_set_size(snapshot->pages, 0);
 	g_ptr_array_set_size(snapshot->tabs, 0);
+	g_ptr_array_set_size(snapshot->jobs, 0);
 	groups = sakura_core_workspace_ordered_groups(workspace);
 	for (guint index = 0; index < groups->len; index++) {
 		SakuraCoreGroup *model_group = g_ptr_array_index(groups, index);
@@ -1319,6 +1328,10 @@ sakura_core_workspace_sync_snapshot(const SakuraCoreWorkspace *workspace,
 		tab->order = model_terminal->order;
 		g_ptr_array_add(snapshot->tabs, tab);
 	}
+	for (guint index = 0; workspace->jobs != NULL &&
+	                     index < workspace->jobs->len; index++)
+		g_ptr_array_add(snapshot->jobs, sakura_session_job_record_copy(
+			g_ptr_array_index(workspace->jobs, index)));
 	g_free(snapshot->active_group_id);
 	snapshot->active_group_id = g_strdup(
 		workspace->active_group != NULL ? workspace->active_group->id : "root");

@@ -91,6 +91,46 @@ sakura_session_layout_record_free(gpointer data)
 }
 
 
+void
+sakura_session_job_record_free(SakuraSessionJobRecord *record)
+{
+	if (record == NULL)
+		return;
+	g_free(record->name);
+	g_free(record->session_name);
+	g_free(record->schedule);
+	g_free(record->timezone);
+	g_free(record->prompt_file);
+	g_free(record->overlap_policy);
+	g_free(record->missed_run_policy);
+	g_free(record->last_status);
+	g_free(record->last_error);
+	g_free(record);
+}
+
+
+SakuraSessionJobRecord *
+sakura_session_job_record_copy(const SakuraSessionJobRecord *record)
+{
+	SakuraSessionJobRecord *copy;
+
+	if (record == NULL)
+		return NULL;
+	copy = g_new0(SakuraSessionJobRecord, 1);
+	*copy = *record;
+	copy->name = g_strdup(record->name);
+	copy->session_name = g_strdup(record->session_name);
+	copy->schedule = g_strdup(record->schedule);
+	copy->timezone = g_strdup(record->timezone);
+	copy->prompt_file = g_strdup(record->prompt_file);
+	copy->overlap_policy = g_strdup(record->overlap_policy);
+	copy->missed_run_policy = g_strdup(record->missed_run_policy);
+	copy->last_status = g_strdup(record->last_status);
+	copy->last_error = g_strdup(record->last_error);
+	return copy;
+}
+
+
 static void
 sakura_session_sidebar_expansion_record_free(gpointer data)
 {
@@ -115,6 +155,8 @@ sakura_session_snapshot_new(void)
 	snapshot->layouts = g_ptr_array_new_with_free_func(sakura_session_layout_record_free);
 	snapshot->expanded_sidebar_nodes = g_ptr_array_new_with_free_func(
 		sakura_session_sidebar_expansion_record_free);
+	snapshot->jobs = g_ptr_array_new_with_free_func(
+		(GDestroyNotify)sakura_session_job_record_free);
 	snapshot->workspace_id = g_uuid_string_random();
 	snapshot->selected_terminal = -1;
 	snapshot->active_group_id = g_strdup("root");
@@ -137,6 +179,7 @@ sakura_session_snapshot_free(SakuraSessionSnapshot *snapshot)
 	g_clear_pointer(&snapshot->pages, g_ptr_array_unref);
 	g_clear_pointer(&snapshot->layouts, g_ptr_array_unref);
 	g_clear_pointer(&snapshot->expanded_sidebar_nodes, g_ptr_array_unref);
+	g_clear_pointer(&snapshot->jobs, g_ptr_array_unref);
 	g_free(snapshot->workspace_id);
 	g_free(snapshot->selected_terminal_id);
 	g_free(snapshot->selected_page_id);

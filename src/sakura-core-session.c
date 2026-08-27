@@ -514,7 +514,7 @@ sakura_session_snapshot_load_into(GKeyFile *key_file,
                                    GError **error)
 {
 	gint version, group_count, task_count = 0, terminal_count, page_count = 0,
-	     layout_count = 0, expanded_sidebar_count = 0;
+	     layout_count = 0, expanded_sidebar_count = 0, job_count = 0;
 	gint index;
 
 	if (key_file == NULL || snapshot == NULL)
@@ -577,6 +577,14 @@ sakura_session_snapshot_load_into(GKeyFile *key_file,
 	} else {
 		snapshot->sidebar_expansion_saved = FALSE;
 	}
+	if (version >= 12) {
+		job_count = g_key_file_get_integer(key_file, "Session", "job_count", error);
+		if (error != NULL && *error != NULL)
+			return FALSE;
+		if (job_count < 0)
+			return sakura_session_error(error, G_KEY_FILE_ERROR_INVALID_VALUE,
+			                            g_strdup("job count cannot be negative"));
+	}
 
 	if (g_key_file_has_key(key_file, "Session", "selected_terminal", NULL))
 		snapshot->selected_terminal = g_key_file_get_integer(key_file, "Session",
@@ -616,6 +624,7 @@ sakura_session_snapshot_load_into(GKeyFile *key_file,
 	g_ptr_array_set_size(snapshot->pages, 0);
 	g_ptr_array_set_size(snapshot->layouts, 0);
 	g_ptr_array_set_size(snapshot->expanded_sidebar_nodes, 0);
+	g_ptr_array_set_size(snapshot->jobs, 0);
 	for (index = 0; index < group_count; index++) {
 		gchar *section = g_strdup_printf("Group%d", index);
 		SakuraSessionGroupRecord *group = g_new0(SakuraSessionGroupRecord, 1);
@@ -828,6 +837,33 @@ sakura_session_snapshot_load_into(GKeyFile *key_file,
 		g_free(kind);
 		g_free(section);
 	}
+	for (index = 0; index < job_count; index++) {
+		g_autofree gchar *section = g_strdup_printf("Job%d", index);
+		SakuraSessionJobRecord *job = g_new0(SakuraSessionJobRecord, 1);
+
+		job->name = g_key_file_get_string(key_file, section, "name", NULL);
+		job->session_name = g_key_file_get_string(key_file, section, "session_name", NULL);
+		job->schedule = g_key_file_get_string(key_file, section, "schedule", NULL);
+		job->timezone = g_key_file_get_string(key_file, section, "timezone", NULL);
+		job->prompt_file = g_key_file_get_string(key_file, section, "prompt_file", NULL);
+		job->overlap_policy = g_key_file_get_string(key_file, section, "overlap_policy", NULL);
+		job->missed_run_policy = g_key_file_get_string(key_file, section, "missed_run_policy", NULL);
+		job->enabled = g_key_file_get_boolean(key_file, section, "enabled", NULL);
+		job->running = FALSE;
+		job->next_run_unix = g_key_file_get_int64(key_file, section, "next_run_unix", NULL);
+		job->last_run_unix = g_key_file_get_int64(key_file, section, "last_run_unix", NULL);
+		job->last_status = g_key_file_get_string(key_file, section, "last_status", NULL);
+		job->last_error = g_key_file_get_string(key_file, section, "last_error", NULL);
+		if (job->name == NULL || job->name[0] == '\0') {
+			g_free(job->name); g_free(job->session_name); g_free(job->schedule);
+			g_free(job->timezone); g_free(job->prompt_file);
+			g_free(job->overlap_policy); g_free(job->missed_run_policy);
+			g_free(job->last_status); g_free(job->last_error); g_free(job);
+			return sakura_session_error(error, G_KEY_FILE_ERROR_INVALID_VALUE,
+			                            g_strdup("job name cannot be empty"));
+		}
+		g_ptr_array_add(snapshot->jobs, job);
+	}
 	sakura_session_repair_duplicate_page_ids(snapshot);
 
 	{
@@ -888,6 +924,7 @@ sakura_session_snapshot_save(const SakuraSessionSnapshot *snapshot,
 	g_key_file_set_integer(key_file, "Session", "page_count", snapshot->pages->len);
 	g_key_file_set_integer(key_file, "Session", "layout_count", snapshot->layouts->len);
 	g_key_file_set_integer(key_file, "Session", "terminal_count", snapshot->tabs->len);
+	g_key_file_set_integer(key_file, "Session", "job_count", snapshot->jobs->len);
 	g_key_file_set_integer(key_file, "Session", "selected_terminal",
 	                      snapshot->selected_terminal);
 	if (snapshot->selected_terminal_id != NULL)
@@ -1053,5 +1090,24 @@ sakura_session_snapshot_save(const SakuraSessionSnapshot *snapshot,
 		if (tab->title_set_by_user)
 			g_key_file_set_string(key_file, section, "title", tab->title != NULL ? tab->title : "");
 		g_free(section);
+	}
+	for (index = 0; index < snapshot->jobs->len; index++) {
+		SakuraSessionJobRecord *job = g_ptr_array_index(snapshot->jobs, index);
+		g_autofree gchar *section = g_strdup_printf("Job%u", index);
+
+		g_key_file_set_string(key_file, section, "name", job->name);
+		g_key_file_set_string(key_file, section, "session_name", job->session_name);
+		g_key_file_set_string(key_file, section, "schedule", job->schedule);
+		g_key_file_set_string(key_file, section, "timezone", job->timezone);
+		g_key_file_set_string(key_file, section, "prompt_file", job->prompt_file);
+		g_key_file_set_string(key_file, section, "overlap_policy", job->overlap_policy);
+		g_key_file_set_string(key_file, section, "missed_run_policy", job->missed_run_policy);
+		g_key_file_set_boolean(key_file, section, "enabled", job->enabled);
+		g_key_file_set_int64(key_file, section, "next_run_unix", job->next_run_unix);
+		g_key_file_set_int64(key_file, section, "last_run_unix", job->last_run_unix);
+		g_key_file_set_string(key_file, section, "last_status",
+		                      job->last_status != NULL ? job->last_status : "never");
+		if (job->last_error != NULL && job->last_error[0] != '\0')
+			g_key_file_set_string(key_file, section, "last_error", job->last_error);
 	}
 }
