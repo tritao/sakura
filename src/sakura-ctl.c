@@ -965,6 +965,8 @@ main(int argc, char **argv)
 		"  codex        Open a Codex page\n"
 		"  goal         Manage a Codex session goal\n"
 		"  input        Send --prompt-file to --terminal\n"
+		"  archive-page Archive a page and disable startup resume\n"
+		"  unarchive-page Restore an archived page\n"
 		"  delete-page  Remove a page and its terminals");
 	g_option_context_add_main_entries(context, entries, NULL);
 	if (!g_option_context_parse(context, &argc, &argv, &error))
@@ -976,7 +978,7 @@ main(int argc, char **argv)
 	        strcmp(arguments[1], "apply") == 0) ||
 	       strcmp(arguments[0], "goal") == 0))) {
 		g_set_error_literal(&error, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT,
-		                    "exactly one command is required: list, groups, new, codex, or delete-page");
+		                    "exactly one command is required: list, groups, new, codex, goal, input, archive-page, unarchive-page, or delete-page");
 		goto out;
 	}
 	command = arguments[0];
@@ -998,6 +1000,8 @@ main(int argc, char **argv)
 	    strcmp(command, "new") != 0 &&
 	    strcmp(command, "codex") != 0 && strcmp(command, "goal") != 0 &&
 	    strcmp(command, "input") != 0 &&
+	    strcmp(command, "archive-page") != 0 &&
+	    strcmp(command, "unarchive-page") != 0 &&
 	    strcmp(command, "delete-page") != 0) {
 		g_set_error(&error, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT,
 		            "unknown command: %s", command);
@@ -1072,6 +1076,22 @@ main(int argc, char **argv)
 			goto out;
 		}
 		if (!sakura_control_client_delete_page(connection, delete_page_id, &error))
+			goto out;
+		g_print("%s\n", delete_page_id);
+		result = EXIT_SUCCESS;
+		goto out;
+	}
+	if (strcmp(command, "archive-page") == 0 ||
+	    strcmp(command, "unarchive-page") == 0) {
+		gboolean archived = strcmp(command, "archive-page") == 0;
+
+		if (delete_page_id == NULL || delete_page_id[0] == '\0') {
+			g_set_error(&error, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT,
+			            "%s requires --page ID", command);
+			goto out;
+		}
+		if (!sakura_control_client_set_page_archived(
+			connection, delete_page_id, archived, &error))
 			goto out;
 		g_print("%s\n", delete_page_id);
 		result = EXIT_SUCCESS;

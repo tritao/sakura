@@ -48,6 +48,7 @@ message Terminal {
   string codex_model = 15;
   string codex_session_name = 16;
   bool resume_on_start = 17;
+  uint32 activity_status = 18;
 }
 
 message Page {

@@ -352,6 +352,10 @@ sakura_tab_spawn_codex(SakuraTab *tab, const gchar *cwd, gchar **env)
 		          tracking_error != NULL ? tracking_error->message : "unknown error");
 		g_clear_error(&tracking_error);
 	}
+	if (sakura_codex_supports_in_app_updates("codex")) {
+		argv[next_arg++] = (gchar *)"--disable";
+		argv[next_arg++] = (gchar *)"in_app_updates";
+	}
 
 	if (sakura.startup.options.codex_unsafe_mode)
 		argv[next_arg++] = (gchar *)"--dangerously-bypass-approvals-and-sandbox";
@@ -2452,25 +2456,35 @@ sakura_tab_keypress_cb(GtkWidget *widget, GdkEventKey *event, gpointer data)
 		return TRUE;
 
 	(void)widget;
-	/* Ctrl-C is the conventional terminal interrupt. Mark an active Codex
-	 * turn as interrupted immediately; the next hook event can replace this
-	 * optimistic state with the authoritative state from Codex. */
-	if (tab != NULL && tab->kind == SAKURA_TAB_CODEX &&
-	    tab->status == SAKURA_TAB_STATUS_RUNNING &&
-	    event->keyval == GDK_KEY_c &&
-	    (event->state & (GDK_CONTROL_MASK | GDK_SHIFT_MASK)) == GDK_CONTROL_MASK) {
-		tab->codex_interrupt_requested = TRUE;
-		g_free(tab->codex_interrupt_turn_id);
-		tab->codex_interrupt_turn_id = g_strdup(tab->codex_turn_id);
-		sakura_tab_set_status(tab, SAKURA_TAB_STATUS_INTERRUPTED, FALSE);
-	}
-
 	if (tab != NULL && tab->text_selection_mode &&
 	    event->keyval == GDK_KEY_Escape) {
 		sakura_set_text_selection_mode(tab, FALSE);
 		return TRUE;
 	}
+
+	/* Codex accepts both Ctrl-C and plain Escape as turn cancellation. Mark the
+	 * optimistic local state immediately because a cancelled turn does not
+	 * consistently emit the Stop hook that normally clears the spinner. */
+	if (tab != NULL &&
+	    ((event->keyval == GDK_KEY_c &&
+	      (event->state & (GDK_CONTROL_MASK | GDK_SHIFT_MASK)) == GDK_CONTROL_MASK) ||
+	     (event->keyval == GDK_KEY_Escape &&
+	      (event->state & (GDK_CONTROL_MASK | GDK_SHIFT_MASK | GDK_MOD1_MASK)) == 0)))
+		sakura_tab_note_codex_interrupt(tab);
 	return FALSE;
+}
+
+
+void
+sakura_tab_note_codex_interrupt(SakuraTab *tab)
+{
+	if (tab == NULL || tab->kind != SAKURA_TAB_CODEX ||
+	    tab->status != SAKURA_TAB_STATUS_RUNNING)
+		return;
+	tab->codex_interrupt_requested = TRUE;
+	g_free(tab->codex_interrupt_turn_id);
+	tab->codex_interrupt_turn_id = g_strdup(tab->codex_turn_id);
+	sakura_tab_set_status(tab, SAKURA_TAB_STATUS_INTERRUPTED, FALSE);
 }
 
 

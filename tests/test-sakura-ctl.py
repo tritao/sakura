@@ -322,6 +322,7 @@ def main():
             for launch in tui_launches[:4]:
                 assert launch[launch.index("--model") + 1] == "gpt-5.6-luna"
                 assert "model_reasoning_effort=xhigh" in launch
+                assert launch[launch.index("--disable") + 1] == "in_app_updates"
             assert all("resume" in launch for launch in tui_launches[1:4])
             assert "9f328589-2569-5184-a037-0d4415dbb70d" in tui_launches[1]
             assert tui_launches[4][tui_launches[4].index("--model") + 1] == "exit-immediately"
@@ -377,6 +378,25 @@ def main():
             repeated_statuses = [json.loads(line)["status"] for line in
                                  repeated.stdout.splitlines()]
             assert repeated_statuses == ["reused", "reused"]
+
+            run(args.ctl, "archive-page", *target, "--page", result["page_id"])
+            archived_workspace = configparser.ConfigParser()
+            archived_workspace.read(workspace, encoding="utf-8")
+            archived_page = next(
+                archived_workspace[f"Page{index}"]
+                for index in range(archived_workspace["Session"].getint("page_count"))
+                if archived_workspace[f"Page{index}"]["id"] == result["page_id"]
+            )
+            assert archived_page.getboolean("archived")
+            run(args.ctl, "unarchive-page", *target, "--page", result["page_id"])
+            restored_workspace = configparser.ConfigParser()
+            restored_workspace.read(workspace, encoding="utf-8")
+            restored_page = next(
+                restored_workspace[f"Page{index}"]
+                for index in range(restored_workspace["Session"].getint("page_count"))
+                if restored_workspace[f"Page{index}"]["id"] == result["page_id"]
+            )
+            assert not restored_page.getboolean("archived")
 
             stop_agent(agent)
             archived = configparser.ConfigParser()

@@ -2156,25 +2156,48 @@ sakura_new_tab_in_scope_cb (GtkWidget *widget, void *data)
 {
 	struct sakura_sidebar_action_target *target = data;
 	SakuraSidebarNode *node = sakura_sidebar_action_target_node(target);
+	SakuraSidebarNode *parent;
 	SakuraSidebarNode *insert_after = NULL;
+	SakuraGroup *group;
+	SakuraTask *task;
+	g_autofree gchar *group_id = NULL;
+	g_autofree gchar *task_id = NULL;
+	g_autofree gchar *insert_after_page_id = NULL;
 
 	if (target != NULL && node == NULL)
 		return;
-	sakura_workspace_begin_mutation();
+	parent = sakura_sidebar_creation_parent_for_context(node);
+	group = sakura_group_for_sidebar_node(parent);
+	task = parent != NULL && parent->type == SAKURA_SIDEBAR_TASK
+	     ? parent->task : NULL;
+	group_id = g_strdup(group != NULL && group->id != NULL ? group->id : "root");
+	task_id = g_strdup(task != NULL ? task->id : NULL);
 	if (node != NULL && node->type == SAKURA_SIDEBAR_TERMINAL &&
 	    node->parent != NULL && node->parent->type == SAKURA_SIDEBAR_PAGE)
-		insert_after = node->parent;
+		insert_after_page_id = g_strdup(node->parent->id);
 	else if (node != NULL && node->type == SAKURA_SIDEBAR_PAGE)
-		insert_after = node;
+		insert_after_page_id = g_strdup(node->id);
+	sakura_workspace_begin_mutation();
 	sakura_sidebar_prepare_context(node);
+	/* Scope preparation may rebuild the entire sidebar projection. Resolve
+	 * fresh view nodes from stable model IDs captured before that boundary. */
+	if (insert_after_page_id != NULL) {
+		SakuraPage *page = sakura_sidebar_page_by_id(insert_after_page_id);
+
+		insert_after = page != NULL ? page->sidebar_node : NULL;
+	}
 	sakura.sidebar_pending_insert_after = insert_after;
-	if (node != NULL && node->type == SAKURA_SIDEBAR_TASK) {
-		sakura_new_tab_for_task(node->task);
-	} else if (node != NULL && node->type == SAKURA_SIDEBAR_GROUP &&
-	    node != sakura.sidebar_root)
-		sakura_new_tab_for_group(node);
-	else
+	if (task_id != NULL) {
+		task = sakura_workspace_model_find_task(sakura.workspace, task_id);
+		if (task != NULL)
+			sakura_new_tab_for_task(task);
+	} else if (g_strcmp0(group_id, "root") != 0) {
+		parent = sakura_sidebar_find_group_by_id(group_id);
+		if (parent != NULL)
+			sakura_new_tab_for_group(parent);
+	} else {
 		sakura_new_tab_cb(widget, NULL);
+	}
 	sakura.sidebar_pending_insert_after = NULL;
 	sakura_workspace_end_mutation();
 }

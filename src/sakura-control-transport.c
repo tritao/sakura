@@ -1586,6 +1586,7 @@ sakura_control_fill_terminal(Sakura__Control__V1__Terminal *message,
 	message->cols = terminal->cols;
 	message->rows = terminal->rows;
 	message->status = terminal->status;
+	message->activity_status = terminal->activity_status;
 	message->kind = terminal->kind;
 	message->codex_session_id = (gchar *)sakura_control_string(
 		terminal->codex_session_id);
@@ -2323,6 +2324,9 @@ sakura_control_decode_workspace_snapshot(
 		tab->codex_session_name = g_strdup(wire_terminal->codex_session_name);
 		tab->resume_on_start = wire_terminal->resume_on_start;
 		tab->runtime_status = wire_terminal->status;
+		tab->status = wire_terminal->activity_status <= SAKURA_TAB_STATUS_ERROR
+		            ? (SakuraTabStatus)wire_terminal->activity_status
+		            : SAKURA_TAB_STATUS_NONE;
 		tab->codex_reasoning_effort =
 			g_strdup(wire_terminal->codex_reasoning_effort);
 		tab->codex_model = g_strdup(wire_terminal->codex_model);

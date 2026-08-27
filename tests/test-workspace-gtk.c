@@ -42,6 +42,27 @@ test_codex_interrupt_event_matching(void)
 
 
 static void
+test_codex_interrupt_stops_running_state(void)
+{
+	SakuraTab tab = { 0 };
+
+	tab.kind = SAKURA_TAB_CODEX;
+	tab.status = SAKURA_TAB_STATUS_RUNNING;
+	tab.codex_turn_id = g_strdup("turn-a");
+	sakura_tab_note_codex_interrupt(&tab);
+	g_assert_cmpint(tab.status, ==, SAKURA_TAB_STATUS_INTERRUPTED);
+	g_assert_true(tab.codex_interrupt_requested);
+	g_assert_cmpstr(tab.codex_interrupt_turn_id, ==, "turn-a");
+
+	/* Repeated Escape after the first transition must preserve the marker. */
+	sakura_tab_note_codex_interrupt(&tab);
+	g_assert_cmpstr(tab.codex_interrupt_turn_id, ==, "turn-a");
+	g_free(tab.codex_turn_id);
+	g_free(tab.codex_interrupt_turn_id);
+}
+
+
+static void
 test_codex_helper_resolution(void)
 {
 	GError *error = NULL;
@@ -3654,6 +3675,8 @@ main(int argc, char **argv)
 	                test_notebook_identity_and_reorder);
 	g_test_add_func("/workspace/codex-interrupt-event-matching",
 	                test_codex_interrupt_event_matching);
+	g_test_add_func("/workspace/codex-interrupt-stops-running-state",
+	                test_codex_interrupt_stops_running_state);
 	g_test_add_func("/workspace/codex-helper-resolution",
 	                test_codex_helper_resolution);
 	g_test_add_func("/workspace/codex-rename-menu-tracks-identification",

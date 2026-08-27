@@ -554,6 +554,32 @@ out:
 
 
 gboolean
+sakura_control_client_set_page_archived(
+	SakuraControlClientConnection *connection, const gchar *page_id,
+	gboolean archived, GError **error)
+{
+	GByteArray *request = g_byte_array_new();
+	SakuraControlResponse response = { 0 };
+	gchar *request_id = g_uuid_string_random();
+	gboolean success;
+
+	success = sakura_control_encode_set_page_archived_request(
+		request_id, page_id, archived, request) &&
+		sakura_control_client_call(connection, request_id, request, &response,
+		                           error);
+	if (success && !response.has_snapshot) {
+		g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_INVALID_DATA,
+		                    "Sakura agent did not return the updated workspace");
+		success = FALSE;
+	}
+	sakura_control_response_clear(&response);
+	g_byte_array_unref(request);
+	g_free(request_id);
+	return success;
+}
+
+
+gboolean
 sakura_control_client_delete_page(
 	SakuraControlClientConnection *connection, const gchar *page_id,
 	GError **error)

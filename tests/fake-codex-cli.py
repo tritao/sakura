@@ -10,6 +10,10 @@ import time
 import uuid
 
 
+if sys.argv[1:] == ["features", "list"]:
+    print("in_app_updates stable true")
+    sys.exit(0)
+
 arguments_log = os.environ.get("SAKURA_FAKE_CODEX_ARGUMENTS_LOG")
 if arguments_log:
     with open(arguments_log, "a", encoding="utf-8") as output:

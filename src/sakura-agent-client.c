@@ -597,9 +597,26 @@ sakura_agent_materialize_snapshot_terminals(const SakuraSessionSnapshot *snapsho
 		SakuraTabLaunchConfig config = { 0 };
 
 		if (record == NULL || record->terminal_id == NULL ||
-		    record->page_id == NULL ||
-		    sakura_find_pane_by_terminal_id(record->terminal_id) != NULL)
+		    record->page_id == NULL)
 			continue;
+		tab = sakura_find_pane_by_terminal_id(record->terminal_id);
+		if (tab != NULL) {
+			/* The input command carrying Escape may still be queued behind this
+			 * snapshot. Do not let an older running record undo the optimistic
+			 * local interruption marker. */
+			if (record->kind == SAKURA_TAB_CODEX &&
+			    !(record->status == SAKURA_TAB_STATUS_RUNNING &&
+			      tab->codex_interrupt_requested) &&
+			    record->status != SAKURA_TAB_STATUS_NONE &&
+			    tab->status != record->status) {
+				sakura_tab_set_status(tab, record->status,
+				                      record->status == SAKURA_TAB_STATUS_READY ||
+				                      record->status == SAKURA_TAB_STATUS_NEEDS_APPROVAL ||
+				                      record->status == SAKURA_TAB_STATUS_ERROR);
+				changed = TRUE;
+			}
+			continue;
+		}
 		page_record = sakura_agent_snapshot_page(snapshot, record->page_id);
 		if (page_record == NULL || page_record->archived)
 			continue;
@@ -644,6 +661,12 @@ sakura_agent_materialize_snapshot_terminals(const SakuraSessionSnapshot *snapsho
 		                         ? page_record->title : "");
 		tab->page->title_set_by_user = page_record->title_set_by_user;
 		tab->page->archived = page_record->archived;
+		if (record->kind == SAKURA_TAB_CODEX &&
+		    record->status != SAKURA_TAB_STATUS_NONE)
+			sakura_tab_set_status(tab, record->status,
+			                      record->status == SAKURA_TAB_STATUS_READY ||
+			                      record->status == SAKURA_TAB_STATUS_NEEDS_APPROVAL ||
+			                      record->status == SAKURA_TAB_STATUS_ERROR);
 		sakura_sidebar_update_page(tab->page);
 		changed = TRUE;
 	}

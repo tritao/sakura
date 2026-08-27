@@ -423,6 +423,8 @@ sakura_agent_refresh_codex_tracking(SakuraAgent *agent)
 		g_autofree gchar *path = NULL;
 		g_autoptr(GKeyFile) key_file = NULL;
 		g_autofree gchar *session_id = NULL;
+		g_autofree gchar *state = NULL;
+		SakuraTabStatus activity_status = SAKURA_TAB_STATUS_NONE;
 
 		if (terminal == NULL || terminal->kind != SAKURA_TAB_CODEX ||
 		    terminal->tracking_token == NULL || terminal->tracking_token[0] == '\0')
@@ -432,12 +434,32 @@ sakura_agent_refresh_codex_tracking(SakuraAgent *agent)
 		if (!g_key_file_load_from_file(key_file, path, G_KEY_FILE_NONE, NULL))
 			continue;
 		session_id = g_key_file_get_string(key_file, "tracking", "session_id", NULL);
-		if (session_id == NULL || session_id[0] == '\0' ||
-		    g_strcmp0(session_id, terminal->codex_session_id) == 0)
-			continue;
-		g_free(terminal->codex_session_id);
-		terminal->codex_session_id = g_steal_pointer(&session_id);
-		changed = TRUE;
+		state = g_key_file_get_string(key_file, "tracking", "state", NULL);
+		if (g_strcmp0(state, "idle") == 0)
+			activity_status = SAKURA_TAB_STATUS_IDLE;
+		else if (g_strcmp0(state, "running") == 0)
+			activity_status = SAKURA_TAB_STATUS_RUNNING;
+		else if (g_strcmp0(state, "needs-approval") == 0)
+			activity_status = SAKURA_TAB_STATUS_NEEDS_APPROVAL;
+		else if (g_strcmp0(state, "ready") == 0)
+			activity_status = SAKURA_TAB_STATUS_READY;
+		else if (g_strcmp0(state, "interrupted") == 0 ||
+		         g_strcmp0(state, "cancelled") == 0 ||
+		         g_strcmp0(state, "canceled") == 0)
+			activity_status = SAKURA_TAB_STATUS_INTERRUPTED;
+		else if (g_strcmp0(state, "error") == 0)
+			activity_status = SAKURA_TAB_STATUS_ERROR;
+		if (session_id != NULL && session_id[0] != '\0' &&
+		    g_strcmp0(session_id, terminal->codex_session_id) != 0) {
+			g_free(terminal->codex_session_id);
+			terminal->codex_session_id = g_steal_pointer(&session_id);
+			changed = TRUE;
+		}
+		if (activity_status != SAKURA_TAB_STATUS_NONE &&
+		    terminal->activity_status != activity_status) {
+			terminal->activity_status = activity_status;
+			changed = TRUE;
+		}
 	}
 	return changed;
 }
@@ -458,6 +480,36 @@ sakura_agent_next_group_order(const SakuraCoreWorkspace *workspace,
 			order = group->order + 1;
 	}
 	return order;
+}
+
+
+static gboolean
+sakura_agent_codex_supports_in_app_updates(const gchar *binary)
+{
+	static GHashTable *cache;
+	gpointer cached;
+	g_autofree gchar *stdout_text = NULL;
+	g_autofree gchar *stderr_text = NULL;
+	gchar *argv[] = { (gchar *)"timeout", (gchar *)"0.5s", (gchar *)binary,
+	                 (gchar *)"features", (gchar *)"list", NULL };
+	gint wait_status = 0;
+	gboolean supported;
+
+	if (cache == NULL)
+		cache = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
+	cached = g_hash_table_lookup(cache, binary);
+	if (cached != NULL)
+		return GPOINTER_TO_INT(cached) == 2;
+	supported = g_spawn_sync(NULL, argv, NULL, G_SPAWN_SEARCH_PATH,
+	                         NULL, NULL, &stdout_text, &stderr_text,
+	                         &wait_status, NULL) &&
+	            g_spawn_check_wait_status(wait_status, NULL) &&
+	            stdout_text != NULL &&
+	            g_regex_match_simple("(?m)^in_app_updates[[:space:]]", stdout_text,
+	                                 0, 0);
+	g_hash_table_insert(cache, g_strdup(binary),
+	                    GINT_TO_POINTER(supported ? 2 : 1));
+	return supported;
 }
 
 
@@ -1308,7 +1360,7 @@ sakura_agent_create_terminal_with_kind(SakuraAgent *agent,
 	const gchar *cwd;
 	const gchar *shell;
 	const gchar *codex_binary;
-	const gchar *child_argv[14] = { NULL };
+	const gchar *child_argv[16] = { NULL };
 	guint child_argc = 0;
 	gchar *reasoning_config = NULL;
 	gchar *owned_cwd = NULL;
@@ -1366,6 +1418,10 @@ sakura_agent_create_terminal_with_kind(SakuraAgent *agent,
 		child_argv[child_argc++] = "hooks";
 		child_argv[child_argc++] = "--enable";
 		child_argv[child_argc++] = "goals";
+		if (sakura_agent_codex_supports_in_app_updates(codex_binary)) {
+			child_argv[child_argc++] = "--disable";
+			child_argv[child_argc++] = "in_app_updates";
+		}
 		if (request->model != NULL && request->model[0] != '\0') {
 			child_argv[child_argc++] = "--model";
 			child_argv[child_argc++] = request->model;
@@ -1427,6 +1483,8 @@ sakura_agent_create_terminal_with_kind(SakuraAgent *agent,
 	title = NULL;
 	create.core->status = SAKURA_TERMINAL_RUNNING;
 	create.core->kind = codex ? SAKURA_TAB_CODEX : SAKURA_TAB_SHELL;
+	create.core->activity_status = codex ? SAKURA_TAB_STATUS_IDLE
+	                                    : SAKURA_TAB_STATUS_NONE;
 	create.core->resume_on_start = codex;
 	create.core->codex_session_id = g_strdup(request->resume_session_id);
 	create.core->codex_session_name = g_strdup(request->session_name);
@@ -1545,6 +1603,16 @@ sakura_agent_terminal_input(SakuraAgent *agent,
 			return FALSE;
 		}
 		offset += count;
+	}
+	if (terminal->core != NULL && terminal->core->kind == SAKURA_TAB_CODEX &&
+	    terminal->core->activity_status == SAKURA_TAB_STATUS_RUNNING) {
+		for (gsize index = 0; index < request->input_length; index++) {
+			if (request->input_data[index] == 0x1b ||
+			    request->input_data[index] == 0x03) {
+				terminal->core->activity_status = SAKURA_TAB_STATUS_INTERRUPTED;
+				break;
+			}
+		}
 	}
 	return TRUE;
 }

@@ -218,6 +218,7 @@ struct sakura_core_terminal {
 	guint cols;
 	guint rows;
 	SakuraCoreTerminalStatus status;
+	SakuraTabStatus activity_status;
 	SakuraTabKind kind;
 	gchar *codex_session_id;
 	gchar *codex_session_name;

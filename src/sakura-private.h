@@ -697,6 +697,7 @@ gboolean sakura_tab_spawn_command(SakuraTab *tab, const gchar *cwd,
 void sakura_set_text_selection_mode(SakuraTab *tab, gboolean enabled);
 gboolean sakura_tab_keypress_cb(GtkWidget *widget, GdkEventKey *event,
                                 gpointer data);
+void sakura_tab_note_codex_interrupt(SakuraTab *tab);
 gboolean sakura_key_press_cb(GtkWidget *widget, GdkEventKey *event,
                              gpointer user_data);
 void sakura_tab_title_changed_cb(GtkWidget *widget, void *data);
@@ -870,6 +871,7 @@ gboolean sakura_tab_delete_page(gint page);
 void sakura_tab_delete_pane(SakuraTab *tab);
 gboolean sakura_codex_session_id_is_uuid(const gchar *value);
 gboolean sakura_codex_reasoning_effort_is_valid(const gchar *value);
+gboolean sakura_codex_supports_in_app_updates(const gchar *binary);
 const gchar *sakura_codex_reasoning_effort_label(const gchar *value);
 gboolean sakura_codex_tracking_poll_cb(gpointer data);
 void sakura_codex_tracking_changed_cb(GFileMonitor *monitor, GFile *file,

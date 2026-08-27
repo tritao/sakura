@@ -1606,6 +1606,37 @@ sakura_codex_tracking_state (void)
 
 
 gboolean
+sakura_codex_supports_in_app_updates(const gchar *binary)
+{
+	static GHashTable *cache;
+	gpointer cached;
+	g_autofree gchar *stdout_text = NULL;
+	g_autofree gchar *stderr_text = NULL;
+	gchar *argv[] = { (gchar *)"timeout", (gchar *)"0.5s",
+	                 (gchar *)(binary != NULL ? binary : "codex"),
+	                 (gchar *)"features", (gchar *)"list", NULL };
+	gint wait_status = 0;
+	gboolean supported;
+
+	if (cache == NULL)
+		cache = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
+	cached = g_hash_table_lookup(cache, argv[2]);
+	if (cached != NULL)
+		return GPOINTER_TO_INT(cached) == 2;
+	supported = g_spawn_sync(NULL, argv, NULL, G_SPAWN_SEARCH_PATH,
+	                         NULL, NULL, &stdout_text, &stderr_text,
+	                         &wait_status, NULL) &&
+	            g_spawn_check_wait_status(wait_status, NULL) &&
+	            stdout_text != NULL &&
+	            g_regex_match_simple("(?m)^in_app_updates[[:space:]]", stdout_text,
+	                                 0, 0);
+	g_hash_table_insert(cache, g_strdup(argv[2]),
+	                    GINT_TO_POINTER(supported ? 2 : 1));
+	return supported;
+}
+
+
+gboolean
 sakura_codex_ensure_tracking (GError **error)
 {
 	gchar *helper;
@@ -2217,7 +2248,11 @@ sakura_codex_tracking_poll_cb(gpointer data)
 					sakura_tab_set_status(tab, SAKURA_TAB_STATUS_IDLE, FALSE);
 				}
 				matched_tab = tab;
-				g_remove(path);
+				/* The workspace agent also consumes this record to persist and
+				 * broadcast Codex activity status. Keep the latest atomic record for
+				 * agent-backed tabs; standalone UI sessions remain one-shot. */
+				if (!tab->agent_backed)
+					g_remove(path);
 				break;
 			}
 		}
